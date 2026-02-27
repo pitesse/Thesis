@@ -73,3 +73,22 @@ Here are the specific methodologies and models applied:
 * System logs showing generated alerts synchronized with real race events.
 * Detailed technical report on latency management and rule correctness.
 * Instructions on how to reproduce the experiment (`requirements.txt` and setup guide).
+
+## How to Run
+
+```bash
+# 1) Start Kafka + Flink cluster
+docker-compose up -d
+
+# 2) Build Flink processor JAR
+cd f1-telemetry-processor
+mvn clean package
+cd ..
+
+# 3) Run Python producer
+cd f1-telemetry-producer
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python src/main.py
+```
