@@ -21,7 +21,7 @@ from kafka import KafkaProducer
 from fastf1 import Cache, get_session
 
 
-# drivers to include in the replay — add/remove abbreviations to control scope
+# drivers to include in the replay, add/remove abbreviations to control scope
 DRIVERS = ["VER", "LEC", "SAI"]
 
 TOPIC_TELEMETRY = "f1-telemetry"
@@ -32,24 +32,34 @@ TOPIC_TRACK_STATUS = "f1-track-status"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="F1 telemetry replay producer")
     parser.add_argument(
-        "--speed", type=float, default=1.0,
+        "--speed",
+        type=float,
+        default=1.0,
         help="replay speed multiplier, ex: 50 replays the race ~50x faster (default: 1.0)",
     )
     parser.add_argument(
-        "--start-lap", type=int, default=1,
+        "--start-lap",
+        type=int,
+        default=1,
         help="skip to this lap number before starting the replay (default: 1)",
     )
     parser.add_argument(
-        "--year", type=int, default=2023,
+        "--year",
+        type=int,
+        default=2023,
         help="season year for the fastf1 session (default: 2023)",
     )
     parser.add_argument(
-        "--race", type=str, default="Italian Grand Prix",
+        "--race",
+        type=str,
+        default="Italian Grand Prix",
         help='grand prix name, ex: "Italian Grand Prix", "Australian Grand Prix" (default: Italian Grand Prix)',
     )
     parser.add_argument(
-        "--session", type=str, default="R",
-        help='session type: R=race, Q=qualifying, FP1/FP2/FP3=practice (default: R)',
+        "--session",
+        type=str,
+        default="R",
+        help="session type: R=race, Q=qualifying, FP1/FP2/FP3=practice (default: R)",
     )
     return parser.parse_args()
 
@@ -69,7 +79,9 @@ def configure_cache() -> Path:
     return cache_dir
 
 
-def load_session(year: int = 2023, race: str = "Italian Grand Prix", session_type: str = "R"):
+def load_session(
+    year: int = 2023, race: str = "Italian Grand Prix", session_type: str = "R"
+):
     """load a fastf1 session — configurable via cli args for replaying different historical races."""
     session = get_session(year, race, session_type)
     session.load()
@@ -89,14 +101,29 @@ def build_driver_telemetry(session, driver: str) -> pd.DataFrame:
     telemetry = driver_laps.get_car_data().copy()
     position = driver_laps.get_pos_data().copy()
 
-    telemetry_columns = ["Date", "SessionTime", "Speed", "RPM", "Throttle", "Brake", "nGear", "DRS"]
+    telemetry_columns = [
+        "Date",
+        "SessionTime",
+        "Speed",
+        "RPM",
+        "Throttle",
+        "Brake",
+        "nGear",
+        "DRS",
+    ]
     position_columns = ["Date", "SessionTime", "X", "Y", "Z"]
 
-    telemetry = telemetry[[column for column in telemetry_columns if column in telemetry.columns]]
-    position = position[[column for column in position_columns if column in position.columns]]
+    telemetry = telemetry[
+        [column for column in telemetry_columns if column in telemetry.columns]
+    ]
+    position = position[
+        [column for column in position_columns if column in position.columns]
+    ]
 
     if "Date" not in telemetry.columns or "Date" not in position.columns:
-        raise ValueError(f"Date column is required for merge but missing for driver {driver}.")
+        raise ValueError(
+            f"Date column is required for merge but missing for driver {driver}."
+        )
 
     telemetry = telemetry.sort_values("Date").reset_index(drop=True)
     position = position.sort_values("Date").reset_index(drop=True)
@@ -117,8 +144,16 @@ def build_driver_telemetry(session, driver: str) -> pd.DataFrame:
     # assign lap number to each telemetry row by matching against lap start dates.
     # uses a backward asof join: each telemetry sample belongs to the lap that started
     # at or before it, ex: sample at T=120s with laps starting at T=80s and T=160s -> lap at T=80s
-    lap_starts = driver_laps[["LapNumber", "LapStartDate"]].dropna(subset=["LapStartDate"]).copy()
-    lap_starts = lap_starts.rename(columns={"LapStartDate": "Date"}).sort_values("Date").reset_index(drop=True)
+    lap_starts = (
+        driver_laps[["LapNumber", "LapStartDate"]]
+        .dropna(subset=["LapStartDate"])
+        .copy()
+    )
+    lap_starts = (
+        lap_starts.rename(columns={"LapStartDate": "Date"})
+        .sort_values("Date")
+        .reset_index(drop=True)
+    )
     merged = pd.merge_asof(
         merged.sort_values("Date"),
         lap_starts,
@@ -143,9 +178,21 @@ def build_lap_events(session) -> pd.DataFrame:
     also computes GapToCarAhead from cumulative race time differences.
     """
     lap_columns = [
-        "Driver", "LapNumber", "LapTime", "Sector1Time", "Sector2Time", "Sector3Time",
-        "Stint", "Compound", "TyreLife", "FreshTyre", "Position",
-        "PitInTime", "PitOutTime", "LapStartDate", "TrackStatus",
+        "Driver",
+        "LapNumber",
+        "LapTime",
+        "Sector1Time",
+        "Sector2Time",
+        "Sector3Time",
+        "Stint",
+        "Compound",
+        "TyreLife",
+        "FreshTyre",
+        "Position",
+        "PitInTime",
+        "PitOutTime",
+        "LapStartDate",
+        "TrackStatus",
     ]
 
     all_laps = session.laps
@@ -188,7 +235,9 @@ def _compute_gap_to_car_ahead(laps_df: pd.DataFrame) -> pd.DataFrame:
     # build cumulative race time per driver
     laps_df = laps_df.sort_values(["Driver", "LapNumber"]).copy()
     laps_df["_lap_seconds"] = laps_df["LapTime"].apply(
-        lambda x: x.total_seconds() if isinstance(x, pd.Timedelta) and pd.notna(x) else np.nan
+        lambda x: (
+            x.total_seconds() if isinstance(x, pd.Timedelta) and pd.notna(x) else np.nan
+        )
     )
     laps_df["_cumulative"] = laps_df.groupby("Driver")["_lap_seconds"].cumsum()
 
@@ -284,7 +333,12 @@ def build_replay_dataframe(session, start_lap: int = 1) -> pd.DataFrame:
         if "LapNumber" in replay_df.columns:
             keep = keep & (~is_lap_event | (replay_df["LapNumber"] >= start_lap))
         replay_df = replay_df[keep].reset_index(drop=True)
-        logging.info("--start-lap %d: filtered %d -> %d rows", start_lap, pre_filter, len(replay_df))
+        logging.info(
+            "--start-lap %d: filtered %d -> %d rows",
+            start_lap,
+            pre_filter,
+            len(replay_df),
+        )
 
     return replay_df
 
@@ -324,7 +378,9 @@ def row_to_payload(row: pd.Series) -> dict:
     }
 
 
-def stream_replay(replay_df: pd.DataFrame, producer: KafkaProducer, speed: float = 1.0) -> None:
+def stream_replay(
+    replay_df: pd.DataFrame, producer: KafkaProducer, speed: float = 1.0
+) -> None:
     """
     iterate through the sorted replay dataframe and publish each row to its target kafka topic.
     sleeps for the real delta-t between consecutive samples divided by the speed multiplier.
@@ -347,7 +403,12 @@ def stream_replay(replay_df: pd.DataFrame, producer: KafkaProducer, speed: float
 
         # log at different verbosity depending on event type
         if topic == TOPIC_TELEMETRY:
-            logging.debug("-> %s | driver=%s | speed=%s", topic, payload.get("Driver"), payload.get("Speed"))
+            logging.debug(
+                "-> %s | driver=%s | speed=%s",
+                topic,
+                payload.get("Driver"),
+                payload.get("Speed"),
+            )
         else:
             logging.info("-> %s | %s", topic, json.dumps(payload, default=str)[:200])
 
@@ -363,15 +424,20 @@ if __name__ == "__main__":
     cache_path = configure_cache()
     logging.info("FastF1 cache enabled at: %s", cache_path)
 
-    logging.info("Loading FastF1 session: %d %s - %s", args.year, args.race, args.session)
-    race_session = load_session(year=args.year, race=args.race, session_type=args.session)
+    logging.info(
+        "Loading FastF1 session: %d %s - %s", args.year, args.race, args.session
+    )
+    race_session = load_session(
+        year=args.year, race=args.race, session_type=args.session
+    )
     replay_dataframe = build_replay_dataframe(race_session, start_lap=args.start_lap)
     logging.info("Replay dataframe prepared with %d rows", len(replay_dataframe))
 
     kafka_producer = create_producer()
     logging.info(
         "Kafka producer initialized, speed=%.1fx, start_lap=%d",
-        args.speed, args.start_lap,
+        args.speed,
+        args.start_lap,
     )
 
     try:
