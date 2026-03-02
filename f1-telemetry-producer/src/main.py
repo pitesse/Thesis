@@ -1,5 +1,5 @@
 """
-f1 telemetry producer — simulates a live race replay via kafka.
+f1 telemetry producer: simulates a live race replay via kafka.
 
 loads historical telemetry, lap, and track status data from the fastf1 library,
 then streams events across three kafka topics (f1-telemetry, f1-laps, f1-track-status)
@@ -21,7 +21,7 @@ from kafka import KafkaProducer
 from fastf1 import Cache, get_session
 
 
-# drivers to include in the replay, add/remove abbreviations to control scope
+# drivers to include in the replay, add/remove abbreviations to control scope (later will handle all drivers without hardcoding)
 DRIVERS = ["VER", "LEC", "SAI"]
 
 TOPIC_TELEMETRY = "f1-telemetry"
@@ -82,7 +82,7 @@ def configure_cache() -> Path:
 def load_session(
     year: int = 2023, race: str = "Italian Grand Prix", session_type: str = "R"
 ):
-    """load a fastf1 session — configurable via cli args for replaying different historical races."""
+    """load a fastf1 session, configurable via cli args for replaying different historical races."""
     session = get_session(year, race, session_type)
     session.load()
     return session
@@ -167,7 +167,7 @@ def build_driver_telemetry(session, driver: str) -> pd.DataFrame:
         merged["Brake"] = merged["Brake"].astype(int)
 
     merged["Driver"] = driver
-    merged["_topic"] = TOPIC_TELEMETRY
+    merged["event_topic"] = TOPIC_TELEMETRY
     return merged
 
 
@@ -216,7 +216,7 @@ def build_lap_events(session) -> pd.DataFrame:
     # cumulative time = sum of all LapTime values up to this lap for each driver.
     laps_df = _compute_gap_to_car_ahead(laps_df)
 
-    laps_df["_topic"] = TOPIC_LAPS
+    laps_df["event_topic"] = TOPIC_LAPS
     return laps_df
 
 
@@ -290,7 +290,7 @@ def build_track_status_events(session) -> pd.DataFrame:
     ts_df = ts_df.drop(columns=["Time"])
     ts_df = ts_df.sort_values("Date").reset_index(drop=True)
 
-    ts_df["_topic"] = TOPIC_TRACK_STATUS
+    ts_df["event_topic"] = TOPIC_TRACK_STATUS
     logging.info("Found %d track status events", len(ts_df))
     return ts_df
 
@@ -299,7 +299,7 @@ def build_replay_dataframe(session, start_lap: int = 1) -> pd.DataFrame:
     """
     build the unified replay dataframe by interleaving telemetry, lap, and track status events.
     all three event types are sorted chronologically by Date for realistic replay timing.
-    each row is tagged with _topic to route to the correct kafka topic during streaming.
+    each row is tagged with event_topic to route to the correct kafka topic during streaming.
     """
     frames = []
 
@@ -329,7 +329,7 @@ def build_replay_dataframe(session, start_lap: int = 1) -> pd.DataFrame:
         has_lap = replay_df["LapNumber"].notna()
         keep = ~has_lap | (replay_df["LapNumber"] >= start_lap)
         # for lap events (topic=f1-laps), filter by their own LapNumber field
-        is_lap_event = replay_df["_topic"] == TOPIC_LAPS
+        is_lap_event = replay_df["event_topic"] == TOPIC_LAPS
         if "LapNumber" in replay_df.columns:
             keep = keep & (~is_lap_event | (replay_df["LapNumber"] >= start_lap))
         replay_df = replay_df[keep].reset_index(drop=True)
@@ -367,7 +367,7 @@ def serialize_value(value):
 
 
 # internal columns not sent to kafka (used for routing and filtering only)
-_INTERNAL_COLUMNS = {"_topic"}
+_INTERNAL_COLUMNS = {"event_topic"}
 
 
 def row_to_payload(row: pd.Series) -> dict:
@@ -378,41 +378,71 @@ def row_to_payload(row: pd.Series) -> dict:
     }
 
 
+def _namedtuple_to_payload(row, fields: tuple[str, ...]) -> dict:
+    """fast payload builder for itertuples() namedtuple rows, avoids pd.Series overhead."""
+    payload = {}
+    for field in fields:
+        if field in _INTERNAL_COLUMNS:
+            continue
+        val = serialize_value(getattr(row, field))
+        if val is not None:
+            payload[field] = val
+    return payload
+
+
 def stream_replay(
     replay_df: pd.DataFrame, producer: KafkaProducer, speed: float = 1.0
 ) -> None:
     """
     iterate through the sorted replay dataframe and publish each row to its target kafka topic.
-    sleeps for the real delta-t between consecutive samples divided by the speed multiplier.
+    uses an absolute timeline to absorb loop execution overhead: each event's wall-clock target
+    is computed from the offset between its event time and the first event's time, so accumulated
+    drift from serialization, kafka sends, and python overhead is automatically corrected.
     """
-    previous_timestamp = None
+    if replay_df.empty:
+        logging.info("Replay dataframe is empty, nothing to stream")
+        return
+
     topic_counts = {TOPIC_TELEMETRY: 0, TOPIC_LAPS: 0, TOPIC_TRACK_STATUS: 0}
+    logger = logging.getLogger()
+    debug_enabled = logger.isEnabledFor(logging.DEBUG)
 
-    for _, row in replay_df.iterrows():
-        current_timestamp = row["Date"]
-        topic = row.get("_topic", TOPIC_TELEMETRY)
+    # cache column names once for namedtuple field access
+    fields = tuple(replay_df.columns)
 
-        if previous_timestamp is not None:
-            delta_seconds = (current_timestamp - previous_timestamp).total_seconds()
-            if delta_seconds > 0:
-                time.sleep(delta_seconds / speed)
+    # absolute timeline: anchor wall clock to the first event's timestamp.
+    # every subsequent event sleeps until its exact target time, so any per-iteration
+    # overhead (serialization, kafka send, python dispatch) is absorbed automatically.
+    # ex: event at +60s race time with speed=100 -> target = start_wall + 0.6s
+    start_event_time = replay_df.iloc[0]["Date"]
+    start_wall_time = time.time()
 
-        payload = row_to_payload(row)
+    for row in replay_df.itertuples(index=False):
+        current_event_time = row.Date
+        topic = getattr(row, "event_topic", TOPIC_TELEMETRY)
+
+        # compute exact wall-clock target for this event, sleep only the remaining gap
+        target_wall_time = start_wall_time + (
+            (current_event_time - start_event_time).total_seconds() / speed
+        )
+        sleep_duration = target_wall_time - time.time()
+        if sleep_duration > 0:
+            time.sleep(sleep_duration)
+
+        payload = _namedtuple_to_payload(row, fields)
         producer.send(topic, value=payload)
         topic_counts[topic] = topic_counts.get(topic, 0) + 1
 
-        # log at different verbosity depending on event type
         if topic == TOPIC_TELEMETRY:
-            logging.debug(
-                "-> %s | driver=%s | speed=%s",
-                topic,
-                payload.get("Driver"),
-                payload.get("Speed"),
-            )
+            if debug_enabled:
+                logging.debug(
+                    "-> %s | driver=%s | speed=%s",
+                    topic,
+                    payload.get("Driver"),
+                    payload.get("Speed"),
+                )
         else:
             logging.info("-> %s | %s", topic, json.dumps(payload, default=str)[:200])
-
-        previous_timestamp = current_timestamp
 
     producer.flush()
     logging.info("Replay complete. Events sent: %s", topic_counts)
