@@ -16,7 +16,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class TelemetryEvent {
 
-    // --- car telemetry ---
+    // car telemetry
     private String date;         // iso-8601 timestamp from the fastf1 session, ex: "2023-09-03T13:05:12.003"
     private double sessionTime;  // elapsed seconds since session start
     private int speed;           // km/h
@@ -26,7 +26,7 @@ public class TelemetryEvent {
     private int nGear;           // 0 = neutral, 1-8
     private int drs;             // 0-14, values 10-14 indicate drs open/activating
 
-    // --- gps position (track coordinates, not lat/lon) ---
+    // gps position (track coordinates, not lat/lon)
     private double x;
     private double y;
     private double z;
