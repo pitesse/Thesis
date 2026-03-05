@@ -5,7 +5,10 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.functions.RichMapFunction;
+import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
@@ -16,13 +19,21 @@ import org.apache.flink.cep.nfa.aftermatch.AfterMatchSkipStrategy;
 import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.cep.pattern.conditions.SimpleCondition;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.MemorySize;
+import org.apache.flink.connector.base.DeliveryGuarantee;
+import org.apache.flink.connector.file.sink.FileSink;
+import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
+import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
+import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
 import org.apache.flink.streaming.api.windowing.assigners.EventTimeSessionWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
@@ -65,6 +76,10 @@ public class F1StreamingJob {
         LOG.info("Configuration: pit-loss={}", pitLoss);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // checkpointing every 5s: required for FileSink to commit in-progress part files
+        // and for KafkaSink to guarantee at-least-once delivery to the alerts topic.
+        env.enableCheckpointing(5000);
 
         // kafka sources
         // high-frequency car telemetry (~4 Hz per driver)
@@ -120,6 +135,8 @@ public class F1StreamingJob {
         // watermark assignment
         // 5-second bounded out-of-orderness for telemetry and laps accounts for network jitter
         // and the python producer's per-row sleep not being perfectly synchronized across drivers.
+        // track status uses withIdleness(30s) because events are sparse (minutes apart),
+        // without idleness the watermark would stall the entire pipeline between status changes.
         DataStream<TelemetryEvent> telemetryWithWatermarks = telemetryStream
                 .assignTimestampsAndWatermarks(
                         WatermarkStrategy
@@ -135,8 +152,7 @@ public class F1StreamingJob {
                                 .withTimestampAssigner((event, ts) -> event.getEventTimeMillis())
                 )
                 .name("Lap Watermarks");
-        // track status uses withIdleness(30s) because events are sparse (minutes apart),
-        // without idleness the watermark would stall the entire pipeline between status changes.
+
         DataStream<TrackStatusEvent> trackStatusWithWatermarks = trackStatusStream
                 .assignTimestampsAndWatermarks(
                         WatermarkStrategy
@@ -164,20 +180,20 @@ public class F1StreamingJob {
         // session window with 30s gap: all drivers' events for the same lap arrive within seconds.
         DataStream<RivalInfoAlert> rivalStream = lapWithWatermarks
                 .keyBy(LapEvent::getLapNumber)
-                .window(EventTimeSessionWindows.withGap(Duration.ofSeconds(30))) // maybe review the 30s logic
+                .window(EventTimeSessionWindows.withGap(Time.seconds(30)))
                 .process(new RivalIdentificationFunction())
-                .name("Rival Identification"); 
+                .name("Rival Identification");
 
         // a3: drs train detection 
         // re-window the rival info by lap number to detect contiguous groups within 1s gap
         DataStream<String> drsTrainAlerts = rivalStream
                 .keyBy(RivalInfoAlert::getLapNumber)
-                .window(EventTimeSessionWindows.withGap(Duration.ofSeconds(10)))
+                .window(EventTimeSessionWindows.withGap(Time.seconds(10)))
                 .process(new DrsTrainDetector())
                 .name("DRS Train Detection");
 
         // module c: real-time alerts
-        // c1: lift & coast detection (cep) 
+        // c1: lift & coast detection (cep)
         // uses the enriched stream (carries track status context)
         KeyedStream<TelemetryEvent, String> keyedTelemetry
                 = enrichedTelemetry.keyBy(TelemetryEvent::getDriver);
@@ -262,11 +278,96 @@ public class F1StreamingJob {
                 .name("Pit Stop Evaluation");
 
         // sinks (print to taskmanager stdout for development)
+        // pitEvals and tireDropAlerts are persisted via FileSink and routed via KafkaSink,
+        // so their print sinks are removed to avoid redundant stdout noise.
         liftCoastAlerts.map(LiftCoastAlert::toString).returns(String.class).print().name("Lift & Coast Alerts");
-        tireDropAlerts.map(TireDropAlert::toString).returns(String.class).print().name("Tire Drop Alerts");
         pitWindowAlerts.map(PitWindowAlert::toString).returns(String.class).print().name("Pit Window Alerts");
         drsTrainAlerts.print().name("DRS Train Alerts");
-        pitEvals.map(PitStopEvaluationAlert::toString).returns(String.class).print().name("Pit Stop Evaluations");
+
+
+        // file sinks (csv for ml dataset generation)
+        
+        // persists ground truth and alert streams to disk as csv (one row per event, header-prefixed).
+        // rolling policy: new file every 5 min or 128 MB, whichever comes first.
+        // inactivity interval (3 min) ensures files are finalized promptly during low-traffic periods.
+        // output lands in /opt/flink/data_lake/ inside the container, mapped to ./data_lake/ on the host.
+        // serialize pojos to csv rows via toCsvRow(), csv header emitted once via CsvHeaderMapper
+        DataStream<String> pitEvalsCsv = pitEvals
+                .map(new CsvHeaderMapper<>(PitStopEvaluationAlert.CSV_HEADER, PitStopEvaluationAlert::toCsvRow))
+                .returns(String.class)
+                .name("Serialize Pit Evaluations (CSV)");
+
+        DataStream<String> tireDropsCsv = tireDropAlerts
+                .map(new CsvHeaderMapper<>(TireDropAlert.CSV_HEADER, TireDropAlert::toCsvRow))
+                .returns(String.class)
+                .name("Serialize Tire Drops (CSV)");
+
+        FileSink<String> pitEvalSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/pit_evals"), new SimpleStringEncoder<String>("UTF-8"))
+                .withRollingPolicy(
+                        DefaultRollingPolicy.builder()
+                                .withRolloverInterval(Duration.ofMinutes(5))
+                                .withInactivityInterval(Duration.ofMinutes(3))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .build())
+                .withOutputFileConfig(OutputFileConfig.builder()
+                        .withPartPrefix("pit-eval")
+                        .withPartSuffix(".csv")
+                        .build())
+                .build();
+
+        FileSink<String> tireDropSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/tire_drops"), new SimpleStringEncoder<String>("UTF-8"))
+                .withRollingPolicy(
+                        DefaultRollingPolicy.builder()
+                                .withRolloverInterval(Duration.ofMinutes(5))
+                                .withInactivityInterval(Duration.ofMinutes(3))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .build())
+                .withOutputFileConfig(OutputFileConfig.builder()
+                        .withPartPrefix("tire-drop")
+                        .withPartSuffix(".csv")
+                        .build())
+                .build();
+
+        pitEvalsCsv.sinkTo(pitEvalSink).name("FileSink: Pit Evaluations");
+        tireDropsCsv.sinkTo(tireDropSink).name("FileSink: Tire Drops");
+
+
+        // kafka sink (route alerts to dashboard via f1-alerts topic)
+
+        // the dashboard subscribes to f1-alerts to display live strategic alerts.
+        // all three alert types are serialized to json, unioned into a single stream,
+        // and published to kafka. at-least-once delivery is sufficient for display purposes.
+        DataStream<String> liftCoastJson = liftCoastAlerts
+                .map(new JsonSerializer<>())
+                .returns(String.class)
+                .name("Serialize Lift & Coast");
+
+        DataStream<String> pitWindowJson = pitWindowAlerts
+                .map(new JsonSerializer<>())
+                .returns(String.class)
+                .name("Serialize Pit Window");
+
+        DataStream<String> tireDropsJson = tireDropAlerts
+                .map(new JsonSerializer<>())
+                .returns(String.class)
+                .name("Serialize Tire Drops (Kafka)");
+
+        DataStream<String> allAlerts = liftCoastJson
+                .union(tireDropsJson, pitWindowJson);
+
+        KafkaSink<String> alertsSink = KafkaSink.<String>builder()
+                .setBootstrapServers(KAFKA_BOOTSTRAP)
+                .setRecordSerializer(
+                        KafkaRecordSerializationSchema.builder()
+                                .setTopic("f1-alerts")
+                                .setValueSerializationSchema(new SimpleStringSchema())
+                                .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
+
+        allAlerts.sinkTo(alertsSink).name("KafkaSink: Alerts");
 
         // development: log lap events and track status for visibility
         lapWithWatermarks.map(lap -> "LAP | " + lap.toString()).returns(String.class)
@@ -303,6 +404,55 @@ public class F1StreamingJob {
                 LOG.warn("Skipping malformed {} record: {}", targetClass.getSimpleName(), value, e);
             }
         }
+    }
+
+    // generic jackson serializer for kafka sinks, mirrors JsonDeserializer.
+    // converts pojos to json format (one compact json object per line).
+    // ex: PitStopEvaluationAlert -> {"driver":"VER","pitLapNumber":15,"result":"SUCCESS_UNDERCUT",...}
+    private static class JsonSerializer<T> extends RichMapFunction<T, String> {
+
+        private transient ObjectMapper mapper;
+
+        @Override
+        public void open(Configuration parameters) {
+            mapper = new ObjectMapper();
+        }
+
+        @Override
+        public String map(T value) throws Exception {
+            return mapper.writeValueAsString(value);
+        }
+    }
+
+    // emits a csv header as the first row, then delegates to toCsvRow() for data rows.
+    // uses a boolean flag to emit the header exactly once per parallel instance.
+    // ex output: "driver,pitLapNumber,...\nVER,15,..."
+    private static class CsvHeaderMapper<T> implements MapFunction<T, String> {
+
+        private final String header;
+        private final SerializableToCsvRow<T> toCsvRow;
+        private boolean headerEmitted = false;
+
+        CsvHeaderMapper(String header, SerializableToCsvRow<T> toCsvRow) {
+            this.header = header;
+            this.toCsvRow = toCsvRow;
+        }
+
+        @Override
+        public String map(T value) throws Exception {
+            if (!headerEmitted) {
+                headerEmitted = true;
+                return header + "\n" + toCsvRow.apply(value);
+            }
+            return toCsvRow.apply(value);
+        }
+    }
+
+    // functional interface for toCsvRow method references, must be serializable for flink
+    @FunctionalInterface
+    private interface SerializableToCsvRow<T> extends java.io.Serializable {
+
+        String apply(T value);
     }
 
     // suppresses duplicate lift & coast alerts from the same braking zone.

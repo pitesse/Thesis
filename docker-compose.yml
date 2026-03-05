@@ -44,7 +44,7 @@ services:
     depends_on:
       - kafka
     ports:
-      - "8081:8081"   # flink web ui
+      - "8081:8081" # flink web ui
     command: jobmanager
     environment:
       - JOB_MANAGER_RPC_ADDRESS=jobmanager
@@ -60,3 +60,7 @@ services:
       # 6 task slots: accommodates 3 kafka source operators, deserialization, watermarks,
       # cep patterns, and print sinks with operator chaining at parallelism=1
       - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=6
+    volumes:
+      # maps container output to host for ml dataset access.
+      # flink FileSink writes json-lines to /opt/flink/data_lake/{pit_evals,tire_drops}/
+      - ./data_lake:/opt/flink/data_lake

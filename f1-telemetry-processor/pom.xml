@@ -8,7 +8,7 @@
     <version>1.0-SNAPSHOT</version>
     <name>f1-telemetry-processor</name>
 
-    <!-- pinned versions-->
+    <!-- pinned versions -->
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
@@ -42,6 +42,13 @@
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-cep</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <!-- file connector: modern FileSink api for persisting streams to disk (ml dataset generation) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-files</artifactId>
             <version>${flink.version}</version>
         </dependency>
 
