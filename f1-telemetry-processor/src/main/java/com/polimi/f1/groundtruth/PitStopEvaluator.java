@@ -36,6 +36,9 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
     private transient ValueState<Integer> prePitPosition;
     private transient ValueState<String> postPitCompound;
     private transient ListState<LapEvent> postPitLaps;
+    // captures the exact lap the driver pitted on, providing ml context features
+    // (track status, tyre age, gap to car ahead) at the moment of pit entry.
+    private transient ValueState<LapEvent> pitEntryLap;
 
     @Override
     public void open(Configuration parameters) {
@@ -49,6 +52,8 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
                 new ValueStateDescriptor<>("post-pit-compound", Types.STRING));
         postPitLaps = getRuntimeContext().getListState(
                 new ListStateDescriptor<>("post-pit-laps", LapEvent.class));
+        pitEntryLap = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("pit-entry-lap", LapEvent.class));
     }
 
     @Override
@@ -60,6 +65,7 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
             hasPitted.update(true);
             pitLapNumber.update(lap.getLapNumber());
             prePitPosition.update(lap.getPosition());
+            pitEntryLap.update(lap);
             postPitLaps.clear();
             postPitCompound.update(null);
 
@@ -116,13 +122,21 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
                     compound = "UNKNOWN";
                 }
 
+                LapEvent entryLap = pitEntryLap.value();
+                String trackStatusAtPit = entryLap != null ? entryLap.getTrackStatus() : null;
+                int tyreAgeAtPit = entryLap != null ? entryLap.getTyreLife() : 0;
+                Double gapAtPit = entryLap != null ? entryLap.getGapToCarAhead() : null;
+
                 out.collect(new PitStopEvaluationAlert(
                         lap.getDriver(),
                         pitLapNumber.value(),
                         prePos,
                         postPos,
                         compound,
-                        result
+                        result,
+                        trackStatusAtPit,
+                        tyreAgeAtPit,
+                        gapAtPit
                 ));
 
                 clearState();
@@ -145,5 +159,6 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
         prePitPosition.clear();
         postPitCompound.clear();
         postPitLaps.clear();
+        pitEntryLap.clear();
     }
 }
