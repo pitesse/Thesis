@@ -2,7 +2,11 @@ package com.polimi.f1.model;
 
 // emitted when a driver's rolling lap time average degrades beyond a threshold
 // relative to their stint best. indicates tire performance cliff.
+// ex csv: VER,25,SOFT,18,83.421,81.200,2.221
 public class TireDropAlert {
+
+    public static final String CSV_HEADER =
+            "driver,lapNumber,compound,tyreLife,rollingAvg,stintBest,delta";
 
     private String driver;
     private int lapNumber;
@@ -45,6 +49,19 @@ public class TireDropAlert {
 
     public double getDelta() { return delta; }
     public void setDelta(double delta) { this.delta = delta; }
+
+    // csv row, ex: VER,25,SOFT,18,83.421,81.200,2.221
+    public String toCsvRow() {
+        return String.join(",",
+                driver,
+                String.valueOf(lapNumber),
+                compound,
+                String.valueOf(tyreLife),
+                String.format("%.3f", rollingAvg),
+                String.format("%.3f", stintBest),
+                String.format("%.3f", delta)
+        );
+    }
 
     @Override
     public String toString() {
