@@ -20,10 +20,6 @@ import pandas as pd
 from kafka import KafkaProducer
 from fastf1 import Cache, get_session
 
-
-# drivers to include in the replay, add/remove abbreviations to control scope (later will handle all drivers without hardcoding)
-DRIVERS = ["VER", "LEC", "SAI"]
-
 TOPIC_TELEMETRY = "f1-telemetry"
 TOPIC_LAPS = "f1-laps"
 TOPIC_TRACK_STATUS = "f1-track-status"
@@ -196,10 +192,8 @@ def build_lap_events(session) -> pd.DataFrame:
     ]
 
     all_laps = session.laps
-    # filter to our target drivers
-    laps_df = all_laps[all_laps["Driver"].isin(DRIVERS)].copy()
-    available = [col for col in lap_columns if col in laps_df.columns]
-    laps_df = laps_df[available].copy()
+    available = [col for col in lap_columns if col in all_laps.columns]
+    laps_df = all_laps[available].copy()
 
     # use LapStartDate as the event time (Date field for flink watermarks)
     if "LapStartDate" in laps_df.columns:
@@ -299,15 +293,24 @@ def build_replay_dataframe(session, start_lap: int = 1) -> pd.DataFrame:
     """
     build the unified replay dataframe by interleaving telemetry, lap, and track status events.
     all three event types are sorted chronologically by Date for realistic replay timing.
-    each row is tagged with event_topic to route to the correct kafka topic during streaming.
+    each row is tagged with _topic to route to the correct kafka topic during streaming.
     """
     frames = []
 
+    # extract the full grid dynamically from session lap data
+    drivers = session.laps["Driver"].dropna().unique().tolist()
+    logging.info(
+        "Found %d drivers in session: %s", len(drivers), ", ".join(sorted(drivers))
+    )
+
     # telemetry (high frequency, ~4 Hz per driver)
-    for driver in DRIVERS:
+    for driver in drivers:
         logging.info("Extracting telemetry/position for %s", driver)
-        driver_frame = build_driver_telemetry(session, driver)
-        frames.append(driver_frame)
+        try:
+            driver_frame = build_driver_telemetry(session, driver)
+            frames.append(driver_frame)
+        except Exception as e:
+            logging.warning("Skipping %s: %s", driver, e)
 
     # lap events (~1 per driver per ~80s)
     lap_events = build_lap_events(session)
