@@ -5,8 +5,8 @@ package com.polimi.f1.model;
 // ex csv: VER,25,SOFT,18,83.421,81.200,2.221
 public class TireDropAlert {
 
-    public static final String CSV_HEADER =
-            "driver,lapNumber,compound,tyreLife,rollingAvg,stintBest,delta";
+    public static final String CSV_HEADER
+            = "driver,lapNumber,compound,tyreLife,rollingAvg,stintBest,delta";
 
     private String driver;
     private int lapNumber;
@@ -16,10 +16,11 @@ public class TireDropAlert {
     private double stintBest;     // best lap time in current stint (seconds)
     private double delta;         // rollingAvg - stintBest (seconds)
 
-    public TireDropAlert() {}
+    public TireDropAlert() {
+    }
 
     public TireDropAlert(String driver, int lapNumber, String compound,
-                         int tyreLife, double rollingAvg, double stintBest, double delta) {
+            int tyreLife, double rollingAvg, double stintBest, double delta) {
         this.driver = driver;
         this.lapNumber = lapNumber;
         this.compound = compound;
@@ -29,28 +30,63 @@ public class TireDropAlert {
         this.delta = delta;
     }
 
-    public String getDriver() { return driver; }
-    public void setDriver(String driver) { this.driver = driver; }
+    public String getDriver() {
+        return driver;
+    }
 
-    public int getLapNumber() { return lapNumber; }
-    public void setLapNumber(int lapNumber) { this.lapNumber = lapNumber; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
-    public String getCompound() { return compound; }
-    public void setCompound(String compound) { this.compound = compound; }
+    public int getLapNumber() {
+        return lapNumber;
+    }
 
-    public int getTyreLife() { return tyreLife; }
-    public void setTyreLife(int tyreLife) { this.tyreLife = tyreLife; }
+    public void setLapNumber(int lapNumber) {
+        this.lapNumber = lapNumber;
+    }
 
-    public double getRollingAvg() { return rollingAvg; }
-    public void setRollingAvg(double rollingAvg) { this.rollingAvg = rollingAvg; }
+    public String getCompound() {
+        return compound;
+    }
 
-    public double getStintBest() { return stintBest; }
-    public void setStintBest(double stintBest) { this.stintBest = stintBest; }
+    public void setCompound(String compound) {
+        this.compound = compound;
+    }
 
-    public double getDelta() { return delta; }
-    public void setDelta(double delta) { this.delta = delta; }
+    public int getTyreLife() {
+        return tyreLife;
+    }
 
-    // csv row, ex: VER,25,SOFT,18,83.421,81.200,2.221
+    public void setTyreLife(int tyreLife) {
+        this.tyreLife = tyreLife;
+    }
+
+    public double getRollingAvg() {
+        return rollingAvg;
+    }
+
+    public void setRollingAvg(double rollingAvg) {
+        this.rollingAvg = rollingAvg;
+    }
+
+    public double getStintBest() {
+        return stintBest;
+    }
+
+    public void setStintBest(double stintBest) {
+        this.stintBest = stintBest;
+    }
+
+    public double getDelta() {
+        return delta;
+    }
+
+    public void setDelta(double delta) {
+        this.delta = delta;
+    }
+
+    // ml-ready csv row, ex: VER,25,SOFT,18,83.421,81.200,2.221
     public String toCsvRow() {
         return String.join(",",
                 driver,

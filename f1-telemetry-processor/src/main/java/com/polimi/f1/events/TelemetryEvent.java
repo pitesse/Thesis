@@ -35,7 +35,8 @@ public class TelemetryEvent {
     private String trackStatus;  // enriched by broadcast state, fia code: "1"=green, "4"=sc, "6"=vsc
     private long eventTimeMillis; // derived from date — used by flink for event-time semantics
 
-    public TelemetryEvent() {}
+    public TelemetryEvent() {
+    }
 
     @JsonProperty("Date")
     public String getDate() {
@@ -51,69 +52,134 @@ public class TelemetryEvent {
     }
 
     @JsonProperty("SessionTime")
-    public double getSessionTime() { return sessionTime; }
+    public double getSessionTime() {
+        return sessionTime;
+    }
+
     @JsonProperty("SessionTime")
-    public void setSessionTime(double sessionTime) { this.sessionTime = sessionTime; }
+    public void setSessionTime(double sessionTime) {
+        this.sessionTime = sessionTime;
+    }
 
     @JsonProperty("Speed")
-    public int getSpeed() { return speed; }
+    public int getSpeed() {
+        return speed;
+    }
+
     @JsonProperty("Speed")
-    public void setSpeed(int speed) { this.speed = speed; }
+    public void setSpeed(int speed) {
+        this.speed = speed;
+    }
 
     @JsonProperty("RPM")
-    public int getRpm() { return rpm; }
+    public int getRpm() {
+        return rpm;
+    }
+
     @JsonProperty("RPM")
-    public void setRpm(int rpm) { this.rpm = rpm; }
+    public void setRpm(int rpm) {
+        this.rpm = rpm;
+    }
 
     @JsonProperty("Throttle")
-    public int getThrottle() { return throttle; }
+    public int getThrottle() {
+        return throttle;
+    }
+
     @JsonProperty("Throttle")
-    public void setThrottle(int throttle) { this.throttle = throttle; }
+    public void setThrottle(int throttle) {
+        this.throttle = throttle;
+    }
 
     @JsonProperty("Brake")
-    public int getBrake() { return brake; }
+    public int getBrake() {
+        return brake;
+    }
+
     @JsonProperty("Brake")
-    public void setBrake(int brake) { this.brake = brake; }
+    public void setBrake(int brake) {
+        this.brake = brake;
+    }
 
     @JsonProperty("nGear")
-    public int getNGear() { return nGear; }
+    public int getNGear() {
+        return nGear;
+    }
+
     @JsonProperty("nGear")
-    public void setNGear(int nGear) { this.nGear = nGear; }
+    public void setNGear(int nGear) {
+        this.nGear = nGear;
+    }
 
     @JsonProperty("DRS")
-    public int getDrs() { return drs; }
+    public int getDrs() {
+        return drs;
+    }
+
     @JsonProperty("DRS")
-    public void setDrs(int drs) { this.drs = drs; }
+    public void setDrs(int drs) {
+        this.drs = drs;
+    }
 
     @JsonProperty("X")
-    public double getX() { return x; }
+    public double getX() {
+        return x;
+    }
+
     @JsonProperty("X")
-    public void setX(double x) { this.x = x; }
+    public void setX(double x) {
+        this.x = x;
+    }
 
     @JsonProperty("Y")
-    public double getY() { return y; }
+    public double getY() {
+        return y;
+    }
+
     @JsonProperty("Y")
-    public void setY(double y) { this.y = y; }
+    public void setY(double y) {
+        this.y = y;
+    }
 
     @JsonProperty("Z")
-    public double getZ() { return z; }
+    public double getZ() {
+        return z;
+    }
+
     @JsonProperty("Z")
-    public void setZ(double z) { this.z = z; }
+    public void setZ(double z) {
+        this.z = z;
+    }
 
     @JsonProperty("Driver")
-    public String getDriver() { return driver; }
+    public String getDriver() {
+        return driver;
+    }
+
     @JsonProperty("Driver")
-    public void setDriver(String driver) { this.driver = driver; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
     @JsonIgnore
-    public String getTrackStatus() { return trackStatus; }
-    @JsonIgnore
-    public void setTrackStatus(String trackStatus) { this.trackStatus = trackStatus; }
+    public String getTrackStatus() {
+        return trackStatus;
+    }
 
     @JsonIgnore
-    public long getEventTimeMillis() { return eventTimeMillis; }
+    public void setTrackStatus(String trackStatus) {
+        this.trackStatus = trackStatus;
+    }
+
     @JsonIgnore
-    public void setEventTimeMillis(long eventTimeMillis) { this.eventTimeMillis = eventTimeMillis; }
+    public long getEventTimeMillis() {
+        return eventTimeMillis;
+    }
+
+    @JsonIgnore
+    public void setEventTimeMillis(long eventTimeMillis) {
+        this.eventTimeMillis = eventTimeMillis;
+    }
 
     // converts the iso-8601 date string to epoch millis for flink watermarks.
     // tries Instant.parse first (with timezone, ex: "2023-09-03T13:05:12.003Z"),
@@ -138,14 +204,14 @@ public class TelemetryEvent {
 
     @Override
     public String toString() {
-        return "TelemetryEvent{" +
-                "driver='" + driver + '\'' +
-                ", date='" + date + '\'' +
-                ", speed=" + speed +
-                ", throttle=" + throttle +
-                ", brake=" + brake +
-                ", nGear=" + nGear +
-                ", drs=" + drs +
-                '}';
+        return "TelemetryEvent{"
+                + "driver='" + driver + '\''
+                + ", date='" + date + '\''
+                + ", speed=" + speed
+                + ", throttle=" + throttle
+                + ", brake=" + brake
+                + ", nGear=" + nGear
+                + ", drs=" + drs
+                + '}';
     }
 }
