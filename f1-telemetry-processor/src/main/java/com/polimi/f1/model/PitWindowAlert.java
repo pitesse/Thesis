@@ -10,10 +10,11 @@ public class PitWindowAlert {
     private String trackStatus;   // fia code at the time of evaluation
     private double threshold;     // dynamic threshold based on track status (seconds)
 
-    public PitWindowAlert() {}
+    public PitWindowAlert() {
+    }
 
     public PitWindowAlert(String driver, int lapNumber, double gapBehind,
-                          String trackStatus, double threshold) {
+            String trackStatus, double threshold) {
         this.driver = driver;
         this.lapNumber = lapNumber;
         this.gapBehind = gapBehind;
@@ -21,20 +22,45 @@ public class PitWindowAlert {
         this.threshold = threshold;
     }
 
-    public String getDriver() { return driver; }
-    public void setDriver(String driver) { this.driver = driver; }
+    public String getDriver() {
+        return driver;
+    }
 
-    public int getLapNumber() { return lapNumber; }
-    public void setLapNumber(int lapNumber) { this.lapNumber = lapNumber; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
-    public double getGapBehind() { return gapBehind; }
-    public void setGapBehind(double gapBehind) { this.gapBehind = gapBehind; }
+    public int getLapNumber() {
+        return lapNumber;
+    }
 
-    public String getTrackStatus() { return trackStatus; }
-    public void setTrackStatus(String trackStatus) { this.trackStatus = trackStatus; }
+    public void setLapNumber(int lapNumber) {
+        this.lapNumber = lapNumber;
+    }
 
-    public double getThreshold() { return threshold; }
-    public void setThreshold(double threshold) { this.threshold = threshold; }
+    public double getGapBehind() {
+        return gapBehind;
+    }
+
+    public void setGapBehind(double gapBehind) {
+        this.gapBehind = gapBehind;
+    }
+
+    public String getTrackStatus() {
+        return trackStatus;
+    }
+
+    public void setTrackStatus(String trackStatus) {
+        this.trackStatus = trackStatus;
+    }
+
+    public double getThreshold() {
+        return threshold;
+    }
+
+    public void setThreshold(double threshold) {
+        this.threshold = threshold;
+    }
 
     @Override
     public String toString() {

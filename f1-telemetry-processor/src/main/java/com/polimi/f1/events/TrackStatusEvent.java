@@ -15,10 +15,14 @@ public class TrackStatusEvent {
     private String message;    // human-readable: "AllClear", "Yellow", "SCDeployed", "Red", "VSCDeployed", "VSCEnding"
     private long eventTimeMillis;
 
-    public TrackStatusEvent() {}
+    public TrackStatusEvent() {
+    }
 
     @JsonProperty("Date")
-    public String getDate() { return date; }
+    public String getDate() {
+        return date;
+    }
+
     @JsonProperty("Date")
     public void setDate(String date) {
         this.date = date;
@@ -26,26 +30,41 @@ public class TrackStatusEvent {
     }
 
     @JsonProperty("Status")
-    public String getStatus() { return status; }
+    public String getStatus() {
+        return status;
+    }
+
     @JsonProperty("Status")
-    public void setStatus(String status) { this.status = status; }
+    public void setStatus(String status) {
+        this.status = status;
+    }
 
     @JsonProperty("Message")
-    public String getMessage() { return message; }
+    public String getMessage() {
+        return message;
+    }
+
     @JsonProperty("Message")
-    public void setMessage(String message) { this.message = message; }
+    public void setMessage(String message) {
+        this.message = message;
+    }
 
     @JsonIgnore
-    public long getEventTimeMillis() { return eventTimeMillis; }
+    public long getEventTimeMillis() {
+        return eventTimeMillis;
+    }
+
     @JsonIgnore
-    public void setEventTimeMillis(long eventTimeMillis) { this.eventTimeMillis = eventTimeMillis; }
+    public void setEventTimeMillis(long eventTimeMillis) {
+        this.eventTimeMillis = eventTimeMillis;
+    }
 
     @Override
     public String toString() {
-        return "TrackStatusEvent{" +
-                "date='" + date + '\'' +
-                ", status='" + status + '\'' +
-                ", message='" + message + '\'' +
-                '}';
+        return "TrackStatusEvent{"
+                + "date='" + date + '\''
+                + ", status='" + status + '\''
+                + ", message='" + message + '\''
+                + '}';
     }
 }

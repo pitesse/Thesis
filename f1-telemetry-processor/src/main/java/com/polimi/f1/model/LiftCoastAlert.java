@@ -12,10 +12,11 @@ public class LiftCoastAlert {
     private String brakeDate;          // iso timestamp of the brake application
     private String trackStatus;        // fia track status at time of detection, ex: "1"=green
 
-    public LiftCoastAlert() {}
+    public LiftCoastAlert() {
+    }
 
     public LiftCoastAlert(String driver, String fullThrottleDate, String liftDate,
-                           String brakeDate, String trackStatus) {
+            String brakeDate, String trackStatus) {
         this.driver = driver;
         this.fullThrottleDate = fullThrottleDate;
         this.liftDate = liftDate;
@@ -23,20 +24,45 @@ public class LiftCoastAlert {
         this.trackStatus = trackStatus;
     }
 
-    public String getDriver() { return driver; }
-    public void setDriver(String driver) { this.driver = driver; }
+    public String getDriver() {
+        return driver;
+    }
 
-    public String getFullThrottleDate() { return fullThrottleDate; }
-    public void setFullThrottleDate(String fullThrottleDate) { this.fullThrottleDate = fullThrottleDate; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
-    public String getLiftDate() { return liftDate; }
-    public void setLiftDate(String liftDate) { this.liftDate = liftDate; }
+    public String getFullThrottleDate() {
+        return fullThrottleDate;
+    }
 
-    public String getBrakeDate() { return brakeDate; }
-    public void setBrakeDate(String brakeDate) { this.brakeDate = brakeDate; }
+    public void setFullThrottleDate(String fullThrottleDate) {
+        this.fullThrottleDate = fullThrottleDate;
+    }
 
-    public String getTrackStatus() { return trackStatus; }
-    public void setTrackStatus(String trackStatus) { this.trackStatus = trackStatus; }
+    public String getLiftDate() {
+        return liftDate;
+    }
+
+    public void setLiftDate(String liftDate) {
+        this.liftDate = liftDate;
+    }
+
+    public String getBrakeDate() {
+        return brakeDate;
+    }
+
+    public void setBrakeDate(String brakeDate) {
+        this.brakeDate = brakeDate;
+    }
+
+    public String getTrackStatus() {
+        return trackStatus;
+    }
+
+    public void setTrackStatus(String trackStatus) {
+        this.trackStatus = trackStatus;
+    }
 
     @Override
     public String toString() {

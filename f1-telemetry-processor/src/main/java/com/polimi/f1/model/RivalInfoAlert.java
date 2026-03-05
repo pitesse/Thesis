@@ -13,10 +13,11 @@ public class RivalInfoAlert {
     private int lapNumber;
     private int position;
 
-    public RivalInfoAlert() {}
+    public RivalInfoAlert() {
+    }
 
     public RivalInfoAlert(String driver, String driverAhead, String driverBehind,
-                     Double gapAhead, Double gapBehind, int lapNumber, int position) {
+            Double gapAhead, Double gapBehind, int lapNumber, int position) {
         this.driver = driver;
         this.driverAhead = driverAhead;
         this.driverBehind = driverBehind;
@@ -26,37 +27,72 @@ public class RivalInfoAlert {
         this.position = position;
     }
 
-    public String getDriver() { return driver; }
-    public void setDriver(String driver) { this.driver = driver; }
+    public String getDriver() {
+        return driver;
+    }
 
-    public String getDriverAhead() { return driverAhead; }
-    public void setDriverAhead(String driverAhead) { this.driverAhead = driverAhead; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
-    public String getDriverBehind() { return driverBehind; }
-    public void setDriverBehind(String driverBehind) { this.driverBehind = driverBehind; }
+    public String getDriverAhead() {
+        return driverAhead;
+    }
 
-    public Double getGapAhead() { return gapAhead; }
-    public void setGapAhead(Double gapAhead) { this.gapAhead = gapAhead; }
+    public void setDriverAhead(String driverAhead) {
+        this.driverAhead = driverAhead;
+    }
 
-    public Double getGapBehind() { return gapBehind; }
-    public void setGapBehind(Double gapBehind) { this.gapBehind = gapBehind; }
+    public String getDriverBehind() {
+        return driverBehind;
+    }
 
-    public int getLapNumber() { return lapNumber; }
-    public void setLapNumber(int lapNumber) { this.lapNumber = lapNumber; }
+    public void setDriverBehind(String driverBehind) {
+        this.driverBehind = driverBehind;
+    }
 
-    public int getPosition() { return position; }
-    public void setPosition(int position) { this.position = position; }
+    public Double getGapAhead() {
+        return gapAhead;
+    }
+
+    public void setGapAhead(Double gapAhead) {
+        this.gapAhead = gapAhead;
+    }
+
+    public Double getGapBehind() {
+        return gapBehind;
+    }
+
+    public void setGapBehind(Double gapBehind) {
+        this.gapBehind = gapBehind;
+    }
+
+    public int getLapNumber() {
+        return lapNumber;
+    }
+
+    public void setLapNumber(int lapNumber) {
+        this.lapNumber = lapNumber;
+    }
+
+    public int getPosition() {
+        return position;
+    }
+
+    public void setPosition(int position) {
+        this.position = position;
+    }
 
     @Override
     public String toString() {
-        return "RivalInfoAlert{" +
-                "driver='" + driver + '\'' +
-                ", pos=" + position +
-                ", ahead='" + driverAhead + '\'' +
-                ", behind='" + driverBehind + '\'' +
-                ", gapAhead=" + gapAhead +
-                ", gapBehind=" + gapBehind +
-                ", lap=" + lapNumber +
-                '}';
+        return "RivalInfoAlert{"
+                + "driver='" + driver + '\''
+                + ", pos=" + position
+                + ", ahead='" + driverAhead + '\''
+                + ", behind='" + driverBehind + '\''
+                + ", gapAhead=" + gapAhead
+                + ", gapBehind=" + gapBehind
+                + ", lap=" + lapNumber
+                + '}';
     }
 }

@@ -6,13 +6,13 @@ package com.polimi.f1.model;
 // ex csv: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832
 public class PitStopEvaluationAlert {
 
-    public static final String CSV_HEADER =
-            "driver,pitLapNumber,prePitPosition,postPitPosition,compound,result,"
+    public static final String CSV_HEADER
+            = "driver,pitLapNumber,prePitPosition,postPitPosition,compound,result,"
             + "trackStatusAtPit,tyreAgeAtPit,gapToCarAheadAtPit";
 
     public enum Result {
-        SUCCESS_UNDERCUT,       // gained positions (effective undercut)
-        SUCCESS_DEFEND,         // maintained position (defended successfully)
+        SUCCESS_UNDERCUT, // gained positions (effective undercut)
+        SUCCESS_DEFEND, // maintained position (defended successfully)
         FAILURE_LOST_POSITION   // lost positions
     }
 
@@ -26,12 +26,13 @@ public class PitStopEvaluationAlert {
     private int tyreAgeAtPit;             // laps completed on old tire set at pit entry
     private Double gapToCarAheadAtPit;    // gap in seconds to the car ahead when pitting
 
-    public PitStopEvaluationAlert() {}
+    public PitStopEvaluationAlert() {
+    }
 
     public PitStopEvaluationAlert(String driver, int pitLapNumber, int prePitPosition,
-                             int postPitPosition, String compound, Result result,
-                             String trackStatusAtPit, int tyreAgeAtPit,
-                             Double gapToCarAheadAtPit) {
+            int postPitPosition, String compound, Result result,
+            String trackStatusAtPit, int tyreAgeAtPit,
+            Double gapToCarAheadAtPit) {
         this.driver = driver;
         this.pitLapNumber = pitLapNumber;
         this.prePitPosition = prePitPosition;
@@ -43,34 +44,79 @@ public class PitStopEvaluationAlert {
         this.gapToCarAheadAtPit = gapToCarAheadAtPit;
     }
 
-    public String getDriver() { return driver; }
-    public void setDriver(String driver) { this.driver = driver; }
+    public String getDriver() {
+        return driver;
+    }
 
-    public int getPitLapNumber() { return pitLapNumber; }
-    public void setPitLapNumber(int pitLapNumber) { this.pitLapNumber = pitLapNumber; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
-    public int getPrePitPosition() { return prePitPosition; }
-    public void setPrePitPosition(int prePitPosition) { this.prePitPosition = prePitPosition; }
+    public int getPitLapNumber() {
+        return pitLapNumber;
+    }
 
-    public int getPostPitPosition() { return postPitPosition; }
-    public void setPostPitPosition(int postPitPosition) { this.postPitPosition = postPitPosition; }
+    public void setPitLapNumber(int pitLapNumber) {
+        this.pitLapNumber = pitLapNumber;
+    }
 
-    public String getCompound() { return compound; }
-    public void setCompound(String compound) { this.compound = compound; }
+    public int getPrePitPosition() {
+        return prePitPosition;
+    }
 
-    public Result getResult() { return result; }
-    public void setResult(Result result) { this.result = result; }
+    public void setPrePitPosition(int prePitPosition) {
+        this.prePitPosition = prePitPosition;
+    }
 
-    public String getTrackStatusAtPit() { return trackStatusAtPit; }
-    public void setTrackStatusAtPit(String trackStatusAtPit) { this.trackStatusAtPit = trackStatusAtPit; }
+    public int getPostPitPosition() {
+        return postPitPosition;
+    }
 
-    public int getTyreAgeAtPit() { return tyreAgeAtPit; }
-    public void setTyreAgeAtPit(int tyreAgeAtPit) { this.tyreAgeAtPit = tyreAgeAtPit; }
+    public void setPostPitPosition(int postPitPosition) {
+        this.postPitPosition = postPitPosition;
+    }
 
-    public Double getGapToCarAheadAtPit() { return gapToCarAheadAtPit; }
-    public void setGapToCarAheadAtPit(Double gapToCarAheadAtPit) { this.gapToCarAheadAtPit = gapToCarAheadAtPit; }
+    public String getCompound() {
+        return compound;
+    }
 
-    // csv row, ex: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832 
+    public void setCompound(String compound) {
+        this.compound = compound;
+    }
+
+    public Result getResult() {
+        return result;
+    }
+
+    public void setResult(Result result) {
+        this.result = result;
+    }
+
+    public String getTrackStatusAtPit() {
+        return trackStatusAtPit;
+    }
+
+    public void setTrackStatusAtPit(String trackStatusAtPit) {
+        this.trackStatusAtPit = trackStatusAtPit;
+    }
+
+    public int getTyreAgeAtPit() {
+        return tyreAgeAtPit;
+    }
+
+    public void setTyreAgeAtPit(int tyreAgeAtPit) {
+        this.tyreAgeAtPit = tyreAgeAtPit;
+    }
+
+    public Double getGapToCarAheadAtPit() {
+        return gapToCarAheadAtPit;
+    }
+
+    public void setGapToCarAheadAtPit(Double gapToCarAheadAtPit) {
+        this.gapToCarAheadAtPit = gapToCarAheadAtPit;
+    }
+
+    // ml-ready csv row, ex: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832
     public String toCsvRow() {
         return String.join(",",
                 driver,
