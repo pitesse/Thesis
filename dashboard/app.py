@@ -27,6 +27,9 @@ TOPIC_LAPS = "f1-laps"
 TOPIC_TRACK_STATUS = "f1-track-status"
 TOPIC_ALERTS = "f1-alerts"
 
+# max laps to keep in the gap evolution chart history
+GAP_HISTORY_MAX_LAPS = 40
+
 # track status code -> human readable label and color
 TRACK_STATUS_MAP = {
     "1": ("Green", "#00ff00"),
@@ -78,7 +81,7 @@ def try_connect():
         return None
 
 
-# session state: persist leaderboard and track status across streamlit reruns
+# session state: persist data across streamlit reruns
 if "leaderboard" not in st.session_state:
     st.session_state.leaderboard = {}
 if "track_status" not in st.session_state:
@@ -87,15 +90,34 @@ if "track_message" not in st.session_state:
     st.session_state.track_message = "Waiting for data..."
 if "alerts" not in st.session_state:
     st.session_state.alerts = []
+# gap history: {driver: {lap_number: cumulative_gap_seconds}}
+# cumulative gap is computed from race time relative to the leader each lap
+if "gap_history" not in st.session_state:
+    st.session_state.gap_history = {}
+# raw lap data keyed by driver, used for computing gaps per lap
+if "lap_race_times" not in st.session_state:
+    st.session_state.lap_race_times = {}
 
-# ui placeholders: using st.empty() so we can overwrite them each loop iteration
+# track status banner (above the columns)
 status_placeholder = st.empty()
 st.divider()
-st.subheader("Leaderboard")
-leaderboard_placeholder = st.empty()
-st.divider()
-st.subheader("Live Strategic Alerts")
-alerts_placeholder = st.empty()
+
+# two-column layout: leaderboard + alerts on left, charts on right
+col_left, col_right = st.columns([1, 1])
+
+with col_left:
+    st.subheader("Leaderboard")
+    leaderboard_placeholder = st.empty()
+    st.divider()
+    st.subheader("Live Strategic Alerts")
+    alerts_placeholder = st.empty()
+
+with col_right:
+    st.subheader("Gap to Leader Evolution")
+    gap_chart_placeholder = st.empty()
+    st.divider()
+    st.subheader("Tire Age Tracker")
+    tire_chart_placeholder = st.empty()
 
 # connection status
 conn_placeholder = st.sidebar.empty()
@@ -115,7 +137,7 @@ conn_placeholder.success("Connected to Kafka")
 # loop keeps it alive for streaming updates between interactions.
 while True:
     try:
-        messages = consumer.poll(timeout_ms=500, max_records=100) # type: ignore
+        messages = consumer.poll(timeout_ms=500, max_records=100)
     except Exception:
         # if consumer disconnects, try to reconnect
         time.sleep(2)
@@ -143,19 +165,54 @@ while True:
             elif topic == TOPIC_LAPS:
                 driver = msg.get("Driver")
                 if driver:
+                    lap_num = msg.get("LapNumber")
+                    tyre_life = msg.get("TyreLife", 0)
+
                     st.session_state.leaderboard[driver] = {
                         "Position": msg.get("Position"),
                         "Driver": driver,
-                        "Lap": msg.get("LapNumber"),
+                        "Lap": lap_num,
                         "Lap Time": format_lap_time(msg.get("LapTime")),
                         "Compound": msg.get("Compound", "—"),
-                        "Tyre Life": msg.get("TyreLife", "—"),
+                        "Tyre Life": tyre_life if tyre_life else "—",
                         "Gap Ahead": (
                             f"+{msg['GapToCarAhead']:.3f}s"
                             if msg.get("GapToCarAhead") is not None
                             else "Leader"
                         ),
                     }
+
+                    # track cumulative gap to leader for the evolution chart.
+                    # the producer sends GapToCarAhead (gap to the car immediately ahead),
+                    # so we accumulate these per-lap to build a relative picture.
+                    # approach: store each driver's position and gap-to-car-ahead per lap,
+                    # then reconstruct cumulative gap to P1 from sorted positions.
+                    if lap_num is not None:
+                        if lap_num not in st.session_state.lap_race_times:
+                            st.session_state.lap_race_times[lap_num] = {}
+                        st.session_state.lap_race_times[lap_num][driver] = {
+                            "position": msg.get("Position") or 99,
+                            "gap_to_car_ahead": msg.get("GapToCarAhead"),
+                        }
+
+                        # once we have data for this lap, recompute cumulative gaps
+                        lap_data = st.session_state.lap_race_times[lap_num]
+                        # sort drivers by position for this lap
+                        sorted_drivers = sorted(
+                            lap_data.items(), key=lambda x: x[1]["position"] or 99
+                        )
+                        cumulative = 0.0
+                        for drv, info in sorted_drivers:
+                            gap_ahead = info["gap_to_car_ahead"]
+                            if gap_ahead is not None and info["position"] > 1:
+                                cumulative += float(gap_ahead)
+                            else:
+                                cumulative = 0.0  # leader
+                            if drv not in st.session_state.gap_history:
+                                st.session_state.gap_history[drv] = {}
+                            st.session_state.gap_history[drv][lap_num] = round(
+                                cumulative, 3
+                            )
 
             elif topic == TOPIC_ALERTS:
                 # classify alert type from json fields emitted by flink's JsonSerializer.
@@ -229,5 +286,68 @@ while True:
         alerts_placeholder.dataframe(alerts_df, width="stretch", hide_index=True)
     else:
         alerts_placeholder.info("Waiting for Flink alerts...")
+
+    # render gap to leader evolution chart.
+    # builds a dataframe with lap numbers as index and drivers as columns,
+    # showing cumulative gap in seconds. only includes the top 3 drivers
+    # (by most recent position) to keep the chart readable.
+    if st.session_state.gap_history:
+        # determine top 3 drivers by current leaderboard position
+        if st.session_state.leaderboard:
+            sorted_board = sorted(
+                st.session_state.leaderboard.values(),
+                key=lambda x: x.get("Position") or 99,
+            )
+            top_drivers = [d["Driver"] for d in sorted_board[:3]]
+        else:
+            top_drivers = list(st.session_state.gap_history.keys())[:3]
+
+        # build the chart dataframe: rows = lap numbers, columns = drivers
+        gap_data = {}
+        for drv in top_drivers:
+            if drv in st.session_state.gap_history:
+                gap_data[drv] = st.session_state.gap_history[drv]
+
+        if gap_data:
+            gap_df = pd.DataFrame(gap_data)
+            gap_df.index.name = "Lap"
+            gap_df = gap_df.sort_index()
+            # trim to last N laps for readability
+            if len(gap_df) > GAP_HISTORY_MAX_LAPS:
+                gap_df = gap_df.iloc[-GAP_HISTORY_MAX_LAPS:]
+            gap_chart_placeholder.line_chart(gap_df)
+        else:
+            gap_chart_placeholder.info("Waiting for gap data...")
+    else:
+        gap_chart_placeholder.info("Waiting for gap data...")
+
+    # render tire age tracker as a horizontal bar chart.
+    # shows tyre life (laps) for the top 5 drivers by position.
+    if st.session_state.leaderboard:
+        sorted_board = sorted(
+            st.session_state.leaderboard.values(), key=lambda x: x.get("Position") or 99
+        )
+        top5 = sorted_board[:5]
+        tire_drivers = []
+        tire_lives = []
+        tire_compounds = []
+        for entry in top5:
+            tl = entry.get("Tyre Life", 0)
+            if tl == "—":
+                tl = 0
+            tire_drivers.append(entry["Driver"])
+            tire_lives.append(int(tl))
+            tire_compounds.append(entry.get("Compound", "?"))
+
+        tire_df = pd.DataFrame(
+            {
+                "Tyre Life (laps)": tire_lives,
+            },
+            index=tire_drivers,
+        )
+        tire_df.index.name = "Driver"
+        tire_chart_placeholder.bar_chart(tire_df, horizontal=True)
+    else:
+        tire_chart_placeholder.info("Waiting for lap data...")
 
     time.sleep(0.5)

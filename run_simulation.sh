@@ -164,9 +164,9 @@ DASHBOARD_PID=$!
 echo "       Dashboard running (PID $DASHBOARD_PID) at http://localhost:8501"
 
 # open the dashboard in the default browser after a short delay so streamlit
-# has time to bind the port. uses xdg-open (freedesktop.org standard on linux),
-# falls back silently if no display is available (e.g., headless server).
-(sleep 2 && xdg-open "http://localhost:8501" 2>/dev/null) &
+# has time to bind the port. uses python's webbrowser module which works on
+# linux, macos, and windows/wsl without platform-specific commands.
+(sleep 2 && python -m webbrowser "http://localhost:8501" 2>/dev/null) &
 
 # ===========================
 # 7. start python producer
