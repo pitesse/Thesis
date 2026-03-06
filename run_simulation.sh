@@ -90,7 +90,7 @@ echo "========================================"
 # 1. tear down existing stack
 # ===========================
 echo "[1/7] Tearing down existing containers..."
-sudo docker compose -f "$PROJECT_DIR/docker-compose.yml" down -v 2>/dev/null || true
+docker compose -f "$PROJECT_DIR/docker-compose.yml" down -v 2>/dev/null || true
 
 # ===========================
 # 2. build the flink fat jar
@@ -104,11 +104,11 @@ cd "$PROJECT_DIR"
 # 3. prepare data_lake directory + start docker stack
 # ===========================
 # flink:1.20-java17 runs as user "flink" (uid 9999). the bind-mounted data_lake
-# directory must be writable by that uid, otherwise FileSink silently fails.
+# directory must be writable by that uid. chmod 777 avoids requiring sudo/chown
+# and is acceptable here since this is a local development mount, not a shared server.
 echo "[3/7] Starting Docker stack..."
-mkdir -p "$PROJECT_DIR/data_lake"
-sudo chown 9999:9999 "$PROJECT_DIR/data_lake"
-sudo docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d
+mkdir -p "$PROJECT_DIR/data_lake" && chmod -R 777 "$PROJECT_DIR/data_lake"
+docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d
 
 # wait for flink jobmanager rest api to be ready
 echo "       Waiting for Flink JobManager REST API..."
@@ -129,7 +129,7 @@ done
 # ===========================
 echo "[4/7] Creating Kafka topics..."
 for topic in f1-telemetry f1-laps f1-track-status f1-alerts; do
-	sudo docker exec kafka kafka-topics \
+	docker exec kafka kafka-topics \
 		--bootstrap-server localhost:29092 \
 		--create --topic "$topic" \
 		--partitions 1 --replication-factor 1 \
@@ -140,9 +140,9 @@ done
 # 5. copy jar and submit flink job
 # ===========================
 echo "[5/7] Submitting Flink job (pit-loss=${PIT_LOSS})..."
-sudo docker exec flink-jobmanager mkdir -p /opt/flink/usrlib
-sudo docker cp "$PROCESSOR_DIR/target/$JAR_NAME" flink-jobmanager:/opt/flink/usrlib/
-sudo docker exec flink-jobmanager flink run \
+docker exec flink-jobmanager mkdir -p /opt/flink/usrlib
+docker cp "$PROCESSOR_DIR/target/$JAR_NAME" flink-jobmanager:/opt/flink/usrlib/
+docker exec flink-jobmanager flink run \
 	-d \
 	"/opt/flink/usrlib/$JAR_NAME" \
 	--pit-loss "$PIT_LOSS"

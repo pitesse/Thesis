@@ -1,8 +1,6 @@
 package com.polimi.f1;
 
 import java.time.Duration;
-import java.util.List;
-import java.util.Map;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.MapFunction;
@@ -10,14 +8,7 @@ import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.cep.CEP;
-import org.apache.flink.cep.PatternStream;
-import org.apache.flink.cep.nfa.aftermatch.AfterMatchSkipStrategy;
-import org.apache.flink.cep.pattern.Pattern;
-import org.apache.flink.cep.pattern.conditions.SimpleCondition;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.connector.base.DeliveryGuarantee;
@@ -29,9 +20,7 @@ import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsIni
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
 import org.apache.flink.streaming.api.windowing.assigners.EventTimeSessionWindows;
@@ -42,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.polimi.f1.alerts.LiftCoastDetector;
 import com.polimi.f1.alerts.PitWindowDetector;
 import com.polimi.f1.alerts.TireDropDetector;
 import com.polimi.f1.context.DrsTrainDetector;
@@ -194,61 +184,9 @@ public class F1StreamingJob {
 
         // module c: real-time alerts
         // c1: lift & coast detection (cep)
-        // uses the enriched stream (carries track status context)
-        KeyedStream<TelemetryEvent, String> keyedTelemetry
-                = enrichedTelemetry.keyBy(TelemetryEvent::getDriver);
-
-        // lift & coast cep pattern: detects fuel-saving maneuvers.
-        // sequence: throttle=100 -> throttle=0 -> brake>0, all within 2 seconds.
-        // followedBy (not next) allows non-relevant events between steps, real telemetry
-        // has intermediate throttle values and gear changes between pedal transitions.
-        // skipPastLastEvent prevents combinatorial explosion: at 4Hz, multiple consecutive
-        // full-throttle samples would each independently match the same lift+brake event.
-        // after a match, scanning resumes after the brake event, yielding one alert per braking zone.
-        Pattern<TelemetryEvent, ?> liftAndCoastPattern = Pattern // TODO move this to its own class for clarity and reuse 
-                .<TelemetryEvent>begin("full-throttle", AfterMatchSkipStrategy.skipPastLastEvent())
-                .where(new SimpleCondition<TelemetryEvent>() {
-                    @Override
-                    public boolean filter(TelemetryEvent e) {
-                        return e.getThrottle() == 100;
-                    }
-                })
-                .followedBy("lift")
-                .where(new SimpleCondition<TelemetryEvent>() {
-                    @Override
-                    public boolean filter(TelemetryEvent e) {
-                        return e.getThrottle() == 0;
-                    }
-                })
-                .followedBy("coast-brake")
-                .where(new SimpleCondition<TelemetryEvent>() {
-                    @Override
-                    public boolean filter(TelemetryEvent e) {
-                        return e.getBrake() > 0;
-                    }
-                })
-                .within(Time.seconds(2));
-
-        PatternStream<TelemetryEvent> patternStream
-                = CEP.pattern(keyedTelemetry, liftAndCoastPattern);
-
-        DataStream<LiftCoastAlert> rawLiftCoastAlerts = patternStream.select((Map<String, List<TelemetryEvent>> match) -> {
-            TelemetryEvent ft = match.get("full-throttle").get(0);
-            TelemetryEvent li = match.get("lift").get(0);
-            TelemetryEvent br = match.get("coast-brake").get(0);
-            return new LiftCoastAlert(
-                    ft.getDriver(), ft.getDate(), li.getDate(),
-                    br.getDate(), ft.getTrackStatus());
-        });
-
-        // the cep's followedBy with relaxed contiguity causes N consecutive throttle=100
-        // samples to each independently match the same lift+brake event, producing N alerts
-        // for the same braking zone. this function suppresses duplicates by comparing the
-        // brake timestamp (dedup key) against the last emitted alert for each driver.
-        DataStream<LiftCoastAlert> liftCoastAlerts = rawLiftCoastAlerts
-                .keyBy(LiftCoastAlert::getDriver)
-                .process(new LiftCoastDedup())
-                .name("Lift & Coast Dedup");
+        // uses the enriched stream (carries track status context).
+        // pattern, select, and dedup logic encapsulated in LiftCoastDetector.
+        DataStream<LiftCoastAlert> liftCoastAlerts = LiftCoastDetector.detect(enrichedTelemetry);
 
         //  c2: tire drop detection 
         // detects when rolling 3-lap average degrades beyond 1.5s from stint best
@@ -455,32 +393,4 @@ public class F1StreamingJob {
         String apply(T value);
     }
 
-    // suppresses duplicate lift & coast alerts from the same braking zone.
-    // cep with followedBy fires N matches for N consecutive throttle=100 samples that all
-    // converge on the same lift+brake event. this function keeps only the first alert per
-    // braking zone by comparing brake timestamps, any alert with the same brakeDate as the
-    // previous one is a duplicate and gets dropped. 
-    //TODO move this in a different file like tiredrop and pitwindow detectors for clarity and reuse
-    private static class LiftCoastDedup extends KeyedProcessFunction<String, LiftCoastAlert, LiftCoastAlert> {
-
-        private transient ValueState<String> lastBrakeDate;
-
-        @Override
-        public void open(Configuration params) {
-            lastBrakeDate = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("lastBrake", String.class)
-            );
-        }
-
-        @Override
-        public void processElement(LiftCoastAlert alert, Context ctx,
-                Collector<LiftCoastAlert> out) throws Exception {
-            String currentBrake = alert.getBrakeDate();
-            String last = lastBrakeDate.value();
-            if (!currentBrake.equals(last)) {
-                out.collect(alert);
-                lastBrakeDate.update(currentBrake);
-            }
-        }
-    }
 }

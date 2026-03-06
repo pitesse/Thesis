@@ -137,7 +137,7 @@ conn_placeholder.success("Connected to Kafka")
 # loop keeps it alive for streaming updates between interactions.
 while True:
     try:
-        messages = consumer.poll(timeout_ms=500, max_records=100)
+        messages = consumer.poll(timeout_ms=500, max_records=100) # type: ignore
     except Exception:
         # if consumer disconnects, try to reconnect
         time.sleep(2)
