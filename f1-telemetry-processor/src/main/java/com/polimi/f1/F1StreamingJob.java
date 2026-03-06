@@ -18,6 +18,7 @@ import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.runtime.state.storage.FileSystemCheckpointStorage;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -70,6 +71,8 @@ public class F1StreamingJob {
         // checkpointing every 5s: required for FileSink to commit in-progress part files
         // and for KafkaSink to guarantee at-least-once delivery to the alerts topic.
         env.enableCheckpointing(5000);
+        env.getCheckpointConfig().setCheckpointStorage(
+                new FileSystemCheckpointStorage("file:///opt/flink/data_lake/checkpoints"));
 
         // kafka sources
         // high-frequency car telemetry (~4 Hz per driver)
@@ -222,9 +225,7 @@ public class F1StreamingJob {
         pitWindowAlerts.map(PitWindowAlert::toString).returns(String.class).print().name("Pit Window Alerts");
         drsTrainAlerts.print().name("DRS Train Alerts");
 
-
         // file sinks (csv for ml dataset generation)
-        
         // persists ground truth and alert streams to disk as csv (one row per event, header-prefixed).
         // rolling policy: new file every 5 min or 128 MB, whichever comes first.
         // inactivity interval (3 min) ensures files are finalized promptly during low-traffic periods.
@@ -271,9 +272,7 @@ public class F1StreamingJob {
         pitEvalsCsv.sinkTo(pitEvalSink).name("FileSink: Pit Evaluations");
         tireDropsCsv.sinkTo(tireDropSink).name("FileSink: Tire Drops");
 
-
         // kafka sink (route alerts to dashboard via f1-alerts topic)
-
         // the dashboard subscribes to f1-alerts to display live strategic alerts.
         // all three alert types are serialized to json, unioned into a single stream,
         // and published to kafka. at-least-once delivery is sufficient for display purposes.

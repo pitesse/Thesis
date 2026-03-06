@@ -107,7 +107,8 @@ cd "$PROJECT_DIR"
 # directory must be writable by that uid. chmod 777 avoids requiring sudo/chown
 # and is acceptable here since this is a local development mount, not a shared server.
 echo "[3/7] Starting Docker stack..."
-mkdir -p "$PROJECT_DIR/data_lake" && chmod -R 777 "$PROJECT_DIR/data_lake"
+mkdir -p "$PROJECT_DIR/data_lake"
+chmod -R 777 "$PROJECT_DIR/data_lake" 2>/dev/null || true
 docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d
 
 # wait for flink jobmanager rest api to be ready
@@ -169,9 +170,9 @@ echo "       Dashboard running (PID $DASHBOARD_PID) at http://localhost:8501"
 (sleep 2 && python -m webbrowser "http://localhost:8501" 2>/dev/null) &
 
 # ===========================
-# 7. start python producer
+# 7. prepare data + start python producer
 # ===========================
-echo "[7/7] Starting Python producer..."
+echo "[7/7] Starting Python producer (two-stage pipeline)..."
 echo "       Args: --year $YEAR --race \"$RACE\" --session $SESSION --speed $SPEED --start-lap $START_LAP"
 
 # activate venv if it exists, otherwise use system python
@@ -181,7 +182,22 @@ elif [ -f "$PRODUCER_DIR/.venv/bin/activate" ]; then
 	source "$PRODUCER_DIR/.venv/bin/activate"
 fi
 
-python "$PRODUCER_DIR/src/main.py" \
+# stage 1: prepare parquet (skip if already exists for this race/year/session)
+SAFE_RACE=$(echo "$RACE" | tr ' ' '_')
+PARQUET_FILE="$PROJECT_DIR/data/${YEAR}_${SAFE_RACE}_${SESSION}_prepared.parquet"
+
+if [ -f "$PARQUET_FILE" ]; then
+	echo "       Parquet already exists: $PARQUET_FILE (skipping prepare)"
+else
+	echo "       Running prepare_race.py..."
+	python "$PRODUCER_DIR/src/prepare_race.py" \
+		--year "$YEAR" \
+		--race "$RACE" \
+		--session "$SESSION"
+fi
+
+# stage 2: stream to kafka
+python "$PRODUCER_DIR/src/stream_race.py" \
 	--year "$YEAR" \
 	--race "$RACE" \
 	--session "$SESSION" \
