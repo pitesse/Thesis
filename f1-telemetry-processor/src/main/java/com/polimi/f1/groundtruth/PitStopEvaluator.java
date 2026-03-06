@@ -135,6 +135,7 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
                 String trackStatusAtPit = entryLap != null ? entryLap.getTrackStatus() : null;
                 int tyreAgeAtPit = entryLap != null ? entryLap.getTyreLife() : 0;
                 Double gapAtPit = entryLap != null ? entryLap.getGapToCarAhead() : null;
+                String raceName = entryLap != null ? entryLap.getRace() : null;
 
                 out.collect(new PitStopEvaluationAlert(
                         lap.getDriver(),
@@ -145,7 +146,8 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
                         result,
                         trackStatusAtPit,
                         tyreAgeAtPit,
-                        gapAtPit
+                        gapAtPit,
+                        raceName
                 ));
 
                 clearState();

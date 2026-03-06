@@ -21,6 +21,50 @@ TOPIC_TELEMETRY = "f1-telemetry"
 TOPIC_LAPS = "f1-laps"
 TOPIC_TRACK_STATUS = "f1-track-status"
 
+# pit loss times (seconds) per track under green, vsc, and safety car conditions.
+# values reflect the pit lane time delta: how much time a driver loses by entering
+# the pit lane vs staying on track. depends on pit entry/exit geometry, speed limit
+# zone length, and whether the pit lane bypasses slow corners.
+# covers all circuits used in the 2022-2025 ground-effect era.
+PIT_LOSS_BY_RACE = {
+    # 2022-2025 calendar (ground-effect era)
+    "Bahrain Grand Prix":        {"green": 22.0, "vsc": 13.0, "sc": 10.0},
+    "Saudi Arabian Grand Prix":  {"green": 24.0, "vsc": 14.5, "sc": 11.5},
+    "Australian Grand Prix":     {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "Japanese Grand Prix":       {"green": 24.0, "vsc": 14.5, "sc": 11.5},
+    "Chinese Grand Prix":        {"green": 23.5, "vsc": 14.0, "sc": 11.0},
+    "Miami Grand Prix":          {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "Emilia Romagna Grand Prix": {"green": 23.0, "vsc": 13.5, "sc": 10.5},
+    "Monaco Grand Prix":         {"green": 20.0, "vsc": 12.0, "sc": 9.5},
+    "Spanish Grand Prix":        {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Canadian Grand Prix":       {"green": 21.5, "vsc": 13.0, "sc": 10.0},
+    "Austrian Grand Prix":       {"green": 21.0, "vsc": 12.5, "sc": 9.5},
+    "British Grand Prix":        {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Hungarian Grand Prix":      {"green": 21.5, "vsc": 13.0, "sc": 10.0},
+    "Belgian Grand Prix":        {"green": 23.5, "vsc": 14.0, "sc": 11.0},
+    "Dutch Grand Prix":          {"green": 21.5, "vsc": 13.0, "sc": 10.0},
+    "Italian Grand Prix":        {"green": 25.0, "vsc": 15.0, "sc": 12.0},
+    "Azerbaijan Grand Prix":     {"green": 24.5, "vsc": 15.0, "sc": 12.0},
+    "Singapore Grand Prix":      {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "United States Grand Prix":  {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Mexico City Grand Prix":    {"green": 22.0, "vsc": 13.0, "sc": 10.0},
+    "São Paulo Grand Prix":      {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "Las Vegas Grand Prix":      {"green": 24.0, "vsc": 14.5, "sc": 11.5},
+    "Qatar Grand Prix":          {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Abu Dhabi Grand Prix":      {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    # 2022 circuits not carried into later years
+    "French Grand Prix":         {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    # 2023+ additions
+    "Portuguese Grand Prix":     {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+}
+
+PIT_LOSS_DEFAULT = {"green": 22.0, "vsc": 14.0, "sc": 11.0}
+
+
+def get_pit_losses(race_name: str) -> dict:
+    """look up pit loss times for a given race name, fall back to default if unknown."""
+    return PIT_LOSS_BY_RACE.get(race_name, PIT_LOSS_DEFAULT)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -315,6 +359,16 @@ def build_replay_dataframe(session) -> pd.DataFrame:
     return replay_df
 
 
+def enrich_with_pit_losses(replay_df: pd.DataFrame, race_name: str) -> pd.DataFrame:
+    """inject Race, PitLoss, VscPitLoss, ScPitLoss columns into every row."""
+    losses = get_pit_losses(race_name)
+    replay_df["Race"] = race_name
+    replay_df["PitLoss"] = losses["green"]
+    replay_df["VscPitLoss"] = losses["vsc"]
+    replay_df["ScPitLoss"] = losses["sc"]
+    return replay_df
+
+
 def parquet_filename(year: int, race: str, session: str) -> str:
     """deterministic filename for the prepared parquet file.
     ex: 2023_Italian_Grand_Prix_R_prepared.parquet"""
@@ -335,7 +389,15 @@ if __name__ == "__main__":
         year=args.year, race=args.race, session_type=args.session
     )
     replay_df = build_replay_dataframe(race_session)
+    replay_df = enrich_with_pit_losses(replay_df, args.race)
     logging.info("Replay dataframe prepared with %d rows", len(replay_df))
+    logging.info(
+        "Pit losses for %s: green=%.1fs, vsc=%.1fs, sc=%.1fs",
+        args.race,
+        replay_df["PitLoss"].iloc[0],
+        replay_df["VscPitLoss"].iloc[0],
+        replay_df["ScPitLoss"].iloc[0],
+    )
 
     # save to the project-level data/ directory (same as fastf1 cache)
     out_dir = Path(__file__).resolve().parents[2] / "data"

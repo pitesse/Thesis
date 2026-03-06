@@ -12,12 +12,17 @@ public class RivalInfoAlert {
     private Double gapBehind;      // seconds, null if last
     private int lapNumber;
     private int position;
+    private String race;           // track name, propagated for pit window threshold lookup
+    private Double pitLoss;        // green-flag pit loss (seconds) for this track
+    private Double vscPitLoss;     // vsc pit loss (seconds)
+    private Double scPitLoss;      // safety car pit loss (seconds)
 
     public RivalInfoAlert() {
     }
 
     public RivalInfoAlert(String driver, String driverAhead, String driverBehind,
-            Double gapAhead, Double gapBehind, int lapNumber, int position) {
+            Double gapAhead, Double gapBehind, int lapNumber, int position,
+            String race, Double pitLoss, Double vscPitLoss, Double scPitLoss) {
         this.driver = driver;
         this.driverAhead = driverAhead;
         this.driverBehind = driverBehind;
@@ -25,6 +30,10 @@ public class RivalInfoAlert {
         this.gapBehind = gapBehind;
         this.lapNumber = lapNumber;
         this.position = position;
+        this.race = race;
+        this.pitLoss = pitLoss;
+        this.vscPitLoss = vscPitLoss;
+        this.scPitLoss = scPitLoss;
     }
 
     public String getDriver() {
@@ -83,6 +92,38 @@ public class RivalInfoAlert {
         this.position = position;
     }
 
+    public String getRace() {
+        return race;
+    }
+
+    public void setRace(String race) {
+        this.race = race;
+    }
+
+    public Double getPitLoss() {
+        return pitLoss;
+    }
+
+    public void setPitLoss(Double pitLoss) {
+        this.pitLoss = pitLoss;
+    }
+
+    public Double getVscPitLoss() {
+        return vscPitLoss;
+    }
+
+    public void setVscPitLoss(Double vscPitLoss) {
+        this.vscPitLoss = vscPitLoss;
+    }
+
+    public Double getScPitLoss() {
+        return scPitLoss;
+    }
+
+    public void setScPitLoss(Double scPitLoss) {
+        this.scPitLoss = scPitLoss;
+    }
+
     @Override
     public String toString() {
         return "RivalInfoAlert{"
@@ -93,6 +134,7 @@ public class RivalInfoAlert {
                 + ", gapAhead=" + gapAhead
                 + ", gapBehind=" + gapBehind
                 + ", lap=" + lapNumber
+                + ", race='" + race + '\''
                 + '}';
     }
 }

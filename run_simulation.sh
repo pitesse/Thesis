@@ -4,9 +4,12 @@
 # end-to-end automation: tears down old containers, rebuilds the flink jar,
 # starts the docker stack, submits the flink job, and launches the python producer.
 #
+# pit loss thresholds are embedded by the python producer (per-track enrichment),
+# no need to specify them here.
+#
 # usage:
-#   ./run_simulation.sh                                          # defaults: monza 2023, speed 50, pit-loss 25
-#   ./run_simulation.sh --year 2023 --race "Australian Grand Prix" --speed 50 --pit-loss 22
+#   ./run_simulation.sh                                          # defaults: monza 2023, speed 50
+#   ./run_simulation.sh --year 2023 --race "Australian Grand Prix" --speed 50
 #   ./run_simulation.sh --year 2024 --race "British Grand Prix" --session Q --speed 10
 
 set -euo pipefail
@@ -19,7 +22,6 @@ RACE="Italian Grand Prix"
 SESSION="R"
 SPEED=50
 START_LAP=1
-PIT_LOSS=25.0
 
 # ===========================
 # parse arguments
@@ -44,10 +46,6 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--start-lap)
 		START_LAP="$2"
-		shift 2
-		;;
-	--pit-loss)
-		PIT_LOSS="$2"
 		shift 2
 		;;
 	*)
@@ -83,7 +81,6 @@ echo " Race:      $RACE"
 echo " Session:   $SESSION"
 echo " Speed:     ${SPEED}x"
 echo " Start Lap: $START_LAP"
-echo " Pit Loss:  ${PIT_LOSS}s"
 echo "========================================"
 
 # ===========================
@@ -140,13 +137,12 @@ done
 # ===========================
 # 5. copy jar and submit flink job
 # ===========================
-echo "[5/7] Submitting Flink job (pit-loss=${PIT_LOSS})..."
+echo "[5/7] Submitting Flink job..."
 docker exec flink-jobmanager mkdir -p /opt/flink/usrlib
 docker cp "$PROCESSOR_DIR/target/$JAR_NAME" flink-jobmanager:/opt/flink/usrlib/
 docker exec flink-jobmanager flink run \
 	-d \
-	"/opt/flink/usrlib/$JAR_NAME" \
-	--pit-loss "$PIT_LOSS"
+	"/opt/flink/usrlib/$JAR_NAME"
 
 # ===========================
 # 6. launch streamlit dashboard

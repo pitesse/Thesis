@@ -63,7 +63,11 @@ public class RivalIdentificationFunction
                             gapAhead,
                             gapBehind,
                             lapNumber,
-                            current.getPosition()
+                            current.getPosition(),
+                            current.getRace(),
+                            current.getPitLoss(),
+                            current.getVscPitLoss(),
+                            current.getScPitLoss()
                     ));
         }
     }
