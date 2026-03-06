@@ -1,0 +1,609 @@
+\documentclass[a4paper,twocolumn]{article}
+
+%------------------------------------------------------------------------------
+%   POLIMI STYLE AND PACKAGES
+%------------------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{top=3cm, bottom=2.5cm, left=1.5cm, right=1.5cm}
+
+\usepackage{color}
+\usepackage{xcolor}
+\definecolor{bluepoli}{cmyk}{0.4,0.1,0,0.4} % The official PoliMi Blue
+
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{caption}
+
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{listings}
+\usepackage{cite}
+
+\titleformat{\section}
+{\color{bluepoli}\normalfont\Large\bfseries}
+{\color{bluepoli}\thesection}{1em}{}
+
+\titleformat{\subsection}
+{\color{bluepoli}\normalfont\large\bfseries}
+{\color{bluepoli}\thesubsection}{1em}{}
+
+\graphicspath{{./Images/}}
+
+\setlength{\headheight}{85pt}
+\addtolength{\topmargin}{-35pt}
+\pagestyle{fancy}
+\fancyhf{}
+
+\fancyhead[L]{\includegraphics[height=1.8cm]{logo_polimi_scritta2}}
+\fancyhead[R]{\bfseries\color{bluepoli} F1 Strategy Operations}
+\fancyfoot[C]{\thepage}
+
+\renewcommand{\headrulewidth}{0.5pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{bluepoli}\leaders\hrule height \headrulewidth\hfill}}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=fullflexible,
+  keepspaces=true,
+  linewidth=\columnwidth,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+  xleftmargin=2.2em,
+  framexleftmargin=2.2em,
+  framesep=2pt,
+    keywordstyle=\color{bluepoli},
+    commentstyle=\color{green!60!black},
+    stringstyle=\color{red},
+    showstringspaces=false,
+    captionpos=b,
+    rulecolor=\color{bluepoli}
+}
+
+%------------------------------------------------------------------------------
+%   DOCUMENT CONTENT
+%------------------------------------------------------------------------------
+\begin{document}
+
+\twocolumn[{
+
+      \begin{center}
+        {\LARGE \bfseries \color{bluepoli} Real-time F1 Strategy Operations:\\ A Stream Processing Architecture for Pit Wall Simulation}\\[1em]
+        {\large Pietro Pizzoccheri}\\[0.5em]
+        {\itshape Department of Electronics, Information and Bioengineering}\\
+        {\itshape Politecnico di Milano, Milan, Italy}\\
+        {\ttfamily pietro.pizzoccheri@mail.polimi.it}\\[1em]
+      \end{center}
+
+
+      \vspace{1em}
+
+
+      \begin{abstract}
+        This report presents a stream processing architecture that simulates
+        a Formula~1 pit wall decision support system. The pipeline ingests
+        historical race telemetry through a Python producer backed by the
+        \texttt{fastf1} library, decouples it via three dedicated Apache Kafka
+        topics, and processes it in Apache Flink 1.20 using event-time
+        semantics, stateful operators, and Complex Event Processing (CEP).
+        The system is structured in three modules: \emph{Context Awareness}
+        (track status enrichment, rival identification, DRS train detection),
+        \emph{Ground Truth Generation} (pit stop outcome classification via a
+        stateful observation window), and \emph{Real-Time Alerts} (lift \&
+        coast detection, tire degradation monitoring, dynamic pit window
+        thresholding). Special attention is given to latency management
+        through watermark strategies, idle source handling for sparse streams,
+        and to rule correctness through broadcast state, session windows,
+        skip strategies, and event-time timers. The architecture is validated
+        on multiple historical races, demonstrating reproducible, deterministic
+        processing independent of wall-clock execution speed.
+      \end{abstract}
+
+      \vspace{1em}
+    }]
+
+\section{Introduction}
+
+Pit wall strategy in Formula~1 involves continuous, multi-dimensional
+decision-making under tight latency constraints. Engineers must synthesize
+car telemetry arriving at several hertz, per-lap timing summaries, tire
+degradation trends, and evolving track conditions, all while evaluating
+whether a pit stop at the current moment would gain or lose track position.
+Historically this expertise resides in the intuition of experienced
+strategists, making it difficult to reproduce, benchmark, or scale.
+
+The objective of this project is to construct a streaming data pipeline
+that replays historical F1 race data with original inter-sample timing,
+processes it through stateful operators that encode the business logic of a
+pit wall, and produces structured output suitable for building a strategic
+ground truth dataset. Such a dataset forms the foundation for future
+machine learning models that can predict optimal pit windows, classify
+undercut opportunities, and forecast tire degradation cliffs.
+
+\subsection{Scope and Module Division}
+
+The processing logic is divided into three modules reflecting distinct
+strategic concerns:
+
+\begin{itemize}
+  \item \textbf{Module~A: Context Awareness.} Maintains a global view
+    of the race state: current track status (green, Virtual Safety Car,
+    Safety Car), identification of the car ahead and behind each driver
+    with gap deltas, and detection of DRS trains where multiple cars are
+    trapped within one second of each other.
+  \item \textbf{Module~B: Ground Truth Generation.} Classifies each
+    observed pit stop as \textsc{success\_undercut},
+    \textsc{success\_defend}, or \textsc{failure\_lost\_position} by
+    comparing the driver's position before entering the pits to their
+    position after three subsequent clean laps.
+  \item \textbf{Module~C: Real-Time Alerts.} Detects fuel-saving
+    lift-and-coast maneuvers via CEP pattern matching, monitors tire
+    performance degradation relative to a rolling stint baseline, and
+    evaluates whether the gap to the car behind exceeds a dynamic
+    threshold that would allow a pit stop without losing position.
+\end{itemize}
+
+The remainder of this report is organized as follows: Section~II
+describes the architecture and data flow. Section~III discusses
+latency and time management. Section~IV details the correctness of
+each processing rule. Section~V presents evaluation results on
+historical races. Section~VI concludes with future directions.
+
+\section{Architecture and Data Flow}
+
+The system follows a producer--broker--consumer architecture where each
+component is independently deployable. The Python producer and the Flink
+processor communicate exclusively through Kafka, enabling independent
+scaling and fault isolation.
+
+\subsection{Producer: Historical Replay with Original Timing}
+
+The producer is a Python script that loads a historical F1 session via the
+\texttt{fastf1} library, which provides access to official FIA timing data
+including per-sample car telemetry, per-lap summaries, and track status
+changes. The replay mechanism merges all drivers' telemetry into a single
+chronologically sorted dataframe and emits each row to Kafka with a
+\texttt{time.sleep()} delay proportional to the original $\Delta t$
+between consecutive samples, scaled by a configurable speed multiplier.
+This preserves the relative timing characteristics of the original race:
+high-frequency telemetry bursts during straights, gaps during pit stops,
+and sparse track status transitions.
+
+The producer is parameterized via command-line arguments (\texttt{--year},
+\texttt{--race}, \texttt{--session}, \texttt{--speed},
+\texttt{--start-lap}), allowing any historical session from 2018 onward to
+be replayed without code changes.
+
+\subsection{Kafka: Three-Topic Decoupling}
+
+A central architectural decision is the separation of race data into three
+Kafka topics with fundamentally different arrival rates:
+
+\begin{enumerate}
+  \item \textbf{\texttt{f1-telemetry}} ($\sim$4\,Hz per driver):
+    per-sample car data including speed, throttle, brake, gear, RPM, and
+    DRS state.
+  \item \textbf{\texttt{f1-laps}} ($\sim$1 event per driver every
+    $\sim$80\,s): per-lap summaries with lap time, sector times, position,
+    compound, tire life, stint number, and pit in/out timestamps.
+  \item \textbf{\texttt{f1-track-status}} ($\sim$1--5 per race): global
+    track status transitions (green, yellow, VSC, Safety Car, red flag).
+\end{enumerate}
+
+This separation is not merely organizational---it is required for correct
+watermark progression in Flink. If all three event types were multiplexed
+onto a single topic, the sparse track status events (minutes apart) would
+prevent Flink from advancing the global watermark past the last track
+status timestamp, effectively stalling all downstream operators that depend
+on event-time progress. With separate sources, each stream advances its
+watermark independently, and the idleness mechanism (Section~III)
+prevents the sparsest stream from blocking the pipeline.
+
+\subsection{Flink: Stateful Stream Processing}
+
+The Flink job (\texttt{F1StreamingJob}) consumes all three Kafka sources
+at parallelism~1, deserializes JSON payloads via Jackson into typed POJOs
+(\texttt{TelemetryEvent}, \texttt{LapEvent}, \texttt{TrackStatusEvent}),
+assigns event-time watermarks, and routes events through the three
+processing modules. The job accepts runtime parameters via Flink's
+\texttt{ParameterTool} (e.g., \texttt{--pit-loss 22.0}) to adapt
+thresholds to different circuits.
+
+Deserialization uses a generic \texttt{RichFlatMapFunction<String,\,T>}
+that silently drops malformed records with a warning log rather than
+failing the pipeline. Explicit \texttt{.returns()} type hints are required
+after each \texttt{flatMap} and lambda \texttt{map} to work around Java
+type erasure in Flink's generic type inference.
+
+\section{Latency and Time Management}
+
+Correct time semantics are the foundation of reproducible stream
+processing. This section details the choices made to ensure that the
+pipeline produces identical results regardless of the wall-clock speed at
+which the producer replays the race.
+
+\subsection{Event Time over Processing Time}
+
+All operators in the pipeline operate on \emph{event time} extracted from
+the ISO-8601 \texttt{Date} field embedded in each JSON payload by the
+Python producer. This field carries the original race timestamp (e.g.,
+\texttt{2023-09-03T13:05:12.003Z}), which is converted to epoch
+milliseconds at deserialization time via \texttt{Instant.parse()} or
+\texttt{LocalDateTime.parse()} with a UTC assumption.
+
+Using event time rather than processing time ensures that:
+\begin{itemize}
+  \item Running the producer at $50\times$ speed produces the same output
+    as $1\times$ speed---only wall-clock duration changes.
+  \item Network delays, garbage-collection pauses, and container
+    scheduling jitter do not affect window boundaries or timer firings.
+  \item The same Kafka recording can be replayed months later with
+    identical results, enabling reproducible ground truth datasets.
+\end{itemize}
+
+\subsection{Watermark Strategy}
+
+Watermarks are assigned per-source using
+\texttt{BoundedOutOfOrderness(Duration.ofSeconds(5))}. The 5-second bound
+accommodates two sources of disorder:
+
+\begin{enumerate}
+  \item \textbf{Producer jitter:} the Python producer iterates rows
+    sequentially with per-row sleeps, so events for different drivers at
+    nominally the same race timestamp may arrive several hundred
+    milliseconds apart.
+  \item \textbf{Kafka partition ordering:} within a single partition,
+    ordering is guaranteed, but the consumer may observe minor
+    out-of-orderness when reading from the partition buffer during
+    high-throughput bursts.
+\end{enumerate}
+
+A bound tighter than 5 seconds risks dropping late telemetry events; a
+bound significantly larger would delay watermark advancement and increase
+output latency. The 5-second value was empirically validated across
+multiple races at replay speeds of $1\times$ to $100\times$.
+
+\subsection{Idle Source Handling for Sparse Streams}
+
+The track status stream presents a unique challenge. During a clean race,
+only three events may arrive over 90~minutes: an initial ``AllClear,'' a
+mid-race yellow flag, and a return to green. Between these events, the
+source produces no records, and without intervention, its watermark
+remains frozen at the timestamp of the last track status event.
+
+In Flink, the global watermark across unionized sources advances at the
+pace of the \emph{slowest} source. A stalled track status watermark would
+therefore prevent all downstream operators---session windows, CEP
+patterns, event-time timers---from making progress.
+
+The solution is the \texttt{withIdleness(Duration.ofSeconds(30))}
+configuration on the track status watermark strategy. After 30 seconds
+without a new event, Flink marks the source as \emph{idle} and excludes
+it from the global watermark computation. The remaining two active
+sources (telemetry and laps) then drive watermark advancement unimpeded.
+When a new track status event eventually arrives, the source automatically
+reactivates and rejoins the watermark union.
+
+The 30-second threshold is chosen to be comfortably longer than the
+maximum expected inter-event gap within any single source during normal
+operation ($\sim$80\,s for laps, but those advance continuously), yet
+short enough that the pipeline does not stall during track status silence.
+
+\section{Correctness of the Rules}
+
+Each processing rule is implemented with a specific Flink operator pattern
+chosen to match the semantics of the underlying business logic. This
+section details each rule and justifies the operator selection.
+
+\subsection{Module A: Context Awareness}
+
+\subsubsection{Track Status Enrichment (Broadcast State)}
+
+Track status is a global, unkeyed dimension: all drivers on track share
+the same flag status at any given moment. Flink's \emph{broadcast state}
+pattern is the canonical mechanism for distributing such a slowly-changing
+dimension across a keyed stream. The \texttt{TrackStatusEnricher} extends
+\texttt{KeyedBroadcastProcessFunction}: the broadcast side writes the
+latest status code to a \texttt{MapStateDescriptor} on each incoming
+\texttt{TrackStatusEvent}, while the keyed side reads it for each
+\texttt{TelemetryEvent} and attaches the current status before forwarding.
+
+This approach avoids the semantically incorrect alternative of keying the
+track status by driver (which would require duplicating every status event
+per driver) and the operationally fragile alternative of using a static
+variable (which would not survive state recovery after a checkpoint
+restore).
+
+\subsubsection{Rival Identification (Session Windows)}
+
+Identifying the car ahead and behind each driver requires collecting all
+drivers' lap events for the same lap and sorting by position. This is
+implemented as a \texttt{ProcessWindowFunction} over an
+\texttt{EventTimeSessionWindow} with a 30-second gap, keyed by lap
+number.
+
+Session windows were chosen over tumbling or sliding windows because the
+absolute timestamps of lap completions vary from race to race and lap to
+lap. A session window with a 30-second gap naturally groups all drivers'
+events for the same lap (which arrive within seconds of each other due to
+the producer's chronological interleaving) without requiring explicit
+knowledge of lap boundaries. The 30-second gap is generous enough to
+tolerate producer jitter and replay speed variation, yet short enough that
+events from consecutive laps (separated by $\sim$80\,s at $1\times$
+speed) are never incorrectly merged.
+
+\subsubsection{DRS Train Detection}
+
+A DRS train is a contiguous sequence of cars where each consecutive pair
+is separated by less than one second, making overtaking with DRS
+ineffective due to the preceding car also having DRS. The
+\texttt{DrsTrainDetector} operates as a second-stage
+\texttt{ProcessWindowFunction} on the \texttt{RivalInfo} output, windowed
+again by lap number with a 10-second session gap. Within each window, it
+sorts rivals by position and scans for contiguous groups where
+\texttt{gapAhead < 1.0\,s}, emitting an alert for each group of two or
+more cars.
+
+\subsection{Module B: Ground Truth}
+
+\subsubsection{Pit Stop Evaluator (Keyed State Machine)}
+
+The \texttt{PitStopEvaluator} implements a state machine as a
+\texttt{KeyedProcessFunction<String, LapEvent, PitStopEvaluation>}, keyed
+by driver abbreviation. The state machine tracks five variables:
+\texttt{hasPitted} (boolean), \texttt{pitLapNumber},
+\texttt{prePitPosition}, \texttt{postPitCompound}, and a
+\texttt{ListState<LapEvent>} accumulating post-pit laps.
+
+The evaluation protocol proceeds as follows:
+\begin{enumerate}
+  \item \textbf{Pit detection:} When a \texttt{LapEvent} arrives with
+    \texttt{pitInTime $\neq$ null} and no pit is currently being
+    evaluated, the driver's position is recorded as the pre-pit baseline,
+    and the state machine transitions to the collection phase.
+  \item \textbf{Out-lap filtering:} The first post-pit lap (identified by
+    \texttt{pitOutTime $\neq$ null}) is skipped because pit lane transit
+    and cold tires make its timing unrepresentative. The tire compound is
+    recorded from this lap.
+  \item \textbf{Post-pit collection:} The next three clean laps are
+    accumulated in the list state.
+  \item \textbf{Classification:} Once three laps are collected, the
+    driver's position on the final lap is compared to the pre-pit
+    position: improved means \textsc{success\_undercut}; unchanged means
+    \textsc{success\_defend}; worsened means
+    \textsc{failure\_lost\_position}.
+  \item \textbf{State cleanup:} All state variables are cleared, readying
+    the operator for the next pit stop.
+\end{enumerate}
+
+An event-time timer is registered at pit detection with a 10-minute
+horizon. If three post-pit laps never arrive (e.g., the driver retired
+after the pit stop or the race ended), the timer fires and clears all
+stale state, preventing memory leaks in long-running deployments.
+
+\subsection{Module C: Real-Time Alerts}
+
+\subsubsection{Lift and Coast Detection (CEP)}
+
+Lift-and-coast is a fuel-saving technique where the driver releases the
+throttle before the normal braking point and coasts to the corner. The
+detection pattern is implemented using Flink's CEP library as a
+three-step sequence within a 2-second window:
+
+\begin{enumerate}
+  \item \texttt{full-throttle}: \texttt{Throttle == 100}
+  \item \texttt{lift}: \texttt{Throttle == 0}
+  \item \texttt{coast-brake}: \texttt{Brake > 0}
+\end{enumerate}
+
+The pattern uses \texttt{followedBy()} (relaxed contiguity) rather than
+\texttt{next()} (strict contiguity) between each step. This is essential
+because real telemetry contains intermediate throttle values (e.g., 80,
+60, 40) and gear-change events between the full-throttle phase and the
+complete lift. Strict contiguity would require the very next event to
+match, which almost never happens with 4\,Hz telemetry where throttle
+release is gradual over several samples.
+
+However, \texttt{followedBy()} with relaxed contiguity creates a
+combinatorial problem: if $N$ consecutive events have
+\texttt{Throttle == 100}, each independently matches as a
+\texttt{full-throttle} start, and all $N$ matches converge on the same
+\texttt{lift} and \texttt{coast-brake} events, producing $N$ duplicate
+alerts for a single braking zone.
+
+Two complementary mechanisms address this:
+\begin{itemize}
+  \item \textbf{Skip strategy:}
+    \texttt{AfterMatchSkipStrategy.skipPastLastEvent()} causes the CEP
+    engine to resume scanning after the \texttt{coast-brake} event of each
+    completed match, preventing earlier throttle samples from re-matching.
+    This reduced duplicates by $\sim$75\% in empirical testing.
+  \item \textbf{Post-CEP deduplication:} A downstream
+    \texttt{KeyedProcessFunction} (\texttt{LiftCoastDedup}) maintains per-driver
+    \texttt{ValueState<String>} storing the brake timestamp of the last
+    emitted alert. Any new alert with an identical brake timestamp is
+    suppressed. This eliminates the remaining duplicates caused by
+    multiple NFA instances completing simultaneously on the same brake
+    event, achieving zero actual duplicates while preserving all
+    legitimate alerts.
+\end{itemize}
+
+\subsubsection{Tire Degradation Monitoring}
+
+The \texttt{TireDropDetector} is a \texttt{KeyedProcessFunction} that
+maintains per-driver state: the current stint number, the best clean lap
+time in the stint, and a rolling buffer of the last three lap times. On
+each new clean lap (excluding pit in-laps and out-laps), the rolling
+3-lap average is compared to the stint best. When the delta exceeds
+1.5~seconds, a \texttt{TireDropAlert} is emitted carrying the driver,
+lap number, compound, tire age, average time, best time, and delta.
+
+State is automatically reset when a stint change is detected (the
+\texttt{stint} field changes between consecutive \texttt{LapEvent}s),
+establishing a fresh baseline for the new tire set. This ensures that
+degradation is always measured relative to the current compound's peak
+performance.
+
+\subsubsection{Dynamic Pit Window Thresholding (Broadcast State)}
+
+The \texttt{PitWindowDetector} evaluates whether the gap to the car
+behind is large enough to absorb a pit stop without losing position. The
+critical insight is that the \emph{pit stop time loss} varies dramatically
+with track conditions: under green-flag conditions at Monza, the pit lane
+delta is approximately 25~seconds, but under a Virtual Safety Car (where
+cars slow to a delta time), the effective loss drops to $\sim$15~seconds,
+and under a full Safety Car (where the field bunches up), the loss can be
+as low as 5~seconds.
+
+The detector receives its green-flag threshold as a constructor parameter
+(configurable via \texttt{--pit-loss} at job submission) and dynamically
+scales the VSC and SC thresholds relative to it:
+$\text{VSC} = \max(\text{pitLoss} - 10,\; 5.0)$ and
+$\text{SC} = \max(\text{pitLoss} - 20,\; 5.0)$.
+The current track status is obtained through the same broadcast state
+pattern used by the \texttt{TrackStatusEnricher}, ensuring that threshold
+selection reacts immediately to flag changes. Under yellow or red flag
+conditions, alerts are suppressed entirely, as the pit lane may be closed.
+
+\section{Evaluation and Validation}
+
+The system was validated on multiple historical races with different
+characteristics to exercise all processing rules under varied conditions.
+
+\subsection{2023 Italian Grand Prix (Monza)}
+
+The primary development and validation target was the 2023 Italian Grand
+Prix, selected for its well-documented pit stop outcomes and DRS-dependent
+racing at a power-sensitive circuit. The producer dynamically extracts all
+drivers present in the session data (typically 20 on a full grid), scaling
+linearly with grid size. With default thresholds
+(\texttt{--pit-loss 25.0}) and the full 20-driver grid, the system produced:
+\begin{itemize}
+  \item \textbf{Lift \& Coast:} $\sim$3\,000 unique alerts (0 actual
+    duplicates after deduplication), with per-driver rates reflecting
+    individual driving styles at Monza's approximately eight braking zones.
+  \item \textbf{Tire Drop:} alerts correctly identifying degradation
+    across the grid in the closing laps of each stint.
+  \item \textbf{DRS Train:} extensive train detection across the field,
+    capturing the densely packed midfield characteristic of modern F1.
+  \item \textbf{Pit Evaluations:} $\sim$20 classifications (one per
+    driver per pit stop), all consistent with historical race records.
+    For the top-3 drivers specifically: SAI Lap~19
+    \textsc{success\_defend}, VER Lap~20
+    \textsc{failure\_lost\_position}, LEC Lap~20
+    \textsc{failure\_lost\_position}.
+  \item \textbf{Pit Window:} 0 alerts under green (expected: maximum gap
+    behind was $\sim$19\,s, below the 25\,s green threshold).
+\end{itemize}
+
+All $\sim$740 lap events (37 laps $\times$ 20 drivers), $\sim$720 rival
+identification records, and 3 track status transitions were processed with
+zero deserialization errors.
+
+\subsection{2023 Australian Grand Prix (Melbourne)}
+
+The Australian Grand Prix was used to validate the dynamic pit window
+thresholds under Safety Car and red flag conditions. With
+\texttt{--pit-loss 20.0} (reflecting Melbourne's shorter pit lane), the
+system correctly adapted thresholds: 20\,s under green,
+$\max(20 - 10,\; 5) = 10$\,s under VSC, and
+$\max(20 - 20,\; 5) = 5$\,s under Safety Car. The race's multiple Safety
+Car periods and a red-flag stoppage exercised the broadcast state
+transitions and yellow/red suppression logic extensively.
+
+\subsection{2024 Italian Grand Prix (Monza)}
+
+A second Monza race (2024 season) was used to validate tire degradation
+alerts across different tire compounds and to confirm
+\textsc{failure\_lost\_position} classifications during early pit stops
+with aggressive strategies.
+
+\subsection{Unit Testing with Flink Test Harness}
+
+Beyond end-to-end validation, the stateful operators were tested in
+isolation using Flink's \texttt{KeyedOneInputStreamOperatorTestHarness}.
+This approach wraps a \texttt{KeyedProcessFunction} in a lightweight
+harness that supports programmatic element injection, timestamp
+assignment, and output extraction---without requiring a running Flink
+cluster or Kafka broker.
+
+Two test suites were implemented:
+\begin{itemize}
+  \item \textbf{TelemetryEventTest} (7 tests): validates the
+    \texttt{parseEventTime()} timestamp parser across ISO-8601 variants
+    (with and without timezone suffix), whole-second precision, and
+    graceful handling of null, empty, and malformed strings.
+  \item \textbf{PitStopEvaluatorTest} (4 tests): exercises the complete
+    state machine by injecting sequences of \texttt{LapEvent} records with
+    controlled pit-in/pit-out timestamps and positions, verifying
+    \textsc{success\_defend}, \textsc{success\_undercut}, and
+    \textsc{failure\_lost\_position} classifications, as well as the
+    absence of output when no pit stop occurs.
+\end{itemize}
+
+All 11 tests pass deterministically, confirming that the stateful logic
+behaves correctly in isolation before integration into the full pipeline.
+
+\section{Conclusion}
+
+This report presented a stream processing architecture for simulating
+Formula~1 pit wall decision support using Apache Flink. The system
+ingests historical race data through a parameterized Python producer,
+decouples it via three Kafka topics aligned with their natural arrival
+rates, and processes it through stateful operators that encode context
+awareness, ground truth generation, and real-time alerting logic.
+
+The key technical contributions are:
+\begin{enumerate}
+  \item A watermark strategy that combines bounded out-of-orderness with
+    idle source detection to handle streams with radically different event
+    frequencies without pipeline stalls.
+  \item A broadcast state pattern for distributing global track status to
+    keyed operators, enabling dynamic threshold adaptation in the pit
+    window detector.
+  \item A CEP-based lift-and-coast detector that uses relaxed contiguity
+    with a dual deduplication mechanism (skip strategy + stateful post-filter)
+    to achieve zero false duplicates while tolerating noisy telemetry.
+  \item A pit stop evaluation state machine with event-time timer safety
+    nets, producing classified ground truth data suitable for downstream
+    machine learning.
+  \item A CSV data lake via Flink's \texttt{FileSink.forRowFormat} API,
+    with a custom \texttt{CsvHeaderMapper} that serializes POJO fields
+    and ML context features (track status, tyre age, gap to car ahead)
+    captured at the exact moment of the strategic decision inside the
+    operator's state.
+  \item A live Streamlit dashboard consuming three Kafka topics
+    (\texttt{f1-laps}, \texttt{f1-track-status}, \texttt{f1-alerts})
+    and rendering a two-column pit wall interface with leaderboard,
+    gap-to-leader evolution charts, tire age tracking, and a real-time
+    strategic alert feed.
+  \item A scikit-learn ML proof-of-concept: a Random Forest binary
+    classifier trained on the pipeline's ground truth CSVs, with
+    leakage prevention (dropped \texttt{postPitPosition}, driver
+    identity, and lap number), stratified train/test splits, and
+    feature importance analysis.
+\end{enumerate}
+
+The architecture is fully parameterized: the Python producer dynamically
+extracts the full grid (typically 20 drivers) from any historical race
+from 2018 onward, the Flink job accepts circuit-specific pit loss
+thresholds, and an automation script (\texttt{run\_simulation.sh})
+orchestrates the full pipeline from teardown to data collection in a
+single command. A season simulator (\texttt{simulate\_season.sh}) replays
+12 races sequentially to bulk-generate ML training data. Ground truth
+and tire degradation alert streams are persisted to disk as CSV files via
+Flink's \texttt{FileSink}, with rolling policies and Docker volume
+mapping enabling direct host-side consumption by the ML pipeline.
+
+\end{document}
