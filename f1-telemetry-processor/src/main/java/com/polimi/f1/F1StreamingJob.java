@@ -8,7 +8,6 @@ import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.connector.base.DeliveryGuarantee;
@@ -61,11 +60,6 @@ public class F1StreamingJob {
     private static final String KAFKA_BOOTSTRAP = "kafka:29092";
 
     public static void main(String[] args) throws Exception {
-        // parse cli arguments, ex: --pit-loss 22.0 for circuits with shorter pit lane delta
-        ParameterTool params = ParameterTool.fromArgs(args);
-        double pitLoss = params.getDouble("pit-loss", 25.0);
-        LOG.info("Configuration: pit-loss={}", pitLoss);
-
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         // checkpointing every 5s: required for FileSink to commit in-progress part files
@@ -198,16 +192,16 @@ public class F1StreamingJob {
                 .process(new TireDropDetector())
                 .name("Tire Drop Detection");
 
-        //  c3: open box window (pit window) 
-        // evaluates gap to car behind against dynamic threshold based on track status.
-        // requires both rival info (gap data) and track status (threshold selection).
+        //  c3: open box window (pit window)
+        // evaluates gap to car behind against track-specific threshold from upstream enrichment.
+        // requires both rival info (gap data + pit loss values) and track status (threshold selection).
         BroadcastStream<TrackStatusEvent> pitWindowBroadcast
                 = trackStatusWithWatermarks.broadcast(PitWindowDetector.TRACK_STATUS_STATE);
 
         DataStream<PitWindowAlert> pitWindowAlerts = rivalStream
                 .keyBy(RivalInfoAlert::getDriver)
                 .connect(pitWindowBroadcast)
-                .process(new PitWindowDetector(pitLoss))
+                .process(new PitWindowDetector())
                 .name("Pit Window Detection");
 
         // module b: ground truth

@@ -10,32 +10,21 @@ import com.polimi.f1.model.PitWindowAlert;
 import com.polimi.f1.model.RivalInfoAlert;
 
 // evaluates whether a driver can pit without losing position based on gap to car behind.
-// the threshold adapts dynamically based on track status:
-//   green (status "1"): pitLoss value (default 25s), typical pit stop time loss at most circuits
-//   vsc   (status "6"): pitLoss - 10s (min 5s), pit lane delta is reduced under vsc
-//   sc    (status "4"): pitLoss - 20s (min 5s), field bunches up, minimal pit stop loss
-//   yellow/red:          suppressed — pit lane may be closed or unsafe
+// the threshold adapts dynamically based on track status and the track-specific pit loss
+// times embedded in each event by the python producer:
+//   green (status "1"): pitLoss from event (circuit-specific green-flag pit delta)
+//   vsc   (status "6","7"): vscPitLoss from event (reduced delta under vsc)
+//   sc    (status "4"): scPitLoss from event (minimal delta, field bunched up)
+//   yellow/red: suppressed, pit lane may be closed or unsafe
 //
-// the green threshold is configurable via --pit-loss to adapt to different circuits,
-// ex: monaco ~20s, monza ~25s, spa ~22s. vsc and sc scale relative to the green value.
 // uses broadcast state to receive track status updates (same pattern as TrackStatusEnricher).
 public class PitWindowDetector
         extends KeyedBroadcastProcessFunction<String, RivalInfoAlert, TrackStatusEvent, PitWindowAlert> {
 
-    // thresholds (seconds), green is set via constructor, vsc/sc scale relative to it
-    private final double greenThreshold;
-    private final double vscThreshold;
-    private final double scThreshold;
-
-    public PitWindowDetector(double pitLoss) {
-        this.greenThreshold = pitLoss;
-        this.vscThreshold = Math.max(pitLoss - 10.0, 5.0); // TODO maybe make this tie to the specific track's vsc delta if available?
-        this.scThreshold = Math.max(pitLoss - 20.0, 5.0); // TODO same as above but for safty
-    } 
-
-    public PitWindowDetector() {
-        this(25.0); // TODO maybe better to use hardcoded Pit time for each track instead of a generic default? 25s is a common average but can vary significantly
-    }
+    // fallback defaults if the event fields are null (e.g., legacy data without enrichment)
+    private static final double DEFAULT_GREEN = 22.0;
+    private static final double DEFAULT_VSC = 14.0;
+    private static final double DEFAULT_SC = 11.0;
 
     // reuse the same state descriptor as TrackStatusEnricher for consistency
     public static final MapStateDescriptor<String, String> TRACK_STATUS_STATE =
@@ -72,10 +61,9 @@ public class PitWindowDetector
 
         double threshold;
         switch (status) {
-            case "1" -> threshold = greenThreshold;
-            case "6" -> threshold = vscThreshold; 
-            case "7" -> threshold = vscThreshold;
-            case "4" -> threshold = scThreshold;
+            case "1" -> threshold = rival.getPitLoss() != null ? rival.getPitLoss() : DEFAULT_GREEN;
+            case "6", "7" -> threshold = rival.getVscPitLoss() != null ? rival.getVscPitLoss() : DEFAULT_VSC;
+            case "4" -> threshold = rival.getScPitLoss() != null ? rival.getScPitLoss() : DEFAULT_SC;
             default -> {
                 return; // yellow ("2"), red ("5"): suppress, pit lane may be closed
             }

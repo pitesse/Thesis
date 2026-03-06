@@ -55,8 +55,18 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
             recentLapTimes.clear();
         }
 
+        // skip opening laps, standing start and traffic make pace non-representative
+        if (lap.getLapNumber() <= 2) {
+            return;
+        }
+
         // skip pit in-laps and out-laps, they distort the rolling average
         if (lap.getPitInTime() != null || lap.getPitOutTime() != null) {
+            return;
+        }
+
+        // keep only green-flag racing laps, ex trackStatus=1
+        if (lap.getTrackStatus() != null && !lap.getTrackStatus().equals("1")) {
             return;
         }
 

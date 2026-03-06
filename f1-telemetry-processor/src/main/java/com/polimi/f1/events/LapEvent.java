@@ -27,6 +27,10 @@ public class LapEvent {
     private Double pitOutTime;    // session-relative seconds, null if no pit exit
     private String trackStatus;   // status codes active during this lap, ex: "1" (green), "4" (sc)
     private Double gapToCarAhead; // seconds, computed from cumulative race time deltas
+    private String race;          // grand prix name, ex: "Italian Grand Prix"
+    private Double pitLoss;       // green-flag pit loss in seconds for this track
+    private Double vscPitLoss;    // vsc pit loss in seconds for this track
+    private Double scPitLoss;     // safety car pit loss in seconds for this track
     private long eventTimeMillis;
 
     public LapEvent() {
@@ -193,6 +197,46 @@ public class LapEvent {
         this.gapToCarAhead = gapToCarAhead;
     }
 
+    @JsonProperty("Race")
+    public String getRace() {
+        return race;
+    }
+
+    @JsonProperty("Race")
+    public void setRace(String race) {
+        this.race = race;
+    }
+
+    @JsonProperty("PitLoss")
+    public Double getPitLoss() {
+        return pitLoss;
+    }
+
+    @JsonProperty("PitLoss")
+    public void setPitLoss(Double pitLoss) {
+        this.pitLoss = pitLoss;
+    }
+
+    @JsonProperty("VscPitLoss")
+    public Double getVscPitLoss() {
+        return vscPitLoss;
+    }
+
+    @JsonProperty("VscPitLoss")
+    public void setVscPitLoss(Double vscPitLoss) {
+        this.vscPitLoss = vscPitLoss;
+    }
+
+    @JsonProperty("ScPitLoss")
+    public Double getScPitLoss() {
+        return scPitLoss;
+    }
+
+    @JsonProperty("ScPitLoss")
+    public void setScPitLoss(Double scPitLoss) {
+        this.scPitLoss = scPitLoss;
+    }
+
     @JsonIgnore
     public long getEventTimeMillis() {
         return eventTimeMillis;
@@ -213,6 +257,7 @@ public class LapEvent {
                 + ", tyreLife=" + tyreLife
                 + ", pos=" + position
                 + ", gap=" + gapToCarAhead
+                + ", race='" + race + '\''
                 + '}';
     }
 }

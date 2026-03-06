@@ -8,7 +8,7 @@ public class PitStopEvaluationAlert {
 
     public static final String CSV_HEADER
             = "driver,pitLapNumber,prePitPosition,postPitPosition,compound,result,"
-            + "trackStatusAtPit,tyreAgeAtPit,gapToCarAheadAtPit";
+            + "trackStatusAtPit,tyreAgeAtPit,gapToCarAheadAtPit,race";
 
     public enum Result {
         SUCCESS_UNDERCUT, // gained positions (effective undercut)
@@ -25,6 +25,7 @@ public class PitStopEvaluationAlert {
     private String trackStatusAtPit;      // track status code at pit entry, ex: "1" (green), "4" (sc)
     private int tyreAgeAtPit;             // laps completed on old tire set at pit entry
     private Double gapToCarAheadAtPit;    // gap in seconds to the car ahead when pitting
+    private String race;                  // grand prix name, ex: "Italian Grand Prix"
 
     public PitStopEvaluationAlert() {
     }
@@ -32,7 +33,7 @@ public class PitStopEvaluationAlert {
     public PitStopEvaluationAlert(String driver, int pitLapNumber, int prePitPosition,
             int postPitPosition, String compound, Result result,
             String trackStatusAtPit, int tyreAgeAtPit,
-            Double gapToCarAheadAtPit) {
+            Double gapToCarAheadAtPit, String race) {
         this.driver = driver;
         this.pitLapNumber = pitLapNumber;
         this.prePitPosition = prePitPosition;
@@ -42,6 +43,7 @@ public class PitStopEvaluationAlert {
         this.trackStatusAtPit = trackStatusAtPit;
         this.tyreAgeAtPit = tyreAgeAtPit;
         this.gapToCarAheadAtPit = gapToCarAheadAtPit;
+        this.race = race;
     }
 
     public String getDriver() {
@@ -116,7 +118,15 @@ public class PitStopEvaluationAlert {
         this.gapToCarAheadAtPit = gapToCarAheadAtPit;
     }
 
-    // ml-ready csv row, ex: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832
+    public String getRace() {
+        return race;
+    }
+
+    public void setRace(String race) {
+        this.race = race;
+    }
+
+    // ml-ready csv row, ex: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832,Italian Grand Prix
     public String toCsvRow() {
         return String.join(",",
                 driver,
@@ -127,7 +137,8 @@ public class PitStopEvaluationAlert {
                 result.name(),
                 trackStatusAtPit != null ? trackStatusAtPit : "",
                 String.valueOf(tyreAgeAtPit),
-                gapToCarAheadAtPit != null ? String.format("%.3f", gapToCarAheadAtPit) : ""
+                gapToCarAheadAtPit != null ? String.format("%.3f", gapToCarAheadAtPit) : "",
+                race != null ? race : ""
         );
     }
 
@@ -135,9 +146,10 @@ public class PitStopEvaluationAlert {
     public String toString() {
         return String.format(
                 "PIT EVAL | Driver: %s | Lap: %d | Pre: P%d | Post: P%d | %s | Result: %s"
-                + " | Track: %s | TyreAge: %d | Gap: %s",
+                + " | Track: %s | TyreAge: %d | Gap: %s | Race: %s",
                 driver, pitLapNumber, prePitPosition, postPitPosition, compound, result,
                 trackStatusAtPit, tyreAgeAtPit,
-                gapToCarAheadAtPit != null ? String.format("%.3f", gapToCarAheadAtPit) : "N/A");
+                gapToCarAheadAtPit != null ? String.format("%.3f", gapToCarAheadAtPit) : "N/A",
+                race != null ? race : "N/A");
     }
 }
