@@ -18,10 +18,13 @@ import com.polimi.f1.model.PitStopEvaluationAlert.Result;
 
 // evaluates pit stop outcomes by comparing position before and after the stop.
 // keyed by driver, tracks state across laps:
-//   1. detects pit entry (LapEvent with pitInTime != null)
-//   2. records pre-pit position
-//   3. collects the next 3 clean laps after the pit stop
-//   4. classifies the outcome based on position delta
+//   1. maintains a rolling 1-lap lookback of position (previousLapPosition)
+//   2. detects pit entry (LapEvent with pitInTime != null)
+//   3. records pre-pit position from the previous lap, not the pit entry lap,
+//      because driving down the pit lane causes position losses before the
+//      driver crosses the start/finish line (skewing the recorded position)
+//   4. collects the next 3 clean laps after the pit stop
+//   5. classifies the outcome based on position delta
 //
 // uses event-time timers as a safety net to clear stale state if post-pit laps
 // never arrive (e.g., driver retired after pit stop).
@@ -39,6 +42,10 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
     // captures the exact lap the driver pitted on, providing ml context features
     // (track status, tyre age, gap to car ahead) at the moment of pit entry.
     private transient ValueState<LapEvent> pitEntryLap;
+    // rolling 1-lap lookback: stores the position from the lap before pit entry.
+    // the pit entry lap's position is unreliable because the driver is already in
+    // the pit lane when crossing the timing line, often registering as a lower position.
+    private transient ValueState<Integer> previousLapPosition;
 
     @Override
     public void open(Configuration parameters) {
@@ -54,17 +61,24 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
                 new ListStateDescriptor<>("post-pit-laps", LapEvent.class));
         pitEntryLap = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("pit-entry-lap", LapEvent.class));
+        previousLapPosition = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("previous-lap-position", Types.INT));
     }
 
     @Override
     public void processElement(LapEvent lap, Context ctx, Collector<PitStopEvaluationAlert> out) throws Exception {
         Boolean pitted = hasPitted.value();
+        Integer prevPos = previousLapPosition.value();
 
-        // detect pit entry: record pre-pit position and start collecting post-pit laps
+        // detect pit entry: record pre-pit position and start collecting post-pit laps.
+        // uses the previous lap's position (prevPos) because the pit entry lap's position
+        // is recorded after the driver enters the pit lane, often reflecting position losses
+        // that haven't actually happened on track yet.
         if (lap.getPitInTime() != null && (pitted == null || !pitted)) {
             hasPitted.update(true);
             pitLapNumber.update(lap.getLapNumber());
-            prePitPosition.update(lap.getPosition());
+            // fallback to current lap position if prevPos is null (pit on lap 1)
+            prePitPosition.update(prevPos != null ? prevPos : lap.getPosition());
             pitEntryLap.update(lap);
             postPitLaps.clear();
             postPitCompound.update(null);
@@ -72,6 +86,7 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
             // safety timer: clear state if post-pit laps never arrive
             long timerTarget = lap.getEventTimeMillis() + TIMER_TIMEOUT_MS;
             ctx.timerService().registerEventTimeTimer(timerTarget);
+            previousLapPosition.update(lap.getPosition());
             return;
         }
 
@@ -98,12 +113,6 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
 
             if (collected.size() >= POST_PIT_LAPS) {
                 // evaluate: use the position from the last collected lap as the post-pit position
-                /*
-                    TODO    some tracks have finish line half the main straight, so driver may get overtaken while in the pit because they are slower,
-                            this doesn't represent real track position. maybe use the position a lap before (in that case need to check if an overtake 
-                            happened before pitting but it's rare)
- 
-                */
                 LapEvent lastLap = collected.get(collected.size() - 1);
                 int prePos = prePitPosition.value();
                 int postPos = lastLap.getPosition();
@@ -142,6 +151,9 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
                 clearState();
             }
         }
+
+        // update rolling lookback for every lap, must run unconditionally
+        previousLapPosition.update(lap.getPosition());
     }
 
     // safety net: clears state if timer fires before enough post-pit laps arrive
@@ -160,5 +172,6 @@ public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, Pit
         postPitCompound.clear();
         postPitLaps.clear();
         pitEntryLap.clear();
+        previousLapPosition.clear();
     }
 }

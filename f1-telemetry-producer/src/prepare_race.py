@@ -1,23 +1,20 @@
 """
-f1 telemetry producer: simulates a live race replay via kafka.
+prepare_race: batch etl stage of the two-stage producer pipeline.
 
-loads historical telemetry, lap, and track status data from the fastf1 library,
-then streams events across three kafka topics (f1-telemetry, f1-laps, f1-track-status)
-respecting the original inter-event time deltas.
+extracts telemetry, lap, and track status data from a fastf1 session,
+merges and interleaves them chronologically, then saves the result as a
+compressed parquet file for the streaming stage (stream_race.py).
 
-this replay approach lets the flink consumer operate on realistic event-time data
-without needing a live f1 session.
+separating etl from streaming avoids re-running the expensive fastf1 extraction
+(~30-60s of api calls and dataframe merges) every time we want to replay a race.
 """
 
 import argparse
-import json
 import logging
-import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from kafka import KafkaProducer
 from fastf1 import Cache, get_session
 
 TOPIC_TELEMETRY = "f1-telemetry"
@@ -26,18 +23,8 @@ TOPIC_TRACK_STATUS = "f1-track-status"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="F1 telemetry replay producer")
-    parser.add_argument(
-        "--speed",
-        type=float,
-        default=1.0,
-        help="replay speed multiplier, ex: 50 replays the race ~50x faster (default: 1.0)",
-    )
-    parser.add_argument(
-        "--start-lap",
-        type=int,
-        default=1,
-        help="skip to this lap number before starting the replay (default: 1)",
+    parser = argparse.ArgumentParser(
+        description="Prepare race data for streaming replay"
     )
     parser.add_argument(
         "--year",
@@ -49,7 +36,7 @@ def parse_args() -> argparse.Namespace:
         "--race",
         type=str,
         default="Italian Grand Prix",
-        help='grand prix name, ex: "Italian Grand Prix", "Australian Grand Prix" (default: Italian Grand Prix)',
+        help='grand prix name, ex: "Italian Grand Prix" (default: Italian Grand Prix)',
     )
     parser.add_argument(
         "--session",
@@ -163,7 +150,7 @@ def build_driver_telemetry(session, driver: str) -> pd.DataFrame:
         merged["Brake"] = merged["Brake"].astype(int)
 
     merged["Driver"] = driver
-    merged["_topic"] = TOPIC_TELEMETRY
+    merged["event_topic"] = TOPIC_TELEMETRY
     return merged
 
 
@@ -210,7 +197,7 @@ def build_lap_events(session) -> pd.DataFrame:
     # cumulative time = sum of all LapTime values up to this lap for each driver.
     laps_df = _compute_gap_to_car_ahead(laps_df)
 
-    laps_df["_topic"] = TOPIC_LAPS
+    laps_df["event_topic"] = TOPIC_LAPS
     return laps_df
 
 
@@ -221,7 +208,6 @@ def _compute_gap_to_car_ahead(laps_df: pd.DataFrame) -> pd.DataFrame:
     difference in cumulative race time between consecutive positions.
     ex: VER cumulative 1200.5s at P1, LEC cumulative 1205.3s at P2 -> LEC gap = 4.8s
     """
-    # convert LapTime timedelta to seconds for arithmetic
     if "LapTime" not in laps_df.columns or "Position" not in laps_df.columns:
         laps_df["GapToCarAhead"] = None
         return laps_df
@@ -284,16 +270,16 @@ def build_track_status_events(session) -> pd.DataFrame:
     ts_df = ts_df.drop(columns=["Time"])
     ts_df = ts_df.sort_values("Date").reset_index(drop=True)
 
-    ts_df["_topic"] = TOPIC_TRACK_STATUS
+    ts_df["event_topic"] = TOPIC_TRACK_STATUS
     logging.info("Found %d track status events", len(ts_df))
     return ts_df
 
 
-def build_replay_dataframe(session, start_lap: int = 1) -> pd.DataFrame:
+def build_replay_dataframe(session) -> pd.DataFrame:
     """
     build the unified replay dataframe by interleaving telemetry, lap, and track status events.
     all three event types are sorted chronologically by Date for realistic replay timing.
-    each row is tagged with _topic to route to the correct kafka topic during streaming.
+    each row is tagged with event_topic to route to the correct kafka topic during streaming.
     """
     frames = []
 
@@ -326,99 +312,14 @@ def build_replay_dataframe(session, start_lap: int = 1) -> pd.DataFrame:
     replay_df = pd.concat(frames, ignore_index=True)
     replay_df = replay_df.sort_values("Date").reset_index(drop=True)
 
-    if start_lap > 1:
-        pre_filter = len(replay_df)
-        # only filter telemetry rows by lap number, lap/track-status events lack LapNumber
-        has_lap = replay_df["LapNumber"].notna()
-        keep = ~has_lap | (replay_df["LapNumber"] >= start_lap)
-        # for lap events (topic=f1-laps), filter by their own LapNumber field
-        is_lap_event = replay_df["_topic"] == TOPIC_LAPS
-        if "LapNumber" in replay_df.columns:
-            keep = keep & (~is_lap_event | (replay_df["LapNumber"] >= start_lap))
-        replay_df = replay_df[keep].reset_index(drop=True)
-        logging.info(
-            "--start-lap %d: filtered %d -> %d rows",
-            start_lap,
-            pre_filter,
-            len(replay_df),
-        )
-
     return replay_df
 
 
-def create_producer() -> KafkaProducer:
-    return KafkaProducer(
-        bootstrap_servers="localhost:9092",
-        value_serializer=lambda payload: json.dumps(payload).encode("utf-8"),
-    )
-
-
-def serialize_value(value):
-    """
-    convert pandas/numpy types to json-safe python primitives.
-    ex: pd.Timestamp -> iso-8601 string, np.int64 -> int, pd.Timedelta -> float seconds.
-    """
-    if pd.isna(value):
-        return None
-    if isinstance(value, pd.Timestamp):
-        return value.isoformat()
-    if isinstance(value, pd.Timedelta):
-        return value.total_seconds()
-    if hasattr(value, "item"):
-        return value.item()
-    return value
-
-
-# internal columns not sent to kafka (used for routing and filtering only)
-_INTERNAL_COLUMNS = {"_topic"}
-
-
-def row_to_payload(row: pd.Series) -> dict:
-    return {
-        column: serialize_value(row[column])
-        for column in row.index
-        if column not in _INTERNAL_COLUMNS and serialize_value(row[column]) is not None
-    }
-
-
-def stream_replay(
-    replay_df: pd.DataFrame, producer: KafkaProducer, speed: float = 1.0
-) -> None:
-    """
-    iterate through the sorted replay dataframe and publish each row to its target kafka topic.
-    sleeps for the real delta-t between consecutive samples divided by the speed multiplier.
-    """
-    previous_timestamp = None
-    topic_counts = {TOPIC_TELEMETRY: 0, TOPIC_LAPS: 0, TOPIC_TRACK_STATUS: 0}
-
-    for _, row in replay_df.iterrows():
-        current_timestamp = row["Date"]
-        topic = row.get("_topic", TOPIC_TELEMETRY)
-
-        if previous_timestamp is not None:
-            delta_seconds = (current_timestamp - previous_timestamp).total_seconds()
-            if delta_seconds > 0:
-                time.sleep(delta_seconds / speed)
-
-        payload = row_to_payload(row)
-        producer.send(topic, value=payload)
-        topic_counts[topic] = topic_counts.get(topic, 0) + 1
-
-        # log at different verbosity depending on event type
-        if topic == TOPIC_TELEMETRY:
-            logging.debug(
-                "-> %s | driver=%s | speed=%s",
-                topic,
-                payload.get("Driver"),
-                payload.get("Speed"),
-            )
-        else:
-            logging.info("-> %s | %s", topic, json.dumps(payload, default=str)[:200])
-
-        previous_timestamp = current_timestamp
-
-    producer.flush()
-    logging.info("Replay complete. Events sent: %s", topic_counts)
+def parquet_filename(year: int, race: str, session: str) -> str:
+    """deterministic filename for the prepared parquet file.
+    ex: 2023_Italian_Grand_Prix_R_prepared.parquet"""
+    safe_race = race.replace(" ", "_")
+    return f"{year}_{safe_race}_{session}_prepared.parquet"
 
 
 if __name__ == "__main__":
@@ -433,20 +334,17 @@ if __name__ == "__main__":
     race_session = load_session(
         year=args.year, race=args.race, session_type=args.session
     )
-    replay_dataframe = build_replay_dataframe(race_session, start_lap=args.start_lap)
-    logging.info("Replay dataframe prepared with %d rows", len(replay_dataframe))
+    replay_df = build_replay_dataframe(race_session)
+    logging.info("Replay dataframe prepared with %d rows", len(replay_df))
 
-    kafka_producer = create_producer()
+    # save to the project-level data/ directory (same as fastf1 cache)
+    out_dir = Path(__file__).resolve().parents[2] / "data"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / parquet_filename(args.year, args.race, args.session)
+
+    replay_df.to_parquet(out_path, engine="pyarrow", index=False)
     logging.info(
-        "Kafka producer initialized, speed=%.1fx, start_lap=%d",
-        args.speed,
-        args.start_lap,
+        "Saved prepared replay to: %s (%.1f MB)",
+        out_path,
+        out_path.stat().st_size / 1e6,
     )
-
-    try:
-        stream_replay(replay_dataframe, kafka_producer, speed=args.speed)
-    except KeyboardInterrupt:
-        logging.info("Streaming interrupted by user")
-    finally:
-        kafka_producer.close()
-        logging.info("Kafka producer closed")
