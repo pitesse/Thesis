@@ -9,7 +9,14 @@ import com.polimi.f1.events.TrackStatusEvent;
 import com.polimi.f1.model.PitWindowAlert;
 import com.polimi.f1.model.RivalInfoAlert;
 
-// evaluates whether a driver can pit without losing position based on gap to car behind.
+// evaluates pit window conditions using both the gap behind (safe pit) and gap ahead (undercut).
+// emits two distinct alert types:
+//   SAFE_PIT: gap to car behind >= track-specific pit loss threshold, driver can pit without
+//             losing position to the car behind.
+//   UNDERCUT_OPPORTUNITY: gap to car ahead < pit loss + 2s, the car ahead is close enough
+//             that pitting now could produce an undercut (emerge ahead by running faster
+//             on fresh tires while the rival stays out on degraded rubber).
+//
 // the threshold adapts dynamically based on track status and the track-specific pit loss
 // times embedded in each event by the python producer:
 //   green (status "1"): pitLoss from event (circuit-specific green-flag pit delta)
@@ -26,7 +33,10 @@ public class PitWindowDetector
     private static final double DEFAULT_VSC = 14.0;
     private static final double DEFAULT_SC = 11.0;
 
-    // reuse the same state descriptor as TrackStatusEnricher for consistency
+    // undercut window margin: if gapAhead < threshold + this margin, the car ahead
+    // is within undercut range. 2s accounts for the ~1-2s per lap fresh-vs-old tire advantage.
+    private static final double UNDERCUT_MARGIN = 2.0;
+
     public static final MapStateDescriptor<String, String> TRACK_STATUS_STATE =
             new MapStateDescriptor<>(
                     "pit-window-track-status",
@@ -48,12 +58,6 @@ public class PitWindowDetector
             KeyedBroadcastProcessFunction<String, RivalInfoAlert, TrackStatusEvent, PitWindowAlert>.ReadOnlyContext ctx,
             Collector<PitWindowAlert> out) throws Exception {
 
-        // no car behind means the driver is last in the tracked group
-        Double gapBehind = rival.getGapBehind();
-        if (gapBehind == null) {
-            return;
-        }
-
         String status = ctx.getBroadcastState(TRACK_STATUS_STATE).get("current");
         if (status == null) {
             status = "1"; // default: green
@@ -69,11 +73,32 @@ public class PitWindowDetector
             }
         }
 
-        if (gapBehind >= threshold) {
+        Double gapBehind = rival.getGapBehind();
+        Double gapAhead = rival.getGapAhead();
+
+        // safe pit: gap to car behind large enough to pit without losing position
+        if (gapBehind != null && gapBehind >= threshold) {
             out.collect(new PitWindowAlert(
                     rival.getDriver(),
                     rival.getLapNumber(),
+                    "SAFE_PIT",
                     gapBehind,
+                    gapAhead,
+                    status,
+                    threshold
+            ));
+        }
+
+        // undercut opportunity: car ahead is within pit loss + margin,
+        // meaning fresh tires could close the gap before the rival pits.
+        // ex: gapAhead=23.5s, threshold=22.0s, margin=2.0s -> 23.5 < 24.0 -> undercut viable
+        if (gapAhead != null && gapAhead < threshold + UNDERCUT_MARGIN) {
+            out.collect(new PitWindowAlert(
+                    rival.getDriver(),
+                    rival.getLapNumber(),
+                    "UNDERCUT_OPPORTUNITY",
+                    gapBehind != null ? gapBehind : 0.0,
+                    gapAhead,
                     status,
                     threshold
             ));

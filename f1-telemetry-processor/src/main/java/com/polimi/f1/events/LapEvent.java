@@ -31,6 +31,12 @@ public class LapEvent {
     private Double pitLoss;       // green-flag pit loss in seconds for this track
     private Double vscPitLoss;    // vsc pit loss in seconds for this track
     private Double scPitLoss;     // safety car pit loss in seconds for this track
+    private Double airTemp;       // air temperature in celsius at lap time
+    private Double trackTemp;     // track surface temperature in celsius
+    private Double humidity;      // relative humidity percentage
+    private Boolean rainfall;     // whether it was raining during this lap
+    private Double speedTrap;     // speed trap reading on longest straight (km/h)
+    private String team;          // constructor name, ex: "Red Bull Racing"
     private long eventTimeMillis;
 
     public LapEvent() {
@@ -235,6 +241,66 @@ public class LapEvent {
     @JsonProperty("ScPitLoss")
     public void setScPitLoss(Double scPitLoss) {
         this.scPitLoss = scPitLoss;
+    }
+
+    @JsonProperty("AirTemp")
+    public Double getAirTemp() {
+        return airTemp;
+    }
+
+    @JsonProperty("AirTemp")
+    public void setAirTemp(Double airTemp) {
+        this.airTemp = airTemp;
+    }
+
+    @JsonProperty("TrackTemp")
+    public Double getTrackTemp() {
+        return trackTemp;
+    }
+
+    @JsonProperty("TrackTemp")
+    public void setTrackTemp(Double trackTemp) {
+        this.trackTemp = trackTemp;
+    }
+
+    @JsonProperty("Humidity")
+    public Double getHumidity() {
+        return humidity;
+    }
+
+    @JsonProperty("Humidity")
+    public void setHumidity(Double humidity) {
+        this.humidity = humidity;
+    }
+
+    @JsonProperty("Rainfall")
+    public Boolean getRainfall() {
+        return rainfall;
+    }
+
+    @JsonProperty("Rainfall")
+    public void setRainfall(Boolean rainfall) {
+        this.rainfall = rainfall;
+    }
+
+    @JsonProperty("SpeedST")
+    public Double getSpeedTrap() {
+        return speedTrap;
+    }
+
+    @JsonProperty("SpeedST")
+    public void setSpeedTrap(Double speedTrap) {
+        this.speedTrap = speedTrap;
+    }
+
+    @JsonProperty("Team")
+    public String getTeam() {
+        return team;
+    }
+
+    @JsonProperty("Team")
+    public void setTeam(String team) {
+        this.team = team;
     }
 
     @JsonIgnore

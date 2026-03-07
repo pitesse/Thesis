@@ -20,17 +20,30 @@ import com.polimi.f1.events.TelemetryEvent;
 import com.polimi.f1.model.LiftCoastAlert;
 
 // detects lift & coast fuel-saving maneuvers using flink cep.
-// pattern: throttle=100 -> throttle=0 -> brake>0, all within 2 seconds.
+// pattern: throttle=100 & speed>280 & gear>=7 -> throttle=0 -> brake>0, within 4 seconds.
+//
+// the speed and gear conditions on the "full-throttle" step filter out normal corner
+// braking (where throttle also goes 100->0->brake). real lift & coast only happens on
+// long straights at high speed in top gear, the extended 4s window allows for the
+// coast phase which can last 1-3s before the driver applies brakes.
+//
 // followedBy (not next) allows non-relevant events between steps, real telemetry
 // has intermediate throttle values and gear changes between pedal transitions.
 // skipPastLastEvent prevents combinatorial explosion: at 4Hz, multiple consecutive
 // full-throttle samples would each independently match the same lift+brake event.
 //
 // deduplication is required because cep with relaxed contiguity still fires N matches
-// for N consecutive throttle=100 samples converging on the same lift+brake pair.
-// the dedup function (LiftCoastDedup) suppresses duplicates by comparing the brake
-// timestamp against the last emitted alert for each driver.
+// for N consecutive matching full-throttle samples converging on the same lift+brake pair.
+// the dedup function suppresses duplicates by comparing the brake timestamp.
 public class LiftCoastDetector {
+
+    // minimum speed (km/h) to qualify as a straight-line full-throttle event.
+    // filters out slow corner exits where throttle=100 at lower speeds.
+    private static final int MIN_SPEED = 280;
+
+    // minimum gear to qualify. lift & coast happens in 7th or 8th gear on straights,
+    // not in lower gears during corner-exit acceleration.
+    private static final int MIN_GEAR = 7;
 
     private LiftCoastDetector() {
     }
@@ -43,7 +56,11 @@ public class LiftCoastDetector {
                 .where(new SimpleCondition<TelemetryEvent>() {
                     @Override
                     public boolean filter(TelemetryEvent e) {
-                        return e.getThrottle() == 100;
+                        // ex: throttle=100, speed=342, gear=8 -> match (monza main straight)
+                        // ex: throttle=100, speed=180, gear=5 -> skip (corner exit)
+                        return e.getThrottle() == 100
+                                && e.getSpeed() > MIN_SPEED
+                                && e.getNGear() >= MIN_GEAR;
                     }
                 })
                 .followedBy("lift")
@@ -60,7 +77,7 @@ public class LiftCoastDetector {
                         return e.getBrake() > 0;
                     }
                 })
-                .within(Time.seconds(2));
+                .within(Time.seconds(4));
 
         PatternStream<TelemetryEvent> patternStream = CEP.pattern(
                 enrichedTelemetry.keyBy(TelemetryEvent::getDriver),
@@ -74,7 +91,8 @@ public class LiftCoastDetector {
                     TelemetryEvent br = match.get("coast-brake").get(0);
                     return new LiftCoastAlert(
                             ft.getDriver(), ft.getDate(), li.getDate(),
-                            br.getDate(), ft.getTrackStatus());
+                            br.getDate(), ft.getTrackStatus(),
+                            ft.getSpeed(), ft.getNGear());
                 });
 
         return rawAlerts
