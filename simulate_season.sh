@@ -123,7 +123,7 @@ done
 # all part-files into a single csv per sink type with a clear name.
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-for SINK_DIR in pit_evals tire_drops; do
+for SINK_DIR in pit_evals tire_drops lift_coast pit_windows; do
 	TARGET_DIR="$PROJECT_DIR/data_lake/$SINK_DIR"
 	if [ -d "$TARGET_DIR" ]; then
 		MERGED_FILE="$PROJECT_DIR/data_lake/${SINK_DIR}_${YEAR}_season_${TIMESTAMP}.csv"
@@ -151,7 +151,7 @@ if [ "$FAILED" -gt 0 ]; then
 	echo " Failed:    $FAILED"
 fi
 echo ""
-echo " Raw output:    data_lake/pit_evals/ , data_lake/tire_drops/"
+echo " Raw output:    data_lake/{pit_evals,tire_drops,lift_coast,pit_windows}/"
 echo " Merged CSVs:   data_lake/pit_evals_${YEAR}_season_${TIMESTAMP}.csv"
 echo "                 data_lake/tire_drops_${YEAR}_season_${TIMESTAMP}.csv"
 echo ""

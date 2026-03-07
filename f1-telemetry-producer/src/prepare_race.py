@@ -202,7 +202,9 @@ def build_lap_events(session) -> pd.DataFrame:
     """
     extract per-driver lap completion events from session.laps.
     each row = one completed lap with timing, tire, and position data.
-    also computes GapToCarAhead from cumulative race time differences.
+    also computes GapToCarAhead from cumulative race time differences,
+    and enriches with per-lap weather (AirTemp, TrackTemp, Humidity, Rainfall),
+    speed trap on the longest straight (SpeedST), and team name.
     """
     lap_columns = [
         "Driver",
@@ -220,6 +222,8 @@ def build_lap_events(session) -> pd.DataFrame:
         "PitOutTime",
         "LapStartDate",
         "TrackStatus",
+        "SpeedST",
+        "Team",
     ]
 
     all_laps = session.laps
@@ -241,7 +245,41 @@ def build_lap_events(session) -> pd.DataFrame:
     # cumulative time = sum of all LapTime values up to this lap for each driver.
     laps_df = _compute_gap_to_car_ahead(laps_df)
 
+    # enrich with per-lap weather data from fastf1 (AirTemp, TrackTemp, Humidity, Rainfall).
+    # get_weather_data joins the closest weather sample to each lap's timestamp.
+    laps_df = _enrich_with_weather(session, laps_df)
+
     laps_df["event_topic"] = TOPIC_LAPS
+    return laps_df
+
+
+def _enrich_with_weather(session, laps_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    join per-lap weather data (AirTemp, TrackTemp, Humidity, Rainfall) from fastf1.
+    fastf1's get_weather_data() returns the closest weather sample for each lap.
+    if weather data is unavailable (e.g., older sessions), columns are added as NaN.
+    """
+    weather_cols = ["AirTemp", "TrackTemp", "Humidity", "Rainfall"]
+    try:
+        weather = session.laps.get_weather_data()
+        if weather is not None and not weather.empty:
+            available_weather = [c for c in weather_cols if c in weather.columns]
+            if available_weather:
+                # get_weather_data returns one row per lap with the same index as session.laps.
+                # align by building a (Driver, LapNumber) key on both sides.
+                weather_subset = session.laps[["Driver", "LapNumber"]].copy()
+                for col in available_weather:
+                    weather_subset[col] = weather[col].values
+                laps_df = laps_df.merge(weather_subset, on=["Driver", "LapNumber"], how="left")
+                logging.info("Weather enrichment added: %s", available_weather)
+                return laps_df
+    except Exception as e:
+        logging.warning("Weather enrichment failed: %s", e)
+
+    # fallback: add empty columns
+    for col in weather_cols:
+        if col not in laps_df.columns:
+            laps_df[col] = np.nan
     return laps_df
 
 

@@ -16,7 +16,9 @@ import com.polimi.f1.events.LapEvent;
 import com.polimi.f1.model.TireDropAlert;
 
 // detects tire performance degradation by comparing a rolling 3-lap average
-// to the best lap time in the current stint. alerts when the delta exceeds 1.5s.
+// to the best lap time in the current stint. alert threshold is compound-dependent:
+// soft tires degrade faster than hards, so the trigger is more sensitive.
+//   SOFT: 1.0s, MEDIUM: 1.5s, HARD: 2.0s, INTERMEDIATE/WET: 2.5s
 //
 // state is keyed by driver. on each stint change (new compound/pit stop), all state
 // resets so a fresh baseline is established for the new tire set.
@@ -25,7 +27,6 @@ import com.polimi.f1.model.TireDropAlert;
 // of actual tire performance (pit lane speed, cold tires on out-lap).
 public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, TireDropAlert> {
 
-    private static final double THRESHOLD_SECONDS = 1.5;
     private static final int ROLLING_WINDOW = 3; // number of laps to average for the rolling performance baseline
 
     // current stint number, used to detect stint changes (pit stop -> new tires)
@@ -100,7 +101,12 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
         double avg = recent.stream().mapToDouble(Double::doubleValue).average().orElse(0);
         double delta = avg - best;
 
-        if (delta > THRESHOLD_SECONDS) {
+        // compound-dependent thresholds: soft tires degrade faster than hards,
+        // so a 1.0s drop on softs is already alarming while 1.5s on hards is expected.
+        // wet compounds get the loosest threshold due to inherently higher lap time variance.
+        double threshold = getThresholdForCompound(lap.getCompound());
+
+        if (delta > threshold) {
             out.collect(new TireDropAlert(
                     lap.getDriver(),
                     lap.getLapNumber(),
@@ -111,5 +117,19 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
                     delta
             ));
         }
+    }
+
+    // ex: "SOFT" -> 1.0, "HARD" -> 2.0
+    private static double getThresholdForCompound(String compound) {
+        if (compound == null) {
+            return 1.5;
+        }
+        return switch (compound.toUpperCase()) {
+            case "SOFT" -> 1.0;
+            case "MEDIUM" -> 1.5;
+            case "HARD" -> 2.0;
+            case "INTERMEDIATE", "WET" -> 2.5;
+            default -> 1.5;
+        };
     }
 }

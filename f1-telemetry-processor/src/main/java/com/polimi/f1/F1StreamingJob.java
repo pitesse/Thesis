@@ -266,6 +266,50 @@ public class F1StreamingJob {
         pitEvalsCsv.sinkTo(pitEvalSink).name("FileSink: Pit Evaluations");
         tireDropsCsv.sinkTo(tireDropSink).name("FileSink: Tire Drops");
 
+        // lift & coast csv sink
+        DataStream<String> liftCoastCsv = liftCoastAlerts
+                .map(new CsvHeaderMapper<>(LiftCoastAlert.CSV_HEADER, LiftCoastAlert::toCsvRow))
+                .returns(String.class)
+                .name("Serialize Lift & Coast (CSV)");
+
+        FileSink<String> liftCoastSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/lift_coast"), new SimpleStringEncoder<String>("UTF-8"))
+                .withRollingPolicy(
+                        DefaultRollingPolicy.builder()
+                                .withRolloverInterval(Duration.ofMinutes(5))
+                                .withInactivityInterval(Duration.ofMinutes(3))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .build())
+                .withOutputFileConfig(OutputFileConfig.builder()
+                        .withPartPrefix("lift-coast")
+                        .withPartSuffix(".csv")
+                        .build())
+                .build();
+
+        liftCoastCsv.sinkTo(liftCoastSink).name("FileSink: Lift & Coast");
+
+        // pit window csv sink
+        DataStream<String> pitWindowCsv = pitWindowAlerts
+                .map(new CsvHeaderMapper<>(PitWindowAlert.CSV_HEADER, PitWindowAlert::toCsvRow))
+                .returns(String.class)
+                .name("Serialize Pit Windows (CSV)");
+
+        FileSink<String> pitWindowSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/pit_windows"), new SimpleStringEncoder<String>("UTF-8"))
+                .withRollingPolicy(
+                        DefaultRollingPolicy.builder()
+                                .withRolloverInterval(Duration.ofMinutes(5))
+                                .withInactivityInterval(Duration.ofMinutes(3))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .build())
+                .withOutputFileConfig(OutputFileConfig.builder()
+                        .withPartPrefix("pit-window")
+                        .withPartSuffix(".csv")
+                        .build())
+                .build();
+
+        pitWindowCsv.sinkTo(pitWindowSink).name("FileSink: Pit Windows");
+
         // kafka sink (route alerts to dashboard via f1-alerts topic)
         // the dashboard subscribes to f1-alerts to display live strategic alerts.
         // all three alert types are serialized to json, unioned into a single stream,
