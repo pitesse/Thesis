@@ -14,12 +14,14 @@
 #   ./simulate_season.sh
 #   ./simulate_season.sh --speed 200
 #   ./simulate_season.sh --year 2024
+#   ./simulate_season.sh --races "Italian Grand Prix,British Grand Prix"
 
-set -uo pipefail
+set -euo pipefail
 
 YEAR=2023
 SPEED=100
 SESSION="R"
+RACES_FILTER=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -33,6 +35,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--session)
 		SESSION="$2"
+		shift 2
+		;;
+	--races)
+		RACES_FILTER="$2"
 		shift 2
 		;;
 	*)
@@ -71,6 +77,24 @@ fi
 
 # parse json array into bash array
 mapfile -t RACES < <(python -c "import json; [print(r) for r in json.loads('$RACES_JSON')]")
+
+# if --races filter is set, only keep races that match the comma-separated list
+if [ -n "$RACES_FILTER" ]; then
+	IFS=',' read -ra FILTER_LIST <<< "$RACES_FILTER"
+	FILTERED=()
+	for RACE in "${RACES[@]}"; do
+		for F in "${FILTER_LIST[@]}"; do
+			# trim whitespace from filter entry
+			F="$(echo "$F" | xargs)"
+			if [ "$RACE" = "$F" ]; then
+				FILTERED+=("$RACE")
+				break
+			fi
+		done
+	done
+	RACES=("${FILTERED[@]}")
+fi
+
 TOTAL=${#RACES[@]}
 
 echo "=========================================="
@@ -123,7 +147,7 @@ done
 # all part-files into a single csv per sink type with a clear name.
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-for SINK_DIR in pit_evals tire_drops lift_coast pit_windows; do
+for SINK_DIR in pit_evals tire_drops lift_coast drop_zones ml_features; do
 	TARGET_DIR="$PROJECT_DIR/data_lake/$SINK_DIR"
 	if [ -d "$TARGET_DIR" ]; then
 		MERGED_FILE="$PROJECT_DIR/data_lake/${SINK_DIR}_${YEAR}_season_${TIMESTAMP}.csv"
@@ -151,7 +175,7 @@ if [ "$FAILED" -gt 0 ]; then
 	echo " Failed:    $FAILED"
 fi
 echo ""
-echo " Raw output:    data_lake/{pit_evals,tire_drops,lift_coast,pit_windows}/"
+echo " Raw output:    data_lake/{pit_evals,tire_drops,lift_coast,drop_zones,ml_features}/"
 echo " Merged CSVs:   data_lake/pit_evals_${YEAR}_season_${TIMESTAMP}.csv"
 echo "                 data_lake/tire_drops_${YEAR}_season_${TIMESTAMP}.csv"
 echo ""

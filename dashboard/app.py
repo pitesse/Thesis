@@ -275,7 +275,7 @@ while True:
         df = pd.DataFrame(st.session_state.leaderboard.values())
         df = df.sort_values("Position").reset_index(drop=True)
         df.index = df.index + 1  # 1-based display index
-        leaderboard_placeholder.dataframe(df, width="stretch", hide_index=True)
+        leaderboard_placeholder.dataframe(df, use_container_width=True, hide_index=True)
     else:
         leaderboard_placeholder.info("Waiting for lap data...")
 
@@ -283,7 +283,7 @@ while True:
     if st.session_state.alerts:
         recent = st.session_state.alerts[-10:][::-1]
         alerts_df = pd.DataFrame(recent)
-        alerts_placeholder.dataframe(alerts_df, width="stretch", hide_index=True)
+        alerts_placeholder.dataframe(alerts_df, use_container_width=True, hide_index=True)
     else:
         alerts_placeholder.info("Waiting for Flink alerts...")
 
