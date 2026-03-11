@@ -32,6 +32,7 @@ public class TelemetryEvent {
     private double z;
 
     private String driver;       // three-letter abbreviation, ex: "VER", "LEC"
+    private int lapNumber;       // assigned by python producer via asof join with lap start dates
     private String trackStatus;  // enriched by broadcast state, fia code: "1"=green, "4"=sc, "6"=vsc
     private long eventTimeMillis; // derived from date — used by flink for event-time semantics
 
@@ -161,6 +162,16 @@ public class TelemetryEvent {
         this.driver = driver;
     }
 
+    @JsonProperty("LapNumber")
+    public int getLapNumber() {
+        return lapNumber;
+    }
+
+    @JsonProperty("LapNumber")
+    public void setLapNumber(int lapNumber) {
+        this.lapNumber = lapNumber;
+    }
+
     @JsonIgnore
     public String getTrackStatus() {
         return trackStatus;
@@ -185,7 +196,7 @@ public class TelemetryEvent {
     // tries Instant.parse first (with timezone, ex: "2023-09-03T13:05:12.003Z"),
     // falls back to LocalDateTime (no timezone suffix) assuming UTC.
     // ex: "2023-09-03T13:05:12.003" -> 1693746312003
-    static long parseEventTime(String isoDate) {
+    public static long parseEventTime(String isoDate) {
         if (isoDate == null || isoDate.isEmpty()) {
             return 0L;
         }
