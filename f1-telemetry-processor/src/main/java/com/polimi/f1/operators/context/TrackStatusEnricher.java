@@ -1,12 +1,12 @@
-package com.polimi.f1.context;
+package com.polimi.f1.operators.context;
 
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.streaming.api.functions.co.KeyedBroadcastProcessFunction;
 import org.apache.flink.util.Collector;
 
-import com.polimi.f1.events.TelemetryEvent;
-import com.polimi.f1.events.TrackStatusEvent;
+import com.polimi.f1.model.input.TelemetryEvent;
+import com.polimi.f1.model.input.TrackStatusEvent;
 
 // enriches the per-driver telemetry stream with the current global track status
 // using flink's broadcast state pattern.

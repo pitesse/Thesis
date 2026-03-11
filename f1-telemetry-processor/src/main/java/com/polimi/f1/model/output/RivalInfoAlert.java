@@ -1,4 +1,4 @@
-package com.polimi.f1.model;
+package com.polimi.f1.model.output;
 
 // output of the rival identification window function.
 // for each driver on each lap, identifies who is directly ahead and behind

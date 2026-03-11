@@ -1,16 +1,17 @@
-package com.polimi.f1.model;
+package com.polimi.f1.model.output;
 
 // emitted when the fuzzy-logic pit desirability score for a driver exceeds the emit threshold.
-// combines four scoring dimensions: pace degradation, track status (sc/vsc opportunity),
-// traffic analysis (clean air vs drs train), and tire life feasibility.
+// combines five scoring dimensions: pace degradation, track status (sc/vsc opportunity),
+// traffic analysis (clean air vs drs train), tire life feasibility, and urgency (closing window).
 //
-// the score ranges 0-100. individual components can be negative (traffic penalty, tire life).
-// ex csv: VER,25,2,MEDIUM,18,75,30,0,30,-15,1,5,4.200,"Pace drop + clean air"
+// the score ranges 0-100 (clamped). individual components can be negative (traffic, tire life).
+// urgencyScore adds +10/+20 when the remaining-lap window for the next compound is closing.
+// ex csv: VER,25,2,MEDIUM,18,75,30,0,30,-15,10,1,5,4.200,"Pace drop + clean air + closing window"
 public class PitSuggestionAlert {
 
     public static final String CSV_HEADER
             = "driver,lapNumber,position,compound,tyreLife,totalScore,"
-            + "paceScore,trackStatusScore,trafficScore,tireLifePenalty,"
+            + "paceScore,trackStatusScore,trafficScore,tireLifePenalty,urgencyScore,"
             + "trackStatus,emergencePosition,gapToPhysicalCar,suggestion";
 
     private String driver;
@@ -23,6 +24,7 @@ public class PitSuggestionAlert {
     private int trackStatusScore;   // 0-60
     private int trafficScore;       // -30 to +30
     private int tireLifePenalty;    // -15 to 0
+    private int urgencyScore;       // 0 to +20, closing window for next compound
     private String trackStatus;
     private int emergencePosition;  // computed physical position after pit
     private double gapToPhysicalCar;
@@ -33,7 +35,7 @@ public class PitSuggestionAlert {
 
     public PitSuggestionAlert(String driver, int lapNumber, int position, String compound,
             int tyreLife, int totalScore, int paceScore, int trackStatusScore,
-            int trafficScore, int tireLifePenalty, String trackStatus,
+            int trafficScore, int tireLifePenalty, int urgencyScore, String trackStatus,
             int emergencePosition, double gapToPhysicalCar, String suggestion) {
         this.driver = driver;
         this.lapNumber = lapNumber;
@@ -45,6 +47,7 @@ public class PitSuggestionAlert {
         this.trackStatusScore = trackStatusScore;
         this.trafficScore = trafficScore;
         this.tireLifePenalty = tireLifePenalty;
+        this.urgencyScore = urgencyScore;
         this.trackStatus = trackStatus;
         this.emergencePosition = emergencePosition;
         this.gapToPhysicalCar = gapToPhysicalCar;
@@ -81,6 +84,9 @@ public class PitSuggestionAlert {
     public int getTireLifePenalty() { return tireLifePenalty; }
     public void setTireLifePenalty(int tireLifePenalty) { this.tireLifePenalty = tireLifePenalty; }
 
+    public int getUrgencyScore() { return urgencyScore; }
+    public void setUrgencyScore(int urgencyScore) { this.urgencyScore = urgencyScore; }
+
     public String getTrackStatus() { return trackStatus; }
     public void setTrackStatus(String trackStatus) { this.trackStatus = trackStatus; }
 
@@ -93,7 +99,7 @@ public class PitSuggestionAlert {
     public String getSuggestion() { return suggestion; }
     public void setSuggestion(String suggestion) { this.suggestion = suggestion; }
 
-    // ex: VER,25,2,MEDIUM,18,75,30,0,30,-15,1,5,4.200,Pace drop + clean air
+    // ex: VER,25,2,MEDIUM,18,75,30,0,30,-15,10,1,5,4.200,Pace drop + clean air
     public String toCsvRow() {
         return String.join(",",
                 driver != null ? driver : "",
@@ -106,6 +112,7 @@ public class PitSuggestionAlert {
                 String.valueOf(trackStatusScore),
                 String.valueOf(trafficScore),
                 String.valueOf(tireLifePenalty),
+                String.valueOf(urgencyScore),
                 trackStatus != null ? trackStatus : "",
                 String.valueOf(emergencePosition),
                 String.format("%.3f", gapToPhysicalCar),
@@ -117,9 +124,9 @@ public class PitSuggestionAlert {
     public String toString() {
         return String.format(
                 "PIT SUGGESTION | %s Lap %d P%d | %s L%d | Score: %d/100 "
-                        + "[Pace:%d Status:%d Traffic:%d Penalty:%d] | Emerge P%d (gap=%.1fs) | %s",
+                        + "[Pace:%d Status:%d Traffic:%d Penalty:%d Urgency:%d] | Emerge P%d (gap=%.1fs) | %s",
                 driver, lapNumber, position, compound, tyreLife, totalScore,
-                paceScore, trackStatusScore, trafficScore, tireLifePenalty,
+                paceScore, trackStatusScore, trafficScore, tireLifePenalty, urgencyScore,
                 emergencePosition, gapToPhysicalCar,
                 suggestion != null ? suggestion : "");
     }

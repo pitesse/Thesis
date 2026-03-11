@@ -1,4 +1,4 @@
-package com.polimi.f1.alerts;
+package com.polimi.f1.operators.realtime;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -12,17 +12,23 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
-import com.polimi.f1.events.LapEvent;
-import com.polimi.f1.model.PitSuggestionAlert;
+import com.polimi.f1.model.input.LapEvent;
+import com.polimi.f1.model.output.PitSuggestionAlert;
 
 // computes a fuzzy-logic "pit desirability score" (0-100) for each driver on every lap,
-// synthesizing four strategic dimensions into a single actionable metric.
+// synthesizing five strategic dimensions into a single actionable metric.
 //
 // scoring dimensions:
 //   pace:         +30 if lap time exceeds stint best by compound threshold
 //   track status: +60 if SC or VSC active (cheap pit stop)
 //   traffic:      -30 to +30. clean air (+30), easy pass (+5), DRS train (-30)
 //   tire life:    -15 if next compound can't reach race end
+//   urgency:      +10/+20 when the remaining-lap window for the next compound is closing
+//
+// emit-gate: suppresses notification spam by tracking per-driver emissions within a stint.
+// first alert above threshold fires immediately. subsequent laps only re-emit if the score
+// has increased by >= 10 points (escalation) or track status changed (new opportunity).
+// stint changes (pit stop) reset the gate so the next stint gets fresh evaluation.
 //
 // keyed by constant "RACE" for global position-ladder visibility, same design as
 // DropZoneEvaluator. leader-driven trigger: P1 finishing lap N triggers evaluation
@@ -44,6 +50,17 @@ public class PitStrategyEvaluator
     private static final int EASY_PASS_SCORE = 5;
     private static final int DRS_TRAIN_PENALTY = -30;
     private static final int TIRE_LIFE_PENALTY = -15;
+
+    // urgency scoring: boosts score when the remaining-lap window for the next compound
+    // is closing. if lapsRemaining <= 80% of max next stint -> +10, <= 60% -> +20.
+    private static final int URGENCY_MILD = 10;
+    private static final int URGENCY_CRITICAL = 20;
+    private static final double URGENCY_MILD_RATIO = 0.8;
+    private static final double URGENCY_CRITICAL_RATIO = 0.6;
+
+    // emit-gate: minimum score increase since last emission before re-emitting.
+    // prevents flooding the pit wall with marginal score fluctuations each lap.
+    private static final int RE_EMIT_DELTA = 10;
 
     // clean air gap threshold (seconds). emerging into > 3.0s gap means no dirty air.
     private static final double CLEAN_AIR_GAP = 3.0;
@@ -83,6 +100,18 @@ public class PitStrategyEvaluator
     // dynamically updated when any driver pits, enabling data-driven stint estimates.
     private transient MapState<String, Integer> maxStintByCompound;
 
+    // emit-gate: score at last emission per driver, key = driver abbreviation.
+    // suppresses re-emission unless score has increased by >= RE_EMIT_DELTA.
+    private transient MapState<String, Integer> lastEmittedScore;
+
+    // emit-gate: stint number at last emission per driver.
+    // reset tracking when the driver pits (new stint = fresh evaluation window).
+    private transient MapState<String, Integer> lastEmittedStint;
+
+    // emit-gate: track status at last emission per driver.
+    // re-emit if track status changed (e.g., SC just deployed = new opportunity).
+    private transient MapState<String, String> lastEmittedTrackStatus;
+
     @Override
     public void open(Configuration parameters) {
         lapEvents = getRuntimeContext().getMapState(
@@ -92,6 +121,15 @@ public class PitStrategyEvaluator
         maxStintByCompound = getRuntimeContext().getMapState(
                 new MapStateDescriptor<>("max-stint-compound",
                         Types.STRING, Types.INT));
+        lastEmittedScore = getRuntimeContext().getMapState(
+                new MapStateDescriptor<>("last-emitted-score",
+                        Types.STRING, Types.INT));
+        lastEmittedStint = getRuntimeContext().getMapState(
+                new MapStateDescriptor<>("last-emitted-stint",
+                        Types.STRING, Types.INT));
+        lastEmittedTrackStatus = getRuntimeContext().getMapState(
+                new MapStateDescriptor<>("last-emitted-track-status",
+                        Types.STRING, Types.STRING));
     }
 
     private static String stateKey(int lap, String driver) {
@@ -205,13 +243,15 @@ public class PitStrategyEvaluator
         }
     }
 
-    // evaluates the pit desirability score for each eligible driver on the lap
+    // evaluates the pit desirability score for each eligible driver on the lap.
+    // applies urgency scoring and emit-gate logic to suppress notification spam.
     private void evaluateAll(List<LapEvent> laps, Collector<PitSuggestionAlert> out)
             throws Exception {
         laps.sort(Comparator.comparingInt(LapEvent::getPosition));
 
         for (int i = 0; i < laps.size(); i++) {
             LapEvent current = laps.get(i);
+            String driver = current.getDriver();
 
             // skip fresh tires, opening laps, pit laps
             if (current.getTyreLife() < MIN_TYRE_LIFE) {
@@ -229,16 +269,28 @@ public class PitStrategyEvaluator
             int trafficScore = traffic.score;
 
             int tireLifePenalty = computeTireLifePenalty(current);
+            int urgencyScore = computeUrgencyScore(current);
 
-            int totalScore = paceScore + trackStatusScore + trafficScore + tireLifePenalty;
+            int totalScore = paceScore + trackStatusScore + trafficScore + tireLifePenalty + urgencyScore;
             totalScore = Math.max(0, Math.min(100, totalScore));
 
             if (totalScore >= EMIT_THRESHOLD) {
+                // emit-gate: check if we should emit or suppress this alert
+                if (!shouldEmit(driver, current.getStint(), totalScore, current.getTrackStatus())) {
+                    continue;
+                }
+
+                // update emit-gate tracking
+                lastEmittedScore.put(driver, totalScore);
+                lastEmittedStint.put(driver, current.getStint());
+                lastEmittedTrackStatus.put(driver,
+                        current.getTrackStatus() != null ? current.getTrackStatus() : "1");
+
                 String suggestion = buildSuggestion(paceScore, trackStatusScore,
-                        trafficScore, tireLifePenalty);
+                        trafficScore, tireLifePenalty, urgencyScore);
 
                 out.collect(new PitSuggestionAlert(
-                        current.getDriver(),
+                        driver,
                         current.getLapNumber(),
                         current.getPosition(),
                         current.getCompound(),
@@ -248,6 +300,7 @@ public class PitStrategyEvaluator
                         trackStatusScore,
                         trafficScore,
                         tireLifePenalty,
+                        urgencyScore,
                         current.getTrackStatus() != null ? current.getTrackStatus() : "1",
                         traffic.emergencePosition,
                         traffic.gapToPhysicalCar,
@@ -255,6 +308,72 @@ public class PitStrategyEvaluator
                 ));
             }
         }
+    }
+
+    // emit-gate: determines whether an alert should be emitted or suppressed.
+    // first emission in a stint: always emit (window opens).
+    // subsequent laps: re-emit only if score rose by >= RE_EMIT_DELTA (escalation),
+    // or track status changed (new opportunity, e.g., SC just deployed).
+    // stint change (pit stop) resets the gate for fresh evaluation.
+    private boolean shouldEmit(String driver, int currentStint, int currentScore,
+            String currentTrackStatus) throws Exception {
+        Integer prevStint = lastEmittedStint.get(driver);
+        Integer prevScore = lastEmittedScore.get(driver);
+
+        // first emission ever, or new stint after pit stop -> always emit
+        if (prevStint == null || prevStint != currentStint) {
+            return true;
+        }
+
+        // no prior score recorded -> emit
+        if (prevScore == null) {
+            return true;
+        }
+
+        // track status changed since last emission (e.g., SC deployed) -> re-emit as new opportunity
+        String prevTrackStatus = lastEmittedTrackStatus.get(driver);
+        String normalizedCurrent = currentTrackStatus != null ? currentTrackStatus : "1";
+        if (prevTrackStatus != null && !prevTrackStatus.equals(normalizedCurrent)) {
+            return true;
+        }
+
+        // score escalated by >= RE_EMIT_DELTA since last emission
+        return (currentScore - prevScore) >= RE_EMIT_DELTA;
+    }
+
+    // urgency scoring: +10 if remaining laps <= 80% of max next stint (closing window),
+    // +20 if <= 60% (critical window). naturally suppresses very late-race suggestions
+    // where tire life penalty already applies, while boosting mid-race urgency.
+    // ex: 15 laps left, max MEDIUM stint = 22 -> 15/22 = 0.68 -> URGENCY_MILD (+10)
+    private int computeUrgencyScore(LapEvent current) throws Exception {
+        int totalLaps = current.getTotalLaps();
+        if (totalLaps <= 0) {
+            return 0;
+        }
+
+        int lapsRemaining = totalLaps - current.getLapNumber();
+        if (lapsRemaining <= 0) {
+            return 0;
+        }
+
+        String nextCompound = inferNextCompound(current.getCompound());
+        Integer maxStint = maxStintByCompound.get(nextCompound);
+        if (maxStint == null) {
+            maxStint = defaultMaxStint(nextCompound);
+        }
+
+        if (maxStint <= 0) {
+            return 0;
+        }
+
+        double ratio = (double) lapsRemaining / maxStint;
+
+        if (ratio <= URGENCY_CRITICAL_RATIO) {
+            return URGENCY_CRITICAL;
+        } else if (ratio <= URGENCY_MILD_RATIO) {
+            return URGENCY_MILD;
+        }
+        return 0;
     }
 
     // +30 if current pace has degraded beyond the compound-specific threshold.
@@ -397,9 +516,9 @@ public class PitStrategyEvaluator
     }
 
     // builds a human-readable explanation string from the active scoring components.
-    // ex: "Pace drop + SC opportunity + clean air"
+    // ex: "Pace drop + SC opportunity + clean air + closing window"
     private static String buildSuggestion(int paceScore, int trackStatusScore,
-            int trafficScore, int tireLifePenalty) {
+            int trafficScore, int tireLifePenalty, int urgencyScore) {
         List<String> parts = new ArrayList<>();
         if (paceScore > 0) {
             parts.add("pace drop");
@@ -416,6 +535,11 @@ public class PitStrategyEvaluator
         }
         if (tireLifePenalty < 0) {
             parts.add("tight tire window");
+        }
+        if (urgencyScore >= URGENCY_CRITICAL) {
+            parts.add("critical window");
+        } else if (urgencyScore >= URGENCY_MILD) {
+            parts.add("closing window");
         }
         return parts.isEmpty() ? "general" : String.join(" + ", parts);
     }

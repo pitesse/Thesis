@@ -1,4 +1,4 @@
-package com.polimi.f1.model;
+package com.polimi.f1.model.output;
 
 // classification of a completed pit stop as success or failure.
 // emitted after collecting 3 post-pit laps to evaluate position changes.
@@ -8,7 +8,7 @@ public class PitStopEvaluationAlert {
 
     public static final String CSV_HEADER
             = "driver,pitLapNumber,prePitPosition,postPitPosition,compound,result,"
-            + "trackStatusAtPit,tyreAgeAtPit,gapToCarAheadAtPit,race";
+            + "trackStatusAtPit,tyreAgeAtPit,gapToCarAheadAtPit,race,netRival";
 
     public enum Result {
         SUCCESS_UNDERCUT, // gained positions (effective undercut)
@@ -26,6 +26,7 @@ public class PitStopEvaluationAlert {
     private int tyreAgeAtPit;             // laps completed on old tire set at pit entry
     private Double gapToCarAheadAtPit;    // gap in seconds to the car ahead when pitting
     private String race;                  // grand prix name, ex: "Italian Grand Prix"
+    private String netRival;               // driver compared against for classification, ex: "LEC"
 
     public PitStopEvaluationAlert() {
     }
@@ -33,7 +34,7 @@ public class PitStopEvaluationAlert {
     public PitStopEvaluationAlert(String driver, int pitLapNumber, int prePitPosition,
             int postPitPosition, String compound, Result result,
             String trackStatusAtPit, int tyreAgeAtPit,
-            Double gapToCarAheadAtPit, String race) {
+            Double gapToCarAheadAtPit, String race, String netRival) {
         this.driver = driver;
         this.pitLapNumber = pitLapNumber;
         this.prePitPosition = prePitPosition;
@@ -44,6 +45,7 @@ public class PitStopEvaluationAlert {
         this.tyreAgeAtPit = tyreAgeAtPit;
         this.gapToCarAheadAtPit = gapToCarAheadAtPit;
         this.race = race;
+        this.netRival = netRival;
     }
 
     public String getDriver() {
@@ -126,7 +128,15 @@ public class PitStopEvaluationAlert {
         this.race = race;
     }
 
-    // ml-ready csv row, ex: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832,Italian Grand Prix
+    public String getNetRival() {
+        return netRival;
+    }
+
+    public void setNetRival(String netRival) {
+        this.netRival = netRival;
+    }
+
+    // ml-ready csv row, ex: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832,Italian Grand Prix,LEC
     public String toCsvRow() {
         return String.join(",",
                 driver,
@@ -138,7 +148,8 @@ public class PitStopEvaluationAlert {
                 trackStatusAtPit != null ? trackStatusAtPit : "",
                 String.valueOf(tyreAgeAtPit),
                 gapToCarAheadAtPit != null ? String.format("%.3f", gapToCarAheadAtPit) : "",
-                race != null ? race : ""
+                race != null ? race : "",
+                netRival != null ? netRival : ""
         );
     }
 
@@ -146,10 +157,11 @@ public class PitStopEvaluationAlert {
     public String toString() {
         return String.format(
                 "PIT EVAL | Driver: %s | Lap: %d | Pre: P%d | Post: P%d | %s | Result: %s"
-                + " | Track: %s | TyreAge: %d | Gap: %s | Race: %s",
+                + " | Track: %s | TyreAge: %d | Gap: %s | Race: %s | Rival: %s",
                 driver, pitLapNumber, prePitPosition, postPitPosition, compound, result,
                 trackStatusAtPit, tyreAgeAtPit,
                 gapToCarAheadAtPit != null ? String.format("%.3f", gapToCarAheadAtPit) : "N/A",
-                race != null ? race : "N/A");
+                race != null ? race : "N/A",
+                netRival != null ? netRival : "N/A");
     }
 }

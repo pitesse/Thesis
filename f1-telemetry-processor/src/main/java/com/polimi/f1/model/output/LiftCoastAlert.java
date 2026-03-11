@@ -1,4 +1,4 @@
-package com.polimi.f1.model;
+package com.polimi.f1.model.output;
 
 // emitted when cep detects a lift & coast maneuver: the driver releases full throttle,
 // coasts briefly with no pedal input, then applies brakes later than a normal braking point.

@@ -1,4 +1,4 @@
-package com.polimi.f1.context;
+package com.polimi.f1.operators.context;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -8,7 +8,7 @@ import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
-import com.polimi.f1.model.RivalInfoAlert;
+import com.polimi.f1.model.output.RivalInfoAlert;
 
 // detects DRS trains: contiguous groups of drivers where consecutive cars are
 // within 1 second of each other, making DRS-assisted overtaking ineffective.
