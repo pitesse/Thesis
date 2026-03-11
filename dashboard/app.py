@@ -2,14 +2,13 @@
 f1 strategy dashboard — live race monitor powered by streamlit + kafka.
 
 ## how to run
-1. make sure the docker stack is up (kafka on localhost:9092):
+1. make sure the docker stack is up:
        ./run_simulation.sh --speed 50
-2. in a separate terminal, install dependencies and launch the dashboard:
-       pip install -r dashboard/requirements.txt
-       streamlit run dashboard/app.py
+2. the dashboard starts automatically as a docker service at http://localhost:8501
 """
 
 import json
+import os
 import time
 from datetime import timedelta
 
@@ -22,7 +21,7 @@ from kafka.errors import NoBrokersAvailable
 st.set_page_config(page_title="F1 Pit Wall", layout="wide")
 st.title("F1 Pit Wall — Live Race Monitor")
 
-KAFKA_BROKER = "localhost:9092"
+KAFKA_BROKER = os.environ.get("KAFKA_BROKER", "kafka:29092")
 TOPIC_LAPS = "f1-laps"
 TOPIC_TRACK_STATUS = "f1-track-status"
 TOPIC_ALERTS = "f1-alerts"
@@ -125,7 +124,7 @@ conn_placeholder = st.sidebar.empty()
 consumer = try_connect()
 if consumer is None:
     st.error(
-        "Could not connect to Kafka at `localhost:9092`. "
+        f"Could not connect to Kafka at `{KAFKA_BROKER}`. "
         "Make sure the Docker stack is running (`./run_simulation.sh`)."
     )
     st.stop()

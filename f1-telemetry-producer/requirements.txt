@@ -1,4 +1,0 @@
-fastf1
-kafka-python-ng
-pandas
-pyarrow
