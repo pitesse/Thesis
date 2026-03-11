@@ -1,0 +1,49 @@
+# java processor (built separately, submitted to flink via docker cp)
+f1-telemetry-processor/
+
+# data directories (mounted as volumes at runtime, not baked into the image)
+data/
+data_lake/
+
+# python virtual environments (host-only)
+.venv/
+venv/
+**/venv/
+**/.venv/
+**/__pycache__/
+
+# java build artifacts
+target/
+*.jar
+*.class
+
+# ide and editor config
+.idea/
+.vscode/
+*.iml
+
+# git
+.git/
+.gitignore
+
+# docs, reports, presentation (not needed at runtime)
+report/
+presentation/
+report.txt
+README.md
+CLAUDE.md
+tasks/
+
+# ml artifacts (generated at runtime, not baked in)
+ml_pipeline/*.pkl
+ml_pipeline/*.png
+
+# shell scripts (run on host, not inside container)
+*.sh
+
+# misc
+.DS_Store
+*.log
+docker-compose.yml
+Dockerfile
+.dockerignore
