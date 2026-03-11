@@ -80,7 +80,7 @@ mapfile -t RACES < <(python -c "import json; [print(r) for r in json.loads('$RAC
 
 # if --races filter is set, only keep races that match the comma-separated list
 if [ -n "$RACES_FILTER" ]; then
-	IFS=',' read -ra FILTER_LIST <<< "$RACES_FILTER"
+	IFS=',' read -ra FILTER_LIST <<<"$RACES_FILTER"
 	FILTERED=()
 	for RACE in "${RACES[@]}"; do
 		for F in "${FILTER_LIST[@]}"; do
