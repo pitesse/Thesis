@@ -1,4 +1,4 @@
-package com.polimi.f1.alerts;
+package com.polimi.f1.operators.realtime;
 
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
@@ -7,8 +7,8 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
-import com.polimi.f1.events.LapEvent;
-import com.polimi.f1.model.TireDropAlert;
+import com.polimi.f1.model.input.LapEvent;
+import com.polimi.f1.model.output.TireDropAlert;
 
 // detects tire performance degradation using a percentage-based "thermal cliff" approach.
 // thresholds are expressed as a percentage of stint-best lap time, so a 1s drop on a 75s

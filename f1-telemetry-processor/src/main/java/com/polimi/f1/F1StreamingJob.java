@@ -32,24 +32,24 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.polimi.f1.alerts.DropZoneEvaluator;
-import com.polimi.f1.alerts.LiftCoastDetector;
-import com.polimi.f1.alerts.PitStrategyEvaluator;
-import com.polimi.f1.alerts.TireDropDetector;
-import com.polimi.f1.context.DrsTrainDetector;
-import com.polimi.f1.context.RivalIdentificationFunction;
-import com.polimi.f1.context.TrackStatusEnricher;
-import com.polimi.f1.events.LapEvent;
-import com.polimi.f1.events.TelemetryEvent;
-import com.polimi.f1.events.TrackStatusEvent;
-import com.polimi.f1.groundtruth.PitStopEvaluator;
-import com.polimi.f1.model.DropZoneAlert;
-import com.polimi.f1.model.LiftCoastAlert;
-import com.polimi.f1.model.MLFeatureRow;
-import com.polimi.f1.model.PitStopEvaluationAlert;
-import com.polimi.f1.model.PitSuggestionAlert;
-import com.polimi.f1.model.RivalInfoAlert;
-import com.polimi.f1.model.TireDropAlert;
+import com.polimi.f1.model.input.LapEvent;
+import com.polimi.f1.model.input.TelemetryEvent;
+import com.polimi.f1.model.input.TrackStatusEvent;
+import com.polimi.f1.model.output.DropZoneAlert;
+import com.polimi.f1.model.output.LiftCoastAlert;
+import com.polimi.f1.model.output.MLFeatureRow;
+import com.polimi.f1.model.output.PitStopEvaluationAlert;
+import com.polimi.f1.model.output.PitSuggestionAlert;
+import com.polimi.f1.model.output.RivalInfoAlert;
+import com.polimi.f1.model.output.TireDropAlert;
+import com.polimi.f1.operators.context.DrsTrainDetector;
+import com.polimi.f1.operators.context.RivalIdentificationFunction;
+import com.polimi.f1.operators.context.TrackStatusEnricher;
+import com.polimi.f1.operators.groundtruth.PitStopEvaluator;
+import com.polimi.f1.operators.realtime.DropZoneEvaluator;
+import com.polimi.f1.operators.realtime.LiftCoastDetector;
+import com.polimi.f1.operators.realtime.PitStrategyEvaluator;
+import com.polimi.f1.operators.realtime.TireDropDetector;
 
 // main flink job: wires kafka sources, event-time watermarks, and all processing pipelines.
 // consumes three topics: f1-telemetry (high-freq car data), f1-laps (per-lap summaries),
@@ -226,9 +226,10 @@ public class F1StreamingJob {
 
         // module b: ground truth
         // pit stop evaluation: classifies each pit stop as success (undercut/defend) or failure
-        // by comparing position before and after, using a 3-lap post-pit observation window.
+        // by comparing the pitting driver against their net rival (car directly ahead at pit time).
+        // keyed by "RACE" for global field visibility (needs to see all drivers' positions).
         DataStream<PitStopEvaluationAlert> pitEvals = lapWithWatermarks
-                .keyBy(LapEvent::getDriver)
+                .keyBy(e -> "RACE")
                 .process(new PitStopEvaluator())
                 .name("Pit Stop Evaluation");
 

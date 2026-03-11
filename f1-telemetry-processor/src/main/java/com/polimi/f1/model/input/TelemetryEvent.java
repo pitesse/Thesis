@@ -1,4 +1,4 @@
-package com.polimi.f1.events;
+package com.polimi.f1.model.input;
 
 import java.time.Instant;
 import java.time.LocalDateTime;

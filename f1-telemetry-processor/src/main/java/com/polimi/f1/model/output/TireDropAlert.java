@@ -1,4 +1,4 @@
-package com.polimi.f1.model;
+package com.polimi.f1.model.output;
 
 // emitted when a driver's rolling lap time average degrades beyond a threshold
 // relative to their stint best. indicates tire performance cliff.

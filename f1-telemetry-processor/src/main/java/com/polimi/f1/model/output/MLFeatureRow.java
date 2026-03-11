@@ -1,4 +1,4 @@
-package com.polimi.f1.model;
+package com.polimi.f1.model.output;
 
 // denormalized feature row for ml training: one row per driver per lap.
 // combines lap timing/tire data with positional gap data computed by rival identification.

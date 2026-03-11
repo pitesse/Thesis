@@ -1,4 +1,4 @@
-package com.polimi.f1.alerts;
+package com.polimi.f1.operators.realtime;
 
 import java.util.List;
 import java.util.Map;
@@ -16,8 +16,8 @@ import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
 
-import com.polimi.f1.events.TelemetryEvent;
-import com.polimi.f1.model.LiftCoastAlert;
+import com.polimi.f1.model.input.TelemetryEvent;
+import com.polimi.f1.model.output.LiftCoastAlert;
 
 // detects lift & coast fuel-saving maneuvers using flink cep.
 // pattern: throttle=100 & speed>280 & gear>=7 -> throttle=0 -> brake>0, within 4 seconds.

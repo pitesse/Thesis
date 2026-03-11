@@ -1,4 +1,4 @@
-package com.polimi.f1.context;
+package com.polimi.f1.operators.context;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -9,9 +9,9 @@ import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
 
-import com.polimi.f1.events.LapEvent;
-import com.polimi.f1.model.MLFeatureRow;
-import com.polimi.f1.model.RivalInfoAlert;
+import com.polimi.f1.model.input.LapEvent;
+import com.polimi.f1.model.output.MLFeatureRow;
+import com.polimi.f1.model.output.RivalInfoAlert;
 
 // identifies the car ahead and behind each driver on every lap by collecting
 // all lap events in a session-gap window (keyed by lap number) and sorting by position.
