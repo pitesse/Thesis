@@ -20,6 +20,7 @@ import org.apache.flink.core.fs.Path;
 import org.apache.flink.runtime.state.storage.FileSystemCheckpointStorage;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
@@ -31,8 +32,9 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.polimi.f1.alerts.DropZoneEvaluator;
 import com.polimi.f1.alerts.LiftCoastDetector;
-import com.polimi.f1.alerts.PitWindowDetector;
+import com.polimi.f1.alerts.PitStrategyEvaluator;
 import com.polimi.f1.alerts.TireDropDetector;
 import com.polimi.f1.context.DrsTrainDetector;
 import com.polimi.f1.context.RivalIdentificationFunction;
@@ -41,9 +43,11 @@ import com.polimi.f1.events.LapEvent;
 import com.polimi.f1.events.TelemetryEvent;
 import com.polimi.f1.events.TrackStatusEvent;
 import com.polimi.f1.groundtruth.PitStopEvaluator;
+import com.polimi.f1.model.DropZoneAlert;
 import com.polimi.f1.model.LiftCoastAlert;
+import com.polimi.f1.model.MLFeatureRow;
 import com.polimi.f1.model.PitStopEvaluationAlert;
-import com.polimi.f1.model.PitWindowAlert;
+import com.polimi.f1.model.PitSuggestionAlert;
 import com.polimi.f1.model.RivalInfoAlert;
 import com.polimi.f1.model.TireDropAlert;
 
@@ -53,7 +57,7 @@ import com.polimi.f1.model.TireDropAlert;
 //
 // module a (context): track status broadcast, rival identification, drs train detection
 // module b (ground truth): pit stop evaluation (success/failure classification)
-// module c (real-time alerts): lift & coast cep, tire drop detection, open box window
+// module c (real-time alerts): lift & coast cep, tire drop detection, drop zone analysis
 public class F1StreamingJob {
 
     private static final Logger LOG = LoggerFactory.getLogger(F1StreamingJob.class);
@@ -162,14 +166,22 @@ public class F1StreamingJob {
                 .process(new TrackStatusEnricher())
                 .name("Track Status Enrichment");
 
-        // a2: rival identification 
+        // a2: rival identification + ml feature export
         // window all lap events by lap number, identify the car ahead/behind for each driver.
         // session window with 30s gap: all drivers' events for the same lap arrive within seconds.
-        DataStream<RivalInfoAlert> rivalStream = lapWithWatermarks
+        // SingleOutputStreamOperator (not DataStream) to access the ml features side output.
+        SingleOutputStreamOperator<RivalInfoAlert> rivalResult = lapWithWatermarks
                 .keyBy(LapEvent::getLapNumber)
                 .window(EventTimeSessionWindows.withGap(Time.seconds(30)))
                 .process(new RivalIdentificationFunction())
                 .name("Rival Identification");
+
+        DataStream<RivalInfoAlert> rivalStream = rivalResult;
+
+        // ml feature side output: denormalized feature row per driver per lap,
+        // combining timing/tire data with gap context for offline model training
+        DataStream<MLFeatureRow> mlFeatures = rivalResult
+                .getSideOutput(RivalIdentificationFunction.ML_FEATURES_TAG);
 
         // a3: drs train detection 
         // re-window the rival info by lap number to detect contiguous groups within 1s gap
@@ -192,17 +204,25 @@ public class F1StreamingJob {
                 .process(new TireDropDetector())
                 .name("Tire Drop Detection");
 
-        //  c3: open box window (pit window)
-        // evaluates gap to car behind against track-specific threshold from upstream enrichment.
-        // requires both rival info (gap data + pit loss values) and track status (threshold selection).
-        BroadcastStream<TrackStatusEvent> pitWindowBroadcast
-                = trackStatusWithWatermarks.broadcast(PitWindowDetector.TRACK_STATUS_STATE);
+        //  c3: drop zone analysis (replaces pit window detector)
+        // computes physical race emergence position after pit stop by walking the full
+        // position ladder. bridges the net race (classification rivals) and physical race
+        // (on-track traffic after pitting). only evaluates drivers with tyre life >= 8.
+        // leader-driven trigger: when P1 finishes lap N, lap N-1 is guaranteed complete
+        // for the entire field. no timers, no watermark dependency, just pure race physics.
+        DataStream<DropZoneAlert> dropZoneAlerts = lapWithWatermarks
+                .keyBy(e -> "RACE")
+                .process(new DropZoneEvaluator())
+                .name("Drop Zone Analysis");
 
-        DataStream<PitWindowAlert> pitWindowAlerts = rivalStream
-                .keyBy(RivalInfoAlert::getDriver)
-                .connect(pitWindowBroadcast)
-                .process(new PitWindowDetector())
-                .name("Pit Window Detection");
+        // c4: pit strategy evaluation (fuzzy-logic pit desirability scoring)
+        // computes a 0-100 score per driver per lap based on pace degradation,
+        // track status, traffic after pit, and compound feasibility.
+        // keyed by "RACE" for global position-ladder visibility (same as drop zone).
+        DataStream<PitSuggestionAlert> pitSuggestions = lapWithWatermarks
+                .keyBy(e -> "RACE")
+                .process(new PitStrategyEvaluator())
+                .name("Pit Strategy Evaluation");
 
         // module b: ground truth
         // pit stop evaluation: classifies each pit stop as success (undercut/defend) or failure
@@ -216,8 +236,10 @@ public class F1StreamingJob {
         // pitEvals and tireDropAlerts are persisted via FileSink and routed via KafkaSink,
         // so their print sinks are removed to avoid redundant stdout noise.
         liftCoastAlerts.map(LiftCoastAlert::toString).returns(String.class).print().name("Lift & Coast Alerts");
-        pitWindowAlerts.map(PitWindowAlert::toString).returns(String.class).print().name("Pit Window Alerts");
+        dropZoneAlerts.map(DropZoneAlert::toString).returns(String.class).print().name("Drop Zone Alerts");
         drsTrainAlerts.print().name("DRS Train Alerts");
+        pitSuggestions.map(PitSuggestionAlert::toString).returns(String.class)
+                .print().name("Pit Suggestions");
 
         // file sinks (csv for ml dataset generation)
         // persists ground truth and alert streams to disk as csv (one row per event, header-prefixed).
@@ -263,8 +285,8 @@ public class F1StreamingJob {
                         .build())
                 .build();
 
-        pitEvalsCsv.sinkTo(pitEvalSink).name("FileSink: Pit Evaluations");
-        tireDropsCsv.sinkTo(tireDropSink).name("FileSink: Tire Drops");
+        pitEvalsCsv.sinkTo(pitEvalSink).name("FileSink: Pit Evaluations").uid("sink-pit-evals");
+        tireDropsCsv.sinkTo(tireDropSink).name("FileSink: Tire Drops").uid("sink-tire-drops");
 
         // lift & coast csv sink
         DataStream<String> liftCoastCsv = liftCoastAlerts
@@ -286,16 +308,16 @@ public class F1StreamingJob {
                         .build())
                 .build();
 
-        liftCoastCsv.sinkTo(liftCoastSink).name("FileSink: Lift & Coast");
+        liftCoastCsv.sinkTo(liftCoastSink).name("FileSink: Lift & Coast").uid("sink-lift-coast");
 
-        // pit window csv sink
-        DataStream<String> pitWindowCsv = pitWindowAlerts
-                .map(new CsvHeaderMapper<>(PitWindowAlert.CSV_HEADER, PitWindowAlert::toCsvRow))
+        // drop zone csv sink (replaces pit window)
+        DataStream<String> dropZoneCsv = dropZoneAlerts
+                .map(new CsvHeaderMapper<>(DropZoneAlert.CSV_HEADER, DropZoneAlert::toCsvRow))
                 .returns(String.class)
-                .name("Serialize Pit Windows (CSV)");
+                .name("Serialize Drop Zones (CSV)");
 
-        FileSink<String> pitWindowSink = FileSink
-                .forRowFormat(new Path("/opt/flink/data_lake/pit_windows"), new SimpleStringEncoder<String>("UTF-8"))
+        FileSink<String> dropZoneSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/drop_zones"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
                                 .withRolloverInterval(Duration.ofMinutes(5))
@@ -303,12 +325,58 @@ public class F1StreamingJob {
                                 .withMaxPartSize(MemorySize.ofMebiBytes(128))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
-                        .withPartPrefix("pit-window")
+                        .withPartPrefix("drop-zone")
                         .withPartSuffix(".csv")
                         .build())
                 .build();
 
-        pitWindowCsv.sinkTo(pitWindowSink).name("FileSink: Pit Windows");
+        dropZoneCsv.sinkTo(dropZoneSink).name("FileSink: Drop Zones").uid("sink-drop-zones");
+
+        // pit suggestions csv sink
+        DataStream<String> pitSuggestionsCsv = pitSuggestions
+                .map(new CsvHeaderMapper<>(PitSuggestionAlert.CSV_HEADER, PitSuggestionAlert::toCsvRow))
+                .returns(String.class)
+                .name("Serialize Pit Suggestions (CSV)");
+
+        FileSink<String> pitSuggestionsSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/pit_suggestions"),
+                        new SimpleStringEncoder<String>("UTF-8"))
+                .withRollingPolicy(
+                        DefaultRollingPolicy.builder()
+                                .withRolloverInterval(Duration.ofMinutes(5))
+                                .withInactivityInterval(Duration.ofMinutes(3))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .build())
+                .withOutputFileConfig(OutputFileConfig.builder()
+                        .withPartPrefix("pit-suggestion")
+                        .withPartSuffix(".csv")
+                        .build())
+                .build();
+
+        pitSuggestionsCsv.sinkTo(pitSuggestionsSink)
+                .name("FileSink: Pit Suggestions").uid("sink-pit-suggestions");
+
+        // ml features csv sink (denormalized per-lap feature rows for model training)
+        DataStream<String> mlFeaturesCsv = mlFeatures
+                .map(new CsvHeaderMapper<>(MLFeatureRow.CSV_HEADER, MLFeatureRow::toCsvRow))
+                .returns(String.class)
+                .name("Serialize ML Features (CSV)");
+
+        FileSink<String> mlFeaturesSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/ml_features"), new SimpleStringEncoder<String>("UTF-8"))
+                .withRollingPolicy(
+                        DefaultRollingPolicy.builder()
+                                .withRolloverInterval(Duration.ofMinutes(5))
+                                .withInactivityInterval(Duration.ofMinutes(3))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .build())
+                .withOutputFileConfig(OutputFileConfig.builder()
+                        .withPartPrefix("ml-features")
+                        .withPartSuffix(".csv")
+                        .build())
+                .build();
+
+        mlFeaturesCsv.sinkTo(mlFeaturesSink).name("FileSink: ML Features").uid("sink-ml-features");
 
         // kafka sink (route alerts to dashboard via f1-alerts topic)
         // the dashboard subscribes to f1-alerts to display live strategic alerts.
@@ -319,18 +387,23 @@ public class F1StreamingJob {
                 .returns(String.class)
                 .name("Serialize Lift & Coast");
 
-        DataStream<String> pitWindowJson = pitWindowAlerts
+        DataStream<String> dropZoneJson = dropZoneAlerts
                 .map(new JsonSerializer<>())
                 .returns(String.class)
-                .name("Serialize Pit Window");
+                .name("Serialize Drop Zones (Kafka)");
 
         DataStream<String> tireDropsJson = tireDropAlerts
                 .map(new JsonSerializer<>())
                 .returns(String.class)
                 .name("Serialize Tire Drops (Kafka)");
 
+        DataStream<String> pitSuggestionsJson = pitSuggestions
+                .map(new JsonSerializer<>())
+                .returns(String.class)
+                .name("Serialize Pit Suggestions (Kafka)");
+
         DataStream<String> allAlerts = liftCoastJson
-                .union(tireDropsJson, pitWindowJson);
+                .union(tireDropsJson, dropZoneJson, pitSuggestionsJson);
 
         KafkaSink<String> alertsSink = KafkaSink.<String>builder()
                 .setBootstrapServers(KAFKA_BOOTSTRAP)
@@ -342,7 +415,26 @@ public class F1StreamingJob {
                 .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
                 .build();
 
-        allAlerts.sinkTo(alertsSink).name("KafkaSink: Alerts");
+        allAlerts.sinkTo(alertsSink).name("KafkaSink: Alerts").uid("sink-kafka-alerts");
+
+        // debug text sink: consolidated file of all alerts for inspection without
+        // scrolling through docker logs. writes json lines (same format as kafka sink).
+        FileSink<String> debugSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/debug_alerts"),
+                        new SimpleStringEncoder<String>("UTF-8"))
+                .withRollingPolicy(
+                        DefaultRollingPolicy.builder()
+                                .withRolloverInterval(Duration.ofMinutes(5))
+                                .withInactivityInterval(Duration.ofMinutes(3))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .build())
+                .withOutputFileConfig(OutputFileConfig.builder()
+                        .withPartPrefix("debug-alerts")
+                        .withPartSuffix(".txt")
+                        .build())
+                .build();
+
+        allAlerts.sinkTo(debugSink).name("FileSink: Debug Alerts").uid("sink-debug-alerts");
 
         // development: log lap events and track status for visibility
         lapWithWatermarks.map(lap -> "LAP | " + lap.toString()).returns(String.class)

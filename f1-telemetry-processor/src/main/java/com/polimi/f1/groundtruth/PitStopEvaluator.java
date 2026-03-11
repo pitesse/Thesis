@@ -16,18 +16,21 @@ import com.polimi.f1.events.LapEvent;
 import com.polimi.f1.model.PitStopEvaluationAlert;
 import com.polimi.f1.model.PitStopEvaluationAlert.Result;
 
-// evaluates pit stop outcomes by comparing position before and after the stop.
-// keyed by driver, tracks state across laps:
-//   1. maintains a rolling 1-lap lookback of position (previousLapPosition)
-//   2. detects pit entry (LapEvent with pitInTime != null)
-//   3. records pre-pit position from the previous lap, not the pit entry lap,
-//      because driving down the pit lane causes position losses before the
-//      driver crosses the start/finish line (skewing the recorded position)
-//   4. collects the next 3 clean laps after the pit stop
-//   5. classifies the outcome based on position delta
+// evaluates pit stop outcomes by comparing driver position before and after the stop.
 //
-// uses event-time timers as a safety net to clear stale state if post-pit laps
-// never arrive (e.g., driver retired after pit stop).
+// keyed by driver abbreviation, this state machine tracks each pit stop lifecycle:
+//   1. maintains a rolling 1-lap lookback of position (previousLapPosition)
+//   2. detects pit entry (pitInTime != null)
+//   3. records pre-pit position from the previous lap, not the pit entry lap,
+//      because driving down the pit lane causes position losses before the driver
+//      crosses the start/finish line (skewing the recorded position)
+//   4. skips the out-lap (cold tires, pit lane speed limit make timing unrepresentative)
+//   5. collects 3 clean post-pit laps and classifies the outcome:
+//      SUCCESS_UNDERCUT (gained position), SUCCESS_DEFEND (held position),
+//      or FAILURE_LOST_POSITION (lost position)
+//
+// a 10-minute event-time timer acts as a safety net: if post-pit laps never arrive
+// (driver retired, race ended), the timer fires and clears stale state.
 public class PitStopEvaluator extends KeyedProcessFunction<String, LapEvent, PitStopEvaluationAlert> {
 
     private static final int POST_PIT_LAPS = 3;
