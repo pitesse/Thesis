@@ -16,13 +16,16 @@ public class RivalInfoAlert {
     private Double pitLoss;        // green-flag pit loss (seconds) for this track
     private Double vscPitLoss;     // vsc pit loss (seconds)
     private Double scPitLoss;      // safety car pit loss (seconds)
+    private int tyreLife;          // laps on current tire set
+    private String compound;       // "SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"
 
     public RivalInfoAlert() {
     }
 
     public RivalInfoAlert(String driver, String driverAhead, String driverBehind,
             Double gapAhead, Double gapBehind, int lapNumber, int position,
-            String race, Double pitLoss, Double vscPitLoss, Double scPitLoss) {
+            String race, Double pitLoss, Double vscPitLoss, Double scPitLoss,
+            int tyreLife, String compound) {
         this.driver = driver;
         this.driverAhead = driverAhead;
         this.driverBehind = driverBehind;
@@ -34,6 +37,8 @@ public class RivalInfoAlert {
         this.pitLoss = pitLoss;
         this.vscPitLoss = vscPitLoss;
         this.scPitLoss = scPitLoss;
+        this.tyreLife = tyreLife;
+        this.compound = compound;
     }
 
     public String getDriver() {
@@ -124,6 +129,22 @@ public class RivalInfoAlert {
         this.scPitLoss = scPitLoss;
     }
 
+    public int getTyreLife() {
+        return tyreLife;
+    }
+
+    public void setTyreLife(int tyreLife) {
+        this.tyreLife = tyreLife;
+    }
+
+    public String getCompound() {
+        return compound;
+    }
+
+    public void setCompound(String compound) {
+        this.compound = compound;
+    }
+
     @Override
     public String toString() {
         return "RivalInfoAlert{"
@@ -134,6 +155,8 @@ public class RivalInfoAlert {
                 + ", gapAhead=" + gapAhead
                 + ", gapBehind=" + gapBehind
                 + ", lap=" + lapNumber
+                + ", compound='" + compound + '\''
+                + ", tyreLife=" + tyreLife
                 + ", race='" + race + '\''
                 + '}';
     }
