@@ -224,11 +224,22 @@ def build_lap_events(session) -> pd.DataFrame:
         "TrackStatus",
         "SpeedST",
         "Team",
+        "IsAccurate",
     ]
 
     all_laps = session.laps
     available = [col for col in lap_columns if col in all_laps.columns]
     laps_df = all_laps[available].copy()
+
+    # filter out inaccurate laps (sc-affected, timing anomalies) to ensure clean ml features.
+    # pit in/out laps are preserved regardless of accuracy because PitStopEvaluator needs
+    # pitInTime != null to detect pit entry and trigger the ground truth evaluation pipeline.
+    if "IsAccurate" in laps_df.columns:
+        pre_count = len(laps_df)
+        is_pit_lap = laps_df["PitInTime"].notna() | laps_df["PitOutTime"].notna()
+        laps_df = laps_df[is_pit_lap | (laps_df["IsAccurate"] == True)].copy()
+        logging.info("IsAccurate filter: %d -> %d laps (pit laps preserved)", pre_count, len(laps_df))
+        laps_df = laps_df.drop(columns=["IsAccurate"])
 
     # use LapStartDate as the event time (Date field for flink watermarks)
     if "LapStartDate" in laps_df.columns:
@@ -248,6 +259,11 @@ def build_lap_events(session) -> pd.DataFrame:
     # enrich with per-lap weather data from fastf1 (AirTemp, TrackTemp, Humidity, Rainfall).
     # get_weather_data joins the closest weather sample to each lap's timestamp.
     laps_df = _enrich_with_weather(session, laps_df)
+
+    # total scheduled race laps for fuel burn and strategy calculations in flink.
+    # ex: monza 2023 = 51 laps, spa = 44 laps
+    total_laps = getattr(session, 'total_laps', None) or 0
+    laps_df["TotalLaps"] = int(total_laps)
 
     laps_df["event_topic"] = TOPIC_LAPS
     return laps_df

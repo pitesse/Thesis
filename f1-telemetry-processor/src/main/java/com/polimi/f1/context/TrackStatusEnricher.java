@@ -8,20 +8,20 @@ import org.apache.flink.util.Collector;
 import com.polimi.f1.events.TelemetryEvent;
 import com.polimi.f1.events.TrackStatusEvent;
 
-// enriches the per-driver telemetry stream with the current global track status.
-// uses flink's broadcast state pattern: the sparse track status stream is broadcast
-// to all parallel instances, each maintaining a local copy in a MapState.
-// this avoids keying the global track status by driver (which would be semantically wrong)
-// while still making it accessible inside a keyed context.
+// enriches the per-driver telemetry stream with the current global track status
+// using flink's broadcast state pattern.
 //
-// why broadcast state (not a side input or lookup):
-// flink streaming has no true "side inputs". broadcast state is the canonical pattern
-// for joining a slowly-changing dimension (track status) to a high-frequency stream (telemetry).
+// the sparse track status stream is broadcast to all parallel telemetry instances,
+// each maintaining a local copy in a MapState. this avoids keying the global track
+// status by driver (semantically wrong) while still making it accessible in keyed context.
+//
+// why broadcast state (not a side input or lookup): flink streaming has no true
+// "side inputs". broadcast state is the canonical pattern for joining a slowly-changing
+// dimension (track status, ~1-5 changes per race) to a high-frequency stream (~4 Hz).
 public class TrackStatusEnricher
         extends KeyedBroadcastProcessFunction<String, TelemetryEvent, TrackStatusEvent, TelemetryEvent> {
 
-    // state descriptor shared between broadcast and processing sides.
-    // single key "current" holds the latest track status code.
+    // state descriptor shared between broadcast and processing sides. single key "current".
     public static final MapStateDescriptor<String, String> TRACK_STATUS_STATE
             = new MapStateDescriptor<>(
                     "track-status",

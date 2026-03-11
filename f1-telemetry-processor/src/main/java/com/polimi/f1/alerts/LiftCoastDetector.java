@@ -38,12 +38,24 @@ import com.polimi.f1.model.LiftCoastAlert;
 public class LiftCoastDetector {
 
     // minimum speed (km/h) to qualify as a straight-line full-throttle event.
-    // filters out slow corner exits where throttle=100 at lower speeds.
-    private static final int MIN_SPEED = 280;
+    // 250 km/h is track-agnostic: captures shorter straights at monaco/hungary (~260-270)
+    // while still filtering corner-exit bursts below 250.
+    private static final int MIN_SPEED = 250;
 
-    // minimum gear to qualify. lift & coast happens in 7th or 8th gear on straights,
-    // not in lower gears during corner-exit acceleration.
-    private static final int MIN_GEAR = 7;
+    // minimum gear for full-throttle phase. >= 6 catches circuits with shorter gear ratios
+    // (monaco tops out at 7th on the tunnel straight) while filtering low-speed acceleration.
+    private static final int MIN_GEAR = 6;
+
+    // minimum coast duration (ms) between throttle lift-off and brake application.
+    // at 4 Hz sampling, timestamps are spaced 250ms apart. a measured gap of 500ms (two samples)
+    // could be a normal braking transition. 550ms threshold requires at least 3 samples of coast
+    // (actual 750ms gap), confirming deliberate fuel-saving intent.
+    // ex: lift@t=0, coast@t=250, coast@t=500, brake@t=750 -> 750ms >= 550ms -> pass
+    private static final long MIN_COAST_DURATION_MS = 550;
+
+    // opening laps with standing start chaos, cold tires, and traffic are non-representative.
+    // filter telemetry from laps 1-5 before cep matching.
+    private static final int MIN_LAP_FOR_DETECTION = 5;
 
     private LiftCoastDetector() {
     }
@@ -51,36 +63,48 @@ public class LiftCoastDetector {
     // encapsulates the full lift & coast pipeline: pattern definition, cep matching,
     // and deduplication. expects an enriched telemetry stream (with track status set).
     public static DataStream<LiftCoastAlert> detect(DataStream<TelemetryEvent> enrichedTelemetry) {
+        // pre-filter: remove non-representative data before cep matching.
+        // vsc/sc laps have artificially suppressed speeds that distort coast detection,
+        // and opening laps (1-5) have chaotic throttle patterns from standing start and traffic.
+        DataStream<TelemetryEvent> cleanTelemetry = enrichedTelemetry
+                .filter(e -> {
+                    String status = e.getTrackStatus();
+                    return (status == null || "1".equals(status))
+                            && e.getLapNumber() > MIN_LAP_FOR_DETECTION;
+                })
+                .name("Pre-filter: Green Flag & Post-Opening Laps");
+
         Pattern<TelemetryEvent, ?> liftAndCoastPattern = Pattern
                 .<TelemetryEvent>begin("full-throttle", AfterMatchSkipStrategy.skipPastLastEvent())
                 .where(new SimpleCondition<TelemetryEvent>() {
                     @Override
                     public boolean filter(TelemetryEvent e) {
-                        // ex: throttle=100, speed=342, gear=8 -> match (monza main straight)
-                        // ex: throttle=100, speed=180, gear=5 -> skip (corner exit)
-                        return e.getThrottle() == 100
-                                && e.getSpeed() > MIN_SPEED
-                                && e.getNGear() >= MIN_GEAR;
+                        return e.getThrottle() >= 95
+                                && e.getSpeed() >= MIN_SPEED
+                                && e.getNGear() >= MIN_GEAR
+                                && e.getBrake() == 0;
                     }
                 })
                 .followedBy("lift")
                 .where(new SimpleCondition<TelemetryEvent>() {
                     @Override
                     public boolean filter(TelemetryEvent e) {
-                        return e.getThrottle() == 0;
+                        // < 5 ignores 1-2% pedal sensor noise
+                        return e.getThrottle() < 5 && e.getBrake() == 0;
                     }
                 })
                 .followedBy("coast-brake")
                 .where(new SimpleCondition<TelemetryEvent>() {
                     @Override
                     public boolean filter(TelemetryEvent e) {
-                        return e.getBrake() > 0;
+                        // FastF1 brake data is binary (1 = on, 0 = off)
+                        return e.getBrake() == 1;
                     }
                 })
                 .within(Time.seconds(4));
 
         PatternStream<TelemetryEvent> patternStream = CEP.pattern(
-                enrichedTelemetry.keyBy(TelemetryEvent::getDriver),
+                cleanTelemetry.keyBy(TelemetryEvent::getDriver),
                 liftAndCoastPattern
         );
 
@@ -93,7 +117,16 @@ public class LiftCoastDetector {
                             ft.getDriver(), ft.getDate(), li.getDate(),
                             br.getDate(), ft.getTrackStatus(),
                             ft.getSpeed(), ft.getNGear());
-                });
+                })
+                // reject normal corner braking where the coast phase is too short.
+                // ex: lift@13:05:12.003, brake@13:05:12.080 -> 77ms -> skip (corner)
+                // ex: lift@13:05:12.003, brake@13:05:13.500 -> 1497ms -> keep (lift & coast)
+                .filter(alert -> {
+                    long liftMs = TelemetryEvent.parseEventTime(alert.getLiftDate());
+                    long brakeMs = TelemetryEvent.parseEventTime(alert.getBrakeDate());
+                    return (brakeMs - liftMs) >= MIN_COAST_DURATION_MS;
+                })
+                .name("Filter Corner Braking");
 
         return rawAlerts
                 .keyBy(LiftCoastAlert::getDriver)

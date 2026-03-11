@@ -37,6 +37,7 @@ public class LapEvent {
     private Boolean rainfall;     // whether it was raining during this lap
     private Double speedTrap;     // speed trap reading on longest straight (km/h)
     private String team;          // constructor name, ex: "Red Bull Racing"
+    private int totalLaps;        // total scheduled race laps, from session.total_laps
     private long eventTimeMillis;
 
     public LapEvent() {
@@ -301,6 +302,16 @@ public class LapEvent {
     @JsonProperty("Team")
     public void setTeam(String team) {
         this.team = team;
+    }
+
+    @JsonProperty("TotalLaps")
+    public int getTotalLaps() {
+        return totalLaps;
+    }
+
+    @JsonProperty("TotalLaps")
+    public void setTotalLaps(int totalLaps) {
+        this.totalLaps = totalLaps;
     }
 
     @JsonIgnore

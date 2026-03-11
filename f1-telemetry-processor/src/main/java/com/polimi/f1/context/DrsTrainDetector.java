@@ -10,14 +10,16 @@ import org.apache.flink.util.Collector;
 
 import com.polimi.f1.model.RivalInfoAlert;
 
-// detects drs trains: groups of drivers where consecutive cars are within 1 second of each other.
-// operates on the RivalInfoAlert output from RivalIdentificationFunction, windowed by lap number.
+// detects DRS trains: contiguous groups of drivers where consecutive cars are
+// within 1 second of each other, making DRS-assisted overtaking ineffective.
 //
-// a drs train exists when driver at position P has gapAhead < 1s AND the driver at P-1 also
-// has gapAhead < 1s (forming a chain). a driver is "stuck" in a train when both gaps ahead
-// and behind are < 1s.
+// operates on RivalInfoAlert output from RivalIdentificationFunction, re-windowed
+// by lap number with a 10s session gap. sorts rivals by position and scans for
+// contiguous groups where gapAhead < 1.0s. a group of 2+ cars is a DRS train.
 //
-// emits a formatted alert string for each driver identified as part of a train.
+// strategically significant: a driver stuck in a train cannot effectively use DRS
+// to overtake because the car ahead also has DRS from the car in front of it.
+// pit stop timing or alternative strategy becomes the only realistic overtaking tool.
 public class DrsTrainDetector
         extends ProcessWindowFunction<RivalInfoAlert, String, Integer, TimeWindow> {
 
