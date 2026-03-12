@@ -66,9 +66,9 @@ public class F1StreamingJob {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        // checkpointing every 5s: required for FileSink to commit in-progress part files
+        // checkpointing every 10s: required for FileSink to commit in-progress part files
         // and for KafkaSink to guarantee at-least-once delivery to the alerts topic.
-        env.enableCheckpointing(5000);
+        env.enableCheckpointing(10_000);
         env.getCheckpointConfig().setCheckpointStorage(
                 new FileSystemCheckpointStorage("file:///opt/flink/data_lake/checkpoints"));
 
@@ -244,8 +244,8 @@ public class F1StreamingJob {
 
         // file sinks (csv for ml dataset generation)
         // persists ground truth and alert streams to disk as csv (one row per event, header-prefixed).
-        // rolling policy: new file every 5 min or 128 MB, whichever comes first.
-        // inactivity interval (3 min) ensures files are finalized promptly during low-traffic periods.
+        // rolling policy: new file every 15s or 10 MB, whichever comes first.
+        // inactivity interval (15s) ensures files are finalized promptly when the simulation ends.
         // output lands in /opt/flink/data_lake/ inside the container, mapped to ./data_lake/ on the host.
         // serialize pojos to csv rows via toCsvRow(), csv header emitted once via CsvHeaderMapper
         DataStream<String> pitEvalsCsv = pitEvals
@@ -262,9 +262,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/pit_evals"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-eval")
@@ -276,9 +276,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/tire_drops"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("tire-drop")
@@ -299,9 +299,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/lift_coast"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("lift-coast")
@@ -321,9 +321,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/drop_zones"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("drop-zone")
@@ -344,9 +344,9 @@ public class F1StreamingJob {
                         new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-suggestion")
@@ -367,9 +367,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/ml_features"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("ml-features")
@@ -425,9 +425,9 @@ public class F1StreamingJob {
                         new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("debug-alerts")

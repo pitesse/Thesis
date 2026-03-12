@@ -5,7 +5,7 @@ package com.polimi.f1.model.output;
 // traffic analysis (clean air vs drs train), tire life feasibility, and urgency (closing window).
 //
 // the score ranges 0-100 (clamped). individual components can be negative (traffic, tire life).
-// urgencyScore adds +10/+20 when the remaining-lap window for the next compound is closing.
+// urgencyScore adds +15/+30 based on current tyre age vs max stint for the compound.
 // ex csv: VER,25,2,MEDIUM,18,75,30,0,30,-15,10,1,5,4.200,"Pace drop + clean air + closing window"
 public class PitSuggestionAlert {
 
@@ -24,7 +24,7 @@ public class PitSuggestionAlert {
     private int trackStatusScore;   // 0-60
     private int trafficScore;       // -30 to +30
     private int tireLifePenalty;    // -15 to 0
-    private int urgencyScore;       // 0 to +20, closing window for next compound
+    private int urgencyScore;       // 0 to +30, tyre age vs current compound max stint
     private String trackStatus;
     private int emergencePosition;  // computed physical position after pit
     private double gapToPhysicalCar;

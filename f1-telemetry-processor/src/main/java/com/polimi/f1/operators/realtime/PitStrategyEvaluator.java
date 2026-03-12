@@ -19,11 +19,11 @@ import com.polimi.f1.model.output.PitSuggestionAlert;
 // synthesizing five strategic dimensions into a single actionable metric.
 //
 // scoring dimensions:
-//   pace:         +30 if lap time exceeds stint best by compound threshold
+//   pace:         0-30 continuous, (lapTime - stintBest) * 10, capped. requires 1+ consecutive slow laps.
 //   track status: +60 if SC or VSC active (cheap pit stop)
 //   traffic:      -30 to +30. clean air (+30), easy pass (+5), DRS train (-30)
 //   tire life:    -15 if next compound can't reach race end
-//   urgency:      +10/+20 when the remaining-lap window for the next compound is closing
+//   urgency:      +15/+30 based on current tyre age vs max stint for the compound
 //
 // emit-gate: suppresses notification spam by tracking per-driver emissions within a stint.
 // first alert above threshold fires immediately. subsequent laps only re-emit if the score
@@ -44,19 +44,17 @@ public class PitStrategyEvaluator
 
     // scoring thresholds
     private static final int EMIT_THRESHOLD = 60;
-    private static final int PACE_SCORE = 30;
     private static final int TRACK_STATUS_SCORE = 60;
     private static final int CLEAN_AIR_SCORE = 30;
     private static final int EASY_PASS_SCORE = 5;
     private static final int DRS_TRAIN_PENALTY = -30;
     private static final int TIRE_LIFE_PENALTY = -15;
 
-    // urgency scoring: boosts score when the remaining-lap window for the next compound
-    // is closing. if lapsRemaining <= 80% of max next stint -> +10, <= 60% -> +20.
-    private static final int URGENCY_MILD = 10;
-    private static final int URGENCY_CRITICAL = 20;
-    private static final double URGENCY_MILD_RATIO = 0.8;
-    private static final double URGENCY_CRITICAL_RATIO = 0.6;
+    // urgency scoring: based on current compound's tyre age vs observed max stint.
+    // dead tires (at or beyond max stint) = must pit. approaching cliff (within 3 laps) = elevated.
+    private static final int URGENCY_DEAD = 30;
+    private static final int URGENCY_CLIFF = 15;
+    private static final int URGENCY_CLIFF_MARGIN = 3;
 
     // emit-gate: minimum score increase since last emission before re-emitting.
     // prevents flooding the pit wall with marginal score fluctuations each lap.
@@ -341,44 +339,31 @@ public class PitStrategyEvaluator
         return (currentScore - prevScore) >= RE_EMIT_DELTA;
     }
 
-    // urgency scoring: +10 if remaining laps <= 80% of max next stint (closing window),
-    // +20 if <= 60% (critical window). naturally suppresses very late-race suggestions
-    // where tire life penalty already applies, while boosting mid-race urgency.
-    // ex: 15 laps left, max MEDIUM stint = 22 -> 15/22 = 0.68 -> URGENCY_MILD (+10)
+    // urgency based on current compound's tyre age vs max observed stint for that compound.
+    // tyreAge >= maxStint -> dead tires (+30), tyreAge >= maxStint - 3 -> approaching cliff (+15).
+    // uses globally tracked maxStintByCompound (learned from race) with conservative defaults.
+    // ex: MEDIUM maxStint=28, tyreAge=26 -> within cliff margin -> +15
     private int computeUrgencyScore(LapEvent current) throws Exception {
-        int totalLaps = current.getTotalLaps();
-        if (totalLaps <= 0) {
-            return 0;
-        }
+        String currentCompound = current.getCompound();
+        int tyreAge = current.getTyreLife();
 
-        int lapsRemaining = totalLaps - current.getLapNumber();
-        if (lapsRemaining <= 0) {
-            return 0;
-        }
-
-        String nextCompound = inferNextCompound(current.getCompound());
-        Integer maxStint = maxStintByCompound.get(nextCompound);
+        Integer maxStint = maxStintByCompound.get(currentCompound);
         if (maxStint == null) {
-            maxStint = defaultMaxStint(nextCompound);
+            maxStint = defaultMaxStint(currentCompound);
         }
 
-        if (maxStint <= 0) {
-            return 0;
+        if (tyreAge >= maxStint) {
+            return URGENCY_DEAD;
         }
-
-        double ratio = (double) lapsRemaining / maxStint;
-
-        if (ratio <= URGENCY_CRITICAL_RATIO) {
-            return URGENCY_CRITICAL;
-        } else if (ratio <= URGENCY_MILD_RATIO) {
-            return URGENCY_MILD;
+        if (tyreAge >= maxStint - URGENCY_CLIFF_MARGIN) {
+            return URGENCY_CLIFF;
         }
         return 0;
     }
 
-    // +30 if current pace has degraded beyond the compound-specific threshold.
-    // uses per-driver state to compare against stint best, requiring at least
-    // 1 consecutive slow lap to avoid one-off traffic spikes.
+    // continuous pace score: delta between current lap and stint best, scaled x10 and capped at 30.
+    // still requires >= 1 consecutive slow lap to filter one-off traffic or backmarker interactions.
+    // ex: stintBest=82.0, currentLap=83.5 -> delta=1.5 -> paceScore=15
     private int computePaceScore(LapEvent current) throws Exception {
         DriverPitState state = driverStates.get(current.getDriver());
         if (state == null || current.getLapTime() == null) {
@@ -388,10 +373,14 @@ public class PitStrategyEvaluator
         if (best == Double.MAX_VALUE) {
             return 0;
         }
-        double threshold = getBaseThreshold(current.getCompound());
-        boolean paceDropped = current.getLapTime() > best * (1.0 + threshold);
-        boolean sustained = state.getConsecutiveSlowLaps() >= 1;
-        return (paceDropped && sustained) ? PACE_SCORE : 0;
+        if (state.getConsecutiveSlowLaps() < 1) {
+            return 0;
+        }
+        double delta = current.getLapTime() - best;
+        if (delta <= 0) {
+            return 0;
+        }
+        return Math.min(30, (int) (delta * 10));
     }
 
     // +60 if safety car or vsc is active. these create a "cheap pit stop" window
@@ -536,10 +525,10 @@ public class PitStrategyEvaluator
         if (tireLifePenalty < 0) {
             parts.add("tight tire window");
         }
-        if (urgencyScore >= URGENCY_CRITICAL) {
-            parts.add("critical window");
-        } else if (urgencyScore >= URGENCY_MILD) {
-            parts.add("closing window");
+        if (urgencyScore >= URGENCY_DEAD) {
+            parts.add("dead tires");
+        } else if (urgencyScore >= URGENCY_CLIFF) {
+            parts.add("approaching cliff");
         }
         return parts.isEmpty() ? "general" : String.join(" + ", parts);
     }
