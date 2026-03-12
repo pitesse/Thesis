@@ -130,11 +130,19 @@
                 </configuration>
             </plugin>
 
-            <!-- surefire: junit 5 native support for mvn test -->
+            <!-- surefire: junit 5 native support for mvn test.
+                 add-opens required for flink's kryo serializer on java 17+,
+                 same flags flink's own test suite uses. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <argLine>
+                        --add-opens java.base/java.util=ALL-UNNAMED
+                        --add-opens java.base/java.lang=ALL-UNNAMED
+                    </argLine>
+                </configuration>
             </plugin>
 
             <!-- shade plugin: builds a fat jar with all dependencies for flink submission -->

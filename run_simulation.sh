@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # chmod +x run_simulation.sh
 #
-# end-to-end automation: tears down old containers, rebuilds the flink jar,
-# starts the docker stack, submits the flink job, and launches the python producer.
+# end-to-end automation: tears down old containers, builds all docker images
+# (flink fat jar compiled inside the container, python env frozen in image),
+# starts the full stack, submits the flink job, and launches the python producer.
 #
-# pit loss thresholds are embedded by the python producer (per-track enrichment),
-# no need to specify them here.
+# no local java, maven, or python installation required. everything runs in docker.
 #
 # usage:
 #   ./run_simulation.sh                                          # defaults: monza 2023, speed 50
@@ -56,20 +56,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROCESSOR_DIR="$PROJECT_DIR/f1-telemetry-processor"
-PRODUCER_DIR="$PROJECT_DIR/f1-telemetry-producer"
-DASHBOARD_DIR="$PROJECT_DIR/dashboard"
-JAR_NAME="f1-telemetry-processor-1.0-SNAPSHOT.jar"
-FLINK_MAIN_CLASS="com.polimi.f1.F1StreamingJob"
+COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 
-# track background pids for cleanup on exit
-DASHBOARD_PID=""
+# stop the dashboard container on exit
 cleanup() {
-	if [ -n "$DASHBOARD_PID" ] && kill -0 "$DASHBOARD_PID" 2>/dev/null; then
-		echo ""
-		echo "Stopping dashboard (PID $DASHBOARD_PID)..."
-		kill "$DASHBOARD_PID" 2>/dev/null || true
-	fi
+	echo ""
+	echo "Stopping dashboard container..."
+	docker compose -f "$COMPOSE_FILE" stop dashboard 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -87,15 +80,15 @@ echo "========================================"
 # 1. tear down existing stack
 # ===========================
 echo "[1/7] Tearing down existing containers..."
-docker compose -f "$PROJECT_DIR/docker-compose.yml" down -v 2>/dev/null || true
+docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
 
 # ===========================
-# 2. build the flink fat jar
+# 2. build all docker images (flink + python)
 # ===========================
-echo "[2/7] Building Flink JAR..."
-cd "$PROCESSOR_DIR"
-mvn clean package -q -DskipTests
-cd "$PROJECT_DIR"
+# flink image: multi-stage build compiles the fat jar inside maven:3.9-eclipse-temurin-17
+# python image: installs all deps from requirements.txt into python:3.12-slim
+echo "[2/7] Building Docker images (Flink + Python)..."
+docker compose -f "$COMPOSE_FILE" build
 
 # ===========================
 # 3. prepare data_lake directory + start docker stack
@@ -106,7 +99,7 @@ cd "$PROJECT_DIR"
 echo "[3/7] Starting Docker stack..."
 mkdir -p "$PROJECT_DIR/data_lake"
 chmod -R 777 "$PROJECT_DIR/data_lake" 2>/dev/null || true
-docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d
+docker compose -f "$COMPOSE_FILE" up -d
 
 # wait for flink jobmanager rest api to be ready
 echo "       Waiting for Flink JobManager REST API..."
@@ -135,48 +128,27 @@ for topic in f1-telemetry f1-laps f1-track-status f1-alerts; do
 done
 
 # ===========================
-# 5. copy jar and submit flink job
+# 5. submit flink job (jar is baked into the image)
 # ===========================
 echo "[5/7] Submitting Flink job..."
-docker exec flink-jobmanager mkdir -p /opt/flink/usrlib
-docker cp "$PROCESSOR_DIR/target/$JAR_NAME" flink-jobmanager:/opt/flink/usrlib/
 docker exec flink-jobmanager flink run \
-	-d \
-	"/opt/flink/usrlib/$JAR_NAME"
+	-d /opt/flink/usrlib/f1-stream-processor.jar
 
 # ===========================
-# 6. launch streamlit dashboard
+# 6. dashboard is already running via docker compose up
 # ===========================
-echo "[6/7] Launching Streamlit dashboard..."
-
-# activate dashboard venv if available, otherwise rely on system/producer venv
-if [ -f "$DASHBOARD_DIR/venv/bin/activate" ]; then
-	source "$DASHBOARD_DIR/venv/bin/activate"
-elif [ -f "$DASHBOARD_DIR/.venv/bin/activate" ]; then
-	source "$DASHBOARD_DIR/.venv/bin/activate"
-fi
-
-streamlit run "$DASHBOARD_DIR/app.py" --server.headless true &
-DASHBOARD_PID=$!
-echo "       Dashboard running (PID $DASHBOARD_PID) at http://localhost:8501"
+echo "[6/7] Dashboard is running at http://localhost:8501"
 
 # open the dashboard in the default browser after a short delay so streamlit
 # has time to bind the port. uses python's webbrowser module which works on
 # linux, macos, and windows/wsl without platform-specific commands.
-(sleep 2 && python -m webbrowser "http://localhost:8501" 2>/dev/null) &
+(sleep 3 && python3 -m webbrowser "http://localhost:8501" 2>/dev/null) &
 
 # ===========================
 # 7. prepare data + start python producer
 # ===========================
 echo "[7/7] Starting Python producer (two-stage pipeline)..."
 echo "       Args: --year $YEAR --race \"$RACE\" --session $SESSION --speed $SPEED --start-lap $START_LAP"
-
-# activate venv if it exists, otherwise use system python
-if [ -f "$PRODUCER_DIR/venv/bin/activate" ]; then
-	source "$PRODUCER_DIR/venv/bin/activate"
-elif [ -f "$PRODUCER_DIR/.venv/bin/activate" ]; then
-	source "$PRODUCER_DIR/.venv/bin/activate"
-fi
 
 # stage 1: prepare parquet (skip if already exists for this race/year/session)
 SAFE_RACE=$(echo "$RACE" | tr ' ' '_')
@@ -186,14 +158,16 @@ if [ -f "$PARQUET_FILE" ]; then
 	echo "       Parquet already exists: $PARQUET_FILE (skipping prepare)"
 else
 	echo "       Running prepare_race.py..."
-	python "$PRODUCER_DIR/src/prepare_race.py" \
+	docker compose -f "$COMPOSE_FILE" run --rm producer \
+		python f1-telemetry-producer/src/prepare_race.py \
 		--year "$YEAR" \
 		--race "$RACE" \
 		--session "$SESSION"
 fi
 
 # stage 2: stream to kafka
-python "$PRODUCER_DIR/src/stream_race.py" \
+docker compose -f "$COMPOSE_FILE" run --rm producer \
+	python f1-telemetry-producer/src/stream_race.py \
 	--year "$YEAR" \
 	--race "$RACE" \
 	--session "$SESSION" \

@@ -1,4 +1,4 @@
-package com.polimi.f1.model;
+package com.polimi.f1.model.output;
 
 // emitted when cep detects a lift & coast maneuver: the driver releases full throttle,
 // coasts briefly with no pedal input, then applies brakes later than a normal braking point.
@@ -92,7 +92,7 @@ public class LiftCoastAlert {
     // ex: VER,2023-09-03T13:05:12.003,2023-09-03T13:05:13.003,2023-09-03T13:05:14.003,1,342,8
     public String toCsvRow() {
         return String.join(",",
-                driver,
+                driver != null ? driver : "",
                 fullThrottleDate != null ? fullThrottleDate : "",
                 liftDate != null ? liftDate : "",
                 brakeDate != null ? brakeDate : "",

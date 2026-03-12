@@ -49,21 +49,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PRODUCER_DIR="$PROJECT_DIR/f1-telemetry-producer"
-PREPARE_SCRIPT="$PRODUCER_DIR/src/prepare_race.py"
-STREAM_SCRIPT="$PRODUCER_DIR/src/stream_race.py"
-
-# activate producer venv
-if [ -f "$PRODUCER_DIR/venv/bin/activate" ]; then
-	source "$PRODUCER_DIR/venv/bin/activate"
-elif [ -f "$PRODUCER_DIR/.venv/bin/activate" ]; then
-	source "$PRODUCER_DIR/.venv/bin/activate"
-fi
+COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 
 # dynamically fetch the full race calendar for the given year from fastf1.
 # filters to actual race weekends (excludes pre-season testing).
+# -T disables pseudo-tty so stdout capture works correctly.
 echo "Fetching $YEAR race calendar from fastf1..."
-RACES_JSON=$(python -c "
+RACES_JSON=$(docker compose -f "$COMPOSE_FILE" run --rm -T producer \
+	python -c "
 import fastf1, json
 schedule = fastf1.get_event_schedule($YEAR, include_testing=False)
 races = schedule[schedule['EventFormat'].isin(['conventional', 'sprint_shootout', 'sprint_qualifying', 'sprint'])]['EventName'].tolist()
@@ -76,7 +69,8 @@ if [ -z "$RACES_JSON" ] || [ "$RACES_JSON" = "[]" ]; then
 fi
 
 # parse json array into bash array
-mapfile -t RACES < <(python -c "import json; [print(r) for r in json.loads('$RACES_JSON')]")
+mapfile -t RACES < <(docker compose -f "$COMPOSE_FILE" run --rm -T producer \
+	python -c "import json; [print(r) for r in json.loads('$RACES_JSON')]")
 
 # if --races filter is set, only keep races that match the comma-separated list
 if [ -n "$RACES_FILTER" ]; then
@@ -113,7 +107,8 @@ for i in "${!RACES[@]}"; do
 	echo "------------------------------------------"
 
 	echo "       Stage 1/2, prepare parquet"
-	python "$PREPARE_SCRIPT" \
+	docker compose -f "$COMPOSE_FILE" run --rm producer \
+		python f1-telemetry-producer/src/prepare_race.py \
 		--year "$YEAR" \
 		--race "$RACE" \
 		--session "$SESSION" || {
@@ -123,7 +118,8 @@ for i in "${!RACES[@]}"; do
 	}
 
 	echo "       Stage 2/2, stream to kafka"
-	python "$STREAM_SCRIPT" \
+	docker compose -f "$COMPOSE_FILE" run --rm producer \
+		python f1-telemetry-producer/src/stream_race.py \
 		--year "$YEAR" \
 		--race "$RACE" \
 		--session "$SESSION" \
@@ -181,5 +177,5 @@ echo "                 data_lake/tire_drops_${YEAR}_season_${TIMESTAMP}.csv"
 echo ""
 echo " Wait ~3 min for Flink's rolling policy to finalize the"
 echo " last CSV file, then run the ML pipeline:"
-echo "   cd ml_pipeline && python train_pit_strategy.py"
+echo "   docker compose run --rm producer python ml_pipeline/train_pit_strategy.py"
 echo "=========================================="

@@ -32,24 +32,24 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.polimi.f1.alerts.DropZoneEvaluator;
-import com.polimi.f1.alerts.LiftCoastDetector;
-import com.polimi.f1.alerts.PitStrategyEvaluator;
-import com.polimi.f1.alerts.TireDropDetector;
-import com.polimi.f1.context.DrsTrainDetector;
-import com.polimi.f1.context.RivalIdentificationFunction;
-import com.polimi.f1.context.TrackStatusEnricher;
-import com.polimi.f1.events.LapEvent;
-import com.polimi.f1.events.TelemetryEvent;
-import com.polimi.f1.events.TrackStatusEvent;
-import com.polimi.f1.groundtruth.PitStopEvaluator;
-import com.polimi.f1.model.DropZoneAlert;
-import com.polimi.f1.model.LiftCoastAlert;
-import com.polimi.f1.model.MLFeatureRow;
-import com.polimi.f1.model.PitStopEvaluationAlert;
-import com.polimi.f1.model.PitSuggestionAlert;
-import com.polimi.f1.model.RivalInfoAlert;
-import com.polimi.f1.model.TireDropAlert;
+import com.polimi.f1.model.input.LapEvent;
+import com.polimi.f1.model.input.TelemetryEvent;
+import com.polimi.f1.model.input.TrackStatusEvent;
+import com.polimi.f1.model.output.DropZoneAlert;
+import com.polimi.f1.model.output.LiftCoastAlert;
+import com.polimi.f1.model.output.MLFeatureRow;
+import com.polimi.f1.model.output.PitStopEvaluationAlert;
+import com.polimi.f1.model.output.PitSuggestionAlert;
+import com.polimi.f1.model.output.RivalInfoAlert;
+import com.polimi.f1.model.output.TireDropAlert;
+import com.polimi.f1.operators.context.DrsTrainDetector;
+import com.polimi.f1.operators.context.RivalIdentificationFunction;
+import com.polimi.f1.operators.context.TrackStatusEnricher;
+import com.polimi.f1.operators.groundtruth.PitStopEvaluator;
+import com.polimi.f1.operators.realtime.DropZoneEvaluator;
+import com.polimi.f1.operators.realtime.LiftCoastDetector;
+import com.polimi.f1.operators.realtime.PitStrategyEvaluator;
+import com.polimi.f1.operators.realtime.TireDropDetector;
 
 // main flink job: wires kafka sources, event-time watermarks, and all processing pipelines.
 // consumes three topics: f1-telemetry (high-freq car data), f1-laps (per-lap summaries),
@@ -66,9 +66,9 @@ public class F1StreamingJob {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        // checkpointing every 5s: required for FileSink to commit in-progress part files
+        // checkpointing every 10s: required for FileSink to commit in-progress part files
         // and for KafkaSink to guarantee at-least-once delivery to the alerts topic.
-        env.enableCheckpointing(5000);
+        env.enableCheckpointing(10_000);
         env.getCheckpointConfig().setCheckpointStorage(
                 new FileSystemCheckpointStorage("file:///opt/flink/data_lake/checkpoints"));
 
@@ -215,20 +215,28 @@ public class F1StreamingJob {
                 .process(new DropZoneEvaluator())
                 .name("Drop Zone Analysis");
 
-        // c4: pit strategy evaluation (fuzzy-logic pit desirability scoring)
-        // computes a 0-100 score per driver per lap based on pace degradation,
-        // track status, traffic after pit, and compound feasibility.
+        // c4: pit strategy evaluation (continuous fuzzy-logic pit desirability scoring)
+        // computes a 0.0-100.0 continuous score per driver per lap based on pace degradation
+        // (power 1.5 curve), traffic (linear interpolation), urgency (quadratic ramp),
+        // strategy penalty (compound feasibility), and track status (crisp +60 for SC/VSC).
+        // uses broadcast state for SC/VSC urgency: when safety car deploys, immediately
+        // re-evaluates all drivers without waiting for next lap completion (~80s latency).
         // keyed by "RACE" for global position-ladder visibility (same as drop zone).
+        BroadcastStream<TrackStatusEvent> broadcastForStrategy
+                = trackStatusWithWatermarks.broadcast(PitStrategyEvaluator.TRACK_STATUS_STATE);
+
         DataStream<PitSuggestionAlert> pitSuggestions = lapWithWatermarks
                 .keyBy(e -> "RACE")
+                .connect(broadcastForStrategy)
                 .process(new PitStrategyEvaluator())
                 .name("Pit Strategy Evaluation");
 
         // module b: ground truth
         // pit stop evaluation: classifies each pit stop as success (undercut/defend) or failure
-        // by comparing position before and after, using a 3-lap post-pit observation window.
+        // by comparing the pitting driver against their net rival (car directly ahead at pit time).
+        // keyed by "RACE" for global field visibility (needs to see all drivers' positions).
         DataStream<PitStopEvaluationAlert> pitEvals = lapWithWatermarks
-                .keyBy(LapEvent::getDriver)
+                .keyBy(e -> "RACE")
                 .process(new PitStopEvaluator())
                 .name("Pit Stop Evaluation");
 
@@ -243,8 +251,8 @@ public class F1StreamingJob {
 
         // file sinks (csv for ml dataset generation)
         // persists ground truth and alert streams to disk as csv (one row per event, header-prefixed).
-        // rolling policy: new file every 5 min or 128 MB, whichever comes first.
-        // inactivity interval (3 min) ensures files are finalized promptly during low-traffic periods.
+        // rolling policy: new file every 15s or 10 MB, whichever comes first.
+        // inactivity interval (15s) ensures files are finalized promptly when the simulation ends.
         // output lands in /opt/flink/data_lake/ inside the container, mapped to ./data_lake/ on the host.
         // serialize pojos to csv rows via toCsvRow(), csv header emitted once via CsvHeaderMapper
         DataStream<String> pitEvalsCsv = pitEvals
@@ -261,9 +269,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/pit_evals"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-eval")
@@ -275,9 +283,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/tire_drops"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("tire-drop")
@@ -298,9 +306,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/lift_coast"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("lift-coast")
@@ -320,9 +328,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/drop_zones"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("drop-zone")
@@ -343,9 +351,9 @@ public class F1StreamingJob {
                         new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-suggestion")
@@ -366,9 +374,9 @@ public class F1StreamingJob {
                 .forRowFormat(new Path("/opt/flink/data_lake/ml_features"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("ml-features")
@@ -424,9 +432,9 @@ public class F1StreamingJob {
                         new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(
                         DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofMinutes(5))
-                                .withInactivityInterval(Duration.ofMinutes(3))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(128))
+                                .withRolloverInterval(Duration.ofSeconds(15))
+                                .withInactivityInterval(Duration.ofSeconds(15))
+                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
                                 .build())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("debug-alerts")

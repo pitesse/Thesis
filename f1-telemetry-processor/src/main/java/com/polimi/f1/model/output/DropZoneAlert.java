@@ -1,4 +1,4 @@
-package com.polimi.f1.model;
+package com.polimi.f1.model.output;
 
 // drop zone analysis: bridges the net race (positional rivals) and physical race
 // (cars physically surrounding a driver after a pit stop).

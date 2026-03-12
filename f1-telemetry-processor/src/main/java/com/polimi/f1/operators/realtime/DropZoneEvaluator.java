@@ -1,4 +1,4 @@
-package com.polimi.f1.alerts;
+package com.polimi.f1.operators.realtime;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -11,8 +11,8 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
-import com.polimi.f1.events.LapEvent;
-import com.polimi.f1.model.DropZoneAlert;
+import com.polimi.f1.model.input.LapEvent;
+import com.polimi.f1.model.output.DropZoneAlert;
 
 // computes the physical race drop zone for each driver: the exact track position
 // they would emerge at after a pit stop, given the position ladder and pit loss.
