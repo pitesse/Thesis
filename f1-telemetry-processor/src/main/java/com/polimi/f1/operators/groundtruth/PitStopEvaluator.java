@@ -8,6 +8,8 @@ import java.util.Map;
 
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.StateTtlConfig;
+import org.apache.flink.api.common.time.Time;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
@@ -18,216 +20,485 @@ import com.polimi.f1.model.input.LapEvent;
 import com.polimi.f1.model.output.PitStopEvaluationAlert;
 import com.polimi.f1.model.output.PitStopEvaluationAlert.Result;
 
-// classifies completed pit stops as success (undercut/defend) or failure (lost time)
-// by comparing the time gap between the pitting driver and their net rival before
-// and after the pit stop settles.
+// classifies completed pit cycles using a state machine that tracks rival clusters,
+// detects offset strategies (1-stop vs 2-stop), and normalizes gap deltas as percentages
+// of the driver's baseline lap time for track-agnostic evaluation.
 //
-// keyed by constant "RACE" for global field visibility, same pattern as DropZoneEvaluator.
-// the core insight: raw position always drops when pitting (~22s loss), so comparing
-// pre/post position naively labels almost every pit stop as a failure. instead, we measure
-// the directed time gap between the driver and their net rival at pit time, then again
-// 3 laps after the driver settles on new tires.
+// keyed by constant "RACE" for global field visibility.
 //
-// ex: VER (P2, 2.5s behind LEC) pits lap 20. after settling on lap 24, VER is 1.0s behind LEC.
-//     gap improved by 1.5s (> 0.5s tolerance) -> SUCCESS_UNDERCUT.
+// state machine:
+//   PENDING_SETTLE   -> driver just pitted, waiting for out-lap + 3 settle laps
+//   PENDING_RIVAL    -> driver settled, waiting for net rivals to pit or offset timeout
+//   (resolved)       -> cycle complete, emit classification and remove state
 //
-// gap computation: walks the position ladder at a given lap, summing gapToCarAhead
-// from each intermediate position to compute the time delta between any two drivers.
+// rival cluster: captures car ahead (undercut target) and car behind (defense target)
+// at pit entry. tracks whether each rival subsequently pits (stint change) to detect
+// same-strategy vs offset-strategy scenarios.
 //
-// lifecycle:
-//   1. detect pit entry (pitInTime != null), snapshot the field to find the net rival
-//   2. compute directed gap between pitting driver and rival at pit time
-//   3. wait for pitting driver to complete 3 post-pit laps (skip out-lap)
-//   4. compute directed gap again, compare: improved -> UNDERCUT, maintained -> DEFEND, worsened -> FAILURE
-//   5. safety timer: 15 min event-time to clear stale records (retirements, race end)
+// offset detection: if rival hasn't pitted after 40% of remaining race laps, confirms
+// different strategy. gap trajectory at that point determines advantage/disadvantage.
+//
+// 8 labels: SUCCESS_UNDERCUT, SUCCESS_OVERCUT, SUCCESS_DEFEND, SUCCESS_FREE_STOP,
+//           OFFSET_ADVANTAGE, OFFSET_DISADVANTAGE, FAILURE_PACE_DEFICIT, FAILURE_TRAFFIC
 public class PitStopEvaluator
         extends KeyedProcessFunction<String, LapEvent, PitStopEvaluationAlert> {
 
     private static final Logger LOG = LoggerFactory.getLogger(PitStopEvaluator.class);
 
-    // laps to wait after a pit stop before the gap is considered "settled"
+    // laps to wait after pit for gap to settle (excludes out-lap)
     private static final int SETTLE_LAPS = 3;
 
-    // safety timeout: 15 minutes of event time to clear stale pending pits
+    // safety timeout: 15 minutes event time to clear stale records
     private static final long TIMER_TIMEOUT_MS = 900_000;
 
-    // tolerance band for gap comparison (seconds). absorbs timing noise from
-    // out-laps, track evolution, and measurement imprecision.
-    private static final double GAP_TOLERANCE = 0.5;
+    // percentage thresholds for gap classification (as % of baseline lap time)
+    // ex: 0.5% of 80s baseline = 0.4s, of 105s baseline = 0.525s
+    private static final double UNDERCUT_THRESHOLD_PCT = 0.5;
+    private static final double DEFEND_BAND_PCT = 0.5;
+
+    // free stop threshold: pit under sc/vsc with gap change < 1% of baseline
+    private static final double FREE_STOP_THRESHOLD_PCT = 1.0;
+
+    // fraction of remaining race distance before declaring offset strategy
+    private static final double OFFSET_RACE_FRACTION = 0.4;
+
+    // traffic detection: car ahead with tyreLife >= this is considered slow/passable,
+    // but car ahead within this gap is considered blocking
+    private static final int TRAFFIC_TYRE_LIFE_THRESHOLD = 25;
 
     // flat state: all lap events, key = "lapNumber:driver"
     private transient MapState<String, LapEvent> lapEvents;
 
-    // pending evaluations: one per driver who has pitted but not yet been resolved
-    private transient MapState<String, PitRecord> pendingPits;
+    // pending pit cycles, keyed by driver abbreviation
+    private transient MapState<String, PitCycle> pendingCycles;
+
+    // stint best per driver per stint, key = "driver:stint"
+    private transient MapState<String, Double> stintBests;
 
     @Override
     public void open(Configuration parameters) {
-        lapEvents = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("pit-eval-laps", String.class, LapEvent.class));
-        pendingPits = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("pending-pits", String.class, PitRecord.class));
+        // 2h ttl: prevents unbounded state growth over continuous streaming.
+        // race data older than 2 hours is no longer relevant for pit cycle resolution.
+        StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Time.hours(2))
+                .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+                .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+                .build();
+
+        MapStateDescriptor<String, LapEvent> lapDesc
+                = new MapStateDescriptor<>("pit-eval-laps", String.class, LapEvent.class);
+        lapDesc.enableTimeToLive(ttlConfig);
+        lapEvents = getRuntimeContext().getMapState(lapDesc);
+
+        MapStateDescriptor<String, PitCycle> cycleDesc
+                = new MapStateDescriptor<>("pending-cycles", String.class, PitCycle.class);
+        cycleDesc.enableTimeToLive(ttlConfig);
+        pendingCycles = getRuntimeContext().getMapState(cycleDesc);
+
+        MapStateDescriptor<String, Double> stintDesc
+                = new MapStateDescriptor<>("stint-bests", String.class, Double.class);
+        stintDesc.enableTimeToLive(ttlConfig);
+        stintBests = getRuntimeContext().getMapState(stintDesc);
     }
 
     private static String lapKey(int lap, String driver) {
         return lap + ":" + driver;
     }
 
+    private static String stintKey(String driver, int stint) {
+        return driver + ":" + stint;
+    }
+
     @Override
-    public void processElement(LapEvent event, Context ctx, Collector<PitStopEvaluationAlert> out) throws Exception {
+    public void processElement(LapEvent event, Context ctx, Collector<PitStopEvaluationAlert> out)
+            throws Exception {
         int lap = event.getLapNumber();
         String driver = event.getDriver();
 
         lapEvents.put(lapKey(lap, driver), event);
+        updateStintBest(event);
 
         // detect pit entry: pitInTime != null means this driver entered the pits this lap
-        if (event.getPitInTime() != null && !pendingPits.contains(driver)) {
-            // snapshot the field from the most recent complete lap to find the net rival
-            LapEvent rival = findNetRival(event);
-            String rivalDriver = null;
-            boolean wasLeader = false;
-            if (rival != null) {
-                rivalDriver = rival.getDriver();
-            } else if (event.getPosition() == 1) {
-                // P1 has no car ahead. use car directly behind as the comparison target.
-                rivalDriver = findCarBehind(event);
-                wasLeader = true;
-            }
-
-            // compute directed gap between pitting driver and rival at pit time
-            Double prePitGap = null;
-            if (rivalDriver != null) {
-                prePitGap = computeDirectedGap(driver, rivalDriver, lap);
-            }
-
-            PitRecord record = new PitRecord();
-            record.driver = driver;
-            record.pitLap = lap;
-            record.prePitGapToRival = prePitGap;
-            record.wasLeader = wasLeader;
-            record.netRival = rivalDriver;
-            record.compound = event.getCompound();
-            record.trackStatus = event.getTrackStatus();
-            record.tyreAge = event.getTyreLife();
-            record.gapToCarAhead = event.getGapToCarAhead();
-            record.race = event.getRace();
-            record.registeredTimestamp = event.getEventTimeMillis();
-
-            pendingPits.put(driver, record);
-
-            // safety timer: resolve or discard after 15 minutes of event time
-            ctx.timerService().registerEventTimeTimer(event.getEventTimeMillis() + TIMER_TIMEOUT_MS);
-
-            LOG.info("Pit detected: {} on lap {} at P{}, rival: {}, gap: {}",
-                    driver, lap, event.getPosition(), rivalDriver,
-                    prePitGap != null ? String.format("%.3f", prePitGap) : "N/A");
+        if (event.getPitInTime() != null && !pendingCycles.contains(driver)) {
+            registerPitCycle(event, ctx);
         }
 
-        // try to resolve any pending evaluations on every incoming lap event
-        tryResolve(event, out);
+        // try to advance any pending cycles on every incoming event
+        advanceCycles(event, ctx, out);
     }
 
     @Override
-    public void onTimer(long timestamp, OnTimerContext ctx, Collector<PitStopEvaluationAlert> out) throws Exception {
-        // safety timeout: resolve any stale pending pits with whatever data we have
+    public void onTimer(long timestamp, OnTimerContext ctx, Collector<PitStopEvaluationAlert> out)
+            throws Exception {
         List<String> toRemove = new ArrayList<>();
-        for (Map.Entry<String, PitRecord> entry : pendingPits.entries()) {
-            PitRecord record = entry.getValue();
-            if (record.registeredTimestamp + TIMER_TIMEOUT_MS <= timestamp) {
-                LOG.info("Timeout: resolving {} pit on lap {} via timer", record.driver, record.pitLap);
-                resolveFromTimer(record, out);
+        for (Map.Entry<String, PitCycle> entry : pendingCycles.entries()) {
+            PitCycle cycle = entry.getValue();
+            if (cycle.safetyTimerTimestamp <= timestamp) {
+                LOG.info("safety timer: resolving {} pit on lap {}", cycle.driver, cycle.pitLap);
+                resolveFromTimer(cycle, out);
                 toRemove.add(entry.getKey());
             }
         }
         for (String key : toRemove) {
-            pendingPits.remove(key);
+            pendingCycles.remove(key);
         }
     }
 
-    // resolves pending evaluations. for each pending pit record:
-    // 1. check if the pitting driver has SETTLE_LAPS post-pit laps (excluding out-lap)
-    // 2. compute the post-settle gap between driver and rival
-    // 3. classify by comparing pre-pit gap vs post-settle gap
-    private void tryResolve(LapEvent trigger, Collector<PitStopEvaluationAlert> out) throws Exception {
+    // registers a new pit cycle when pit entry is detected
+    private void registerPitCycle(LapEvent event, Context ctx) throws Exception {
+        String driver = event.getDriver();
+        int lap = event.getLapNumber();
+        int position = event.getPosition();
+
+        PitCycle cycle = new PitCycle();
+        cycle.driver = driver;
+        cycle.pitLap = lap;
+        cycle.stintBeforePit = event.getStint();
+        cycle.trackStatusAtPit = event.getTrackStatus();
+        cycle.tyreAgeAtPit = event.getTyreLife();
+        cycle.gapToCarAheadAtPit = event.getGapToCarAhead();
+        cycle.race = event.getRace();
+        cycle.totalLaps = event.getTotalLaps();
+        cycle.settleLap = lap + SETTLE_LAPS + 1;
+        cycle.state = CycleState.PENDING_SETTLE;
+
+        // capture baseline: stint best from the pre-pit stint
+        String sKey = stintKey(driver, event.getStint());
+        Double best = stintBests.get(sKey);
+        cycle.baselineLapTime = (best != null) ? best : 0.0;
+
+        // rival cluster: car ahead and car behind.
+        // findDriverAtPosition falls back to lap-1 when sequential arrival
+        // means the target position hasn't been stored yet for the current lap.
+        RivalSnapshot ahead = findDriverAtPosition(position - 1, lap);
+        RivalSnapshot behind = findDriverAtPosition(position + 1, lap);
+
+        if (ahead != null) {
+            cycle.rivalAhead = ahead.driver;
+            cycle.rivalAheadStintAtPit = ahead.stint;
+            // compute gap on the lap where the rival was actually found
+            cycle.prePitGapAhead = computeDirectedGap(driver, ahead.driver, ahead.foundOnLap);
+            if (cycle.prePitGapAhead == null) {
+                cycle.prePitGapAhead = computeDirectedGap(driver, ahead.driver, lap);
+            }
+        }
+        if (behind != null) {
+            cycle.rivalBehind = behind.driver;
+            cycle.rivalBehindStintAtPit = behind.stint;
+            cycle.prePitGapBehind = computeDirectedGap(driver, behind.driver, behind.foundOnLap);
+            if (cycle.prePitGapBehind == null) {
+                cycle.prePitGapBehind = computeDirectedGap(driver, behind.driver, lap);
+            }
+        }
+
+        // determine primary rival: car ahead for most drivers, car behind for P1
+        if (position == 1 && behind != null) {
+            cycle.primaryRival = behind.driver;
+            cycle.prePitGapToPrimary = cycle.prePitGapBehind;
+            cycle.primaryRivalStintAtPit = behind.stint;
+        } else if (ahead != null) {
+            cycle.primaryRival = ahead.driver;
+            cycle.prePitGapToPrimary = cycle.prePitGapAhead;
+            cycle.primaryRivalStintAtPit = ahead.stint;
+        }
+
+        // offset timeout: 40% of remaining race distance
+        int remainingLaps = Math.max(1, cycle.totalLaps - lap);
+        cycle.offsetTimeoutLap = lap + (int) Math.ceil(remainingLaps * OFFSET_RACE_FRACTION);
+
+        // safety timer
+        cycle.safetyTimerTimestamp = event.getEventTimeMillis() + TIMER_TIMEOUT_MS;
+        ctx.timerService().registerEventTimeTimer(cycle.safetyTimerTimestamp);
+
+        // the compound after pit is unknown until the next lap's event arrives.
+        // will be filled in during settle phase.
+        cycle.compoundAfterPit = null;
+
+        pendingCycles.put(driver, cycle);
+
+        LOG.info("pit cycle registered: {} lap {} P{}, rivals: [ahead={}, behind={}], "
+                + "baseline: {}, offset timeout lap: {}",
+                driver, lap, position, cycle.rivalAhead, cycle.rivalBehind,
+                cycle.baselineLapTime > 0 ? String.format("%.3f", cycle.baselineLapTime) : "N/A",
+                cycle.offsetTimeoutLap);
+    }
+
+    // advances all pending cycles based on incoming events
+    private void advanceCycles(LapEvent trigger, Context ctx, Collector<PitStopEvaluationAlert> out)
+            throws Exception {
         int currentLap = trigger.getLapNumber();
         List<String> resolved = new ArrayList<>();
 
-        for (Map.Entry<String, PitRecord> entry : pendingPits.entries()) {
-            PitRecord record = entry.getValue();
+        for (Map.Entry<String, PitCycle> entry : pendingCycles.entries()) {
+            PitCycle cycle = entry.getValue();
 
-            // driver must have settled: SETTLE_LAPS after pit + 1 for out-lap
-            int driverSettleLap = record.pitLap + SETTLE_LAPS + 1;
-            if (currentLap < driverSettleLap) {
-                continue;
+            // fill compound after pit from first post-pit lap
+            if (cycle.compoundAfterPit == null
+                    && trigger.getDriver().equals(cycle.driver)
+                    && trigger.getLapNumber() > cycle.pitLap) {
+                cycle.compoundAfterPit = trigger.getCompound();
+                pendingCycles.put(entry.getKey(), cycle);
             }
 
-            // check if pitting driver actually has data at the settle lap
-            LapEvent driverAtSettle = lapEvents.get(lapKey(driverSettleLap, record.driver));
-            if (driverAtSettle == null) {
-                continue;
-            }
+            switch (cycle.state) {
+                case PENDING_SETTLE:
+                    if (currentLap >= cycle.settleLap) {
+                        LapEvent driverAtSettle = lapEvents.get(lapKey(cycle.settleLap, cycle.driver));
+                        if (driverAtSettle != null) {
+                            cycle.state = CycleState.PENDING_RIVAL;
+                            pendingCycles.put(entry.getKey(), cycle);
+                            if (tryResolveRival(cycle, currentLap, out)) {
+                                resolved.add(entry.getKey());
+                            }
+                        }
+                    }
+                    break;
 
-            if (record.netRival == null || record.prePitGapToRival == null) {
-                // no rival or no gap data (isolated driver or field edge), safe default
-                emit(record, null, Result.SUCCESS_DEFEND, out);
-                resolved.add(entry.getKey());
-                continue;
-            }
+                case PENDING_RIVAL:
+                    if (tryResolveRival(cycle, currentLap, out)) {
+                        resolved.add(entry.getKey());
+                    }
+                    break;
 
-            // compute post-settle gap between driver and rival
-            Double postGap = computeDirectedGap(record.driver, record.netRival, driverSettleLap);
-            if (postGap == null) {
-                // rival may have retired or data missing at exact settle lap, try adjacent laps
-                for (int fallback = driverSettleLap - 1; fallback <= driverSettleLap + 2; fallback++) {
-                    if (fallback == driverSettleLap) continue;
-                    postGap = computeDirectedGap(record.driver, record.netRival, fallback);
-                    if (postGap != null) break;
-                }
+                default:
+                    break;
             }
-            if (postGap == null) {
-                // still missing, resolve with unknown (defend as safe default for ml)
-                emit(record, null, Result.SUCCESS_DEFEND, out);
-                resolved.add(entry.getKey());
-                continue;
-            }
-
-            Result result = classifyByGap(record.prePitGapToRival, postGap, record.wasLeader);
-            emit(record, postGap, result, out);
-            resolved.add(entry.getKey());
         }
 
         for (String key : resolved) {
-            pendingPits.remove(key);
+            pendingCycles.remove(key);
         }
     }
 
-    // classifies pit stop outcome by comparing pre-pit gap vs post-settle gap.
-    // for P1 (wasLeader=true, rival is car behind): success = still ahead (postGap <= 0).
-    // for others (rival is car ahead): gap improved (delta < -tolerance) = undercut,
-    // roughly maintained (|delta| <= tolerance) = defend, worsened (delta > tolerance) = failure.
-    // the tolerance band absorbs timing noise from out-laps and track evolution.
-    private static Result classifyByGap(double prePitGap, double postPitGap, boolean wasLeader) {
-        if (wasLeader) {
-            // leader pitting: rival is car behind. success = still ahead after settling.
-            return postPitGap <= 0 ? Result.SUCCESS_DEFEND : Result.FAILURE_LOST_POSITION;
+    // tries to resolve a cycle in PENDING_RIVAL state.
+    // checks if primary rival has pitted (same strategy) or if offset timeout reached.
+    // returns true if resolved.
+    private boolean tryResolveRival(PitCycle cycle, int currentLap,
+            Collector<PitStopEvaluationAlert> out) throws Exception {
+
+        if (cycle.primaryRival == null || cycle.prePitGapToPrimary == null) {
+            emitResult(cycle, null, null, Result.SUCCESS_DEFEND, "RIVAL_PIT", false, out);
+            return true;
         }
-        double delta = postPitGap - prePitGap;
-        if (delta < -GAP_TOLERANCE) {
-            return Result.SUCCESS_UNDERCUT;
-        } else if (delta <= GAP_TOLERANCE) {
+
+        // check if primary rival has pitted: either after our pit (undercut scenario)
+        // or shortly before our pit (overcut scenario, rival already on new tires)
+        boolean rivalPittedAfter = hasRivalPitted(cycle.primaryRival, cycle.primaryRivalStintAtPit,
+                cycle.pitLap, currentLap);
+
+        // overcut check: rival pitted in the window before our pit (within SETTLE_LAPS + 2 laps)
+        int lookbackStart = Math.max(1, cycle.pitLap - SETTLE_LAPS - 2);
+        boolean rivalPittedBefore = hasRivalPittedInRange(cycle.primaryRival,
+                lookbackStart, cycle.pitLap);
+
+        boolean rivalPitted = rivalPittedAfter || rivalPittedBefore;
+
+        if (rivalPitted) {
+            int rivalPitLap;
+            if (rivalPittedBefore) {
+                rivalPitLap = findRivalPitLapInRange(cycle.primaryRival, lookbackStart, cycle.pitLap);
+            } else {
+                rivalPitLap = findRivalPitLap(cycle.primaryRival, cycle.primaryRivalStintAtPit,
+                        cycle.pitLap, currentLap);
+            }
+            cycle.driverPittedFirst = (rivalPitLap < 0 || cycle.pitLap <= rivalPitLap);
+
+            // wait for rival to also settle before comparing gaps
+            int rivalSettleLap = (rivalPitLap > 0) ? (rivalPitLap + SETTLE_LAPS + 1) : cycle.settleLap;
+            int comparisonLap = Math.max(cycle.settleLap, rivalSettleLap);
+
+            Double postGap = findGapNearLap(cycle.driver, cycle.primaryRival, comparisonLap);
+            if (postGap == null && currentLap >= comparisonLap + 2) {
+                postGap = findGapNearLap(cycle.driver, cycle.primaryRival, cycle.settleLap);
+            }
+            if (postGap == null && currentLap < comparisonLap + 3) {
+                return false; // wait for more data
+            }
+
+            boolean emergenceTraffic = checkEmergenceTraffic(cycle.driver, cycle.settleLap);
+
+            Result result = classifyPitStop(cycle.prePitGapToPrimary, postGap,
+                    cycle.baselineLapTime, cycle.driverPittedFirst,
+                    cycle.trackStatusAtPit, emergenceTraffic, false);
+
+            Double gapDeltaPct = computeGapDeltaPct(cycle.prePitGapToPrimary, postGap,
+                    cycle.baselineLapTime);
+
+            emitResult(cycle, postGap, gapDeltaPct, result, "RIVAL_PIT", false, out);
+            return true;
+        }
+
+        // check offset timeout: rival hasn't pitted after 40% of remaining race
+        if (currentLap >= cycle.offsetTimeoutLap) {
+            Double currentGap = findGapNearLap(cycle.driver, cycle.primaryRival, currentLap);
+            if (currentGap == null) {
+                currentGap = findGapNearLap(cycle.driver, cycle.primaryRival, currentLap - 1);
+            }
+
+            Double gapDeltaPct = computeGapDeltaPct(cycle.prePitGapToPrimary, currentGap,
+                    cycle.baselineLapTime);
+            Result result;
+            if (gapDeltaPct != null && gapDeltaPct < -DEFEND_BAND_PCT) {
+                result = Result.OFFSET_ADVANTAGE;
+            } else if (gapDeltaPct != null && gapDeltaPct > DEFEND_BAND_PCT) {
+                result = Result.OFFSET_DISADVANTAGE;
+            } else {
+                result = Result.OFFSET_ADVANTAGE;
+            }
+
+            emitResult(cycle, currentGap, gapDeltaPct, result, "OFFSET_TIMEOUT", true, out);
+            return true;
+        }
+
+        return false;
+    }
+
+    // 8-label classification based on gap delta percentage
+    private Result classifyPitStop(Double prePitGap, Double postPitGap,
+            double baselineLap, boolean driverPittedFirst,
+            String trackStatus, boolean emergenceTraffic, boolean isOffset) {
+
+        if (prePitGap == null || postPitGap == null || baselineLap <= 0) {
             return Result.SUCCESS_DEFEND;
-        } else {
-            return Result.FAILURE_LOST_POSITION;
         }
+
+        Double gapDeltaPct = computeGapDeltaPct(prePitGap, postPitGap, baselineLap);
+        if (gapDeltaPct == null) {
+            return Result.SUCCESS_DEFEND;
+        }
+
+        // sc/vsc free stop: pitted under caution with minimal gap distortion
+        if (trackStatus != null && (trackStatus.equals("4") || trackStatus.equals("6")
+                || trackStatus.equals("7"))) {
+            if (Math.abs(gapDeltaPct) < FREE_STOP_THRESHOLD_PCT) {
+                return Result.SUCCESS_FREE_STOP;
+            }
+        }
+
+        // same-strategy classification
+        if (gapDeltaPct < -UNDERCUT_THRESHOLD_PCT) {
+            return driverPittedFirst ? Result.SUCCESS_UNDERCUT : Result.SUCCESS_OVERCUT;
+        }
+
+        if (Math.abs(gapDeltaPct) <= DEFEND_BAND_PCT) {
+            if (emergenceTraffic) {
+                return Result.FAILURE_TRAFFIC;
+            }
+            return Result.SUCCESS_DEFEND;
+        }
+
+        // gapDeltaPct > DEFEND_BAND_PCT: lost ground
+        if (emergenceTraffic) {
+            return Result.FAILURE_TRAFFIC;
+        }
+        return Result.FAILURE_PACE_DEFICIT;
+    }
+
+    // computes gap change as % of baseline lap time.
+    // ex: prePitGap=2.5, postPitGap=1.0, baseline=82.0 -> (1.0-2.5)/82.0*100 = -1.83%
+    private static Double computeGapDeltaPct(Double prePitGap, Double postPitGap, double baseline) {
+        if (prePitGap == null || postPitGap == null || baseline <= 0) {
+            return null;
+        }
+        return (postPitGap - prePitGap) / baseline * 100.0;
+    }
+
+    // checks if the rival's stint changed between pitLap and currentLap
+    private boolean hasRivalPitted(String rival, int stintAtDriverPit,
+            int fromLap, int toLap) throws Exception {
+        for (int lap = fromLap + 1; lap <= toLap; lap++) {
+            LapEvent rivalLap = lapEvents.get(lapKey(lap, rival));
+            if (rivalLap != null && rivalLap.getStint() > stintAtDriverPit) {
+                return true;
+            }
+            if (rivalLap != null && rivalLap.getPitInTime() != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // checks if the rival pitted anywhere in a lap range (for overcut detection)
+    private boolean hasRivalPittedInRange(String rival, int fromLap, int toLap) throws Exception {
+        for (int lap = fromLap; lap <= toLap; lap++) {
+            LapEvent rivalLap = lapEvents.get(lapKey(lap, rival));
+            if (rivalLap != null && rivalLap.getPitInTime() != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // finds the exact lap where the rival pitted within a range (for overcut detection)
+    private int findRivalPitLapInRange(String rival, int fromLap, int toLap) throws Exception {
+        for (int lap = fromLap; lap <= toLap; lap++) {
+            LapEvent rivalLap = lapEvents.get(lapKey(lap, rival));
+            if (rivalLap != null && rivalLap.getPitInTime() != null) {
+                return lap;
+            }
+        }
+        return -1;
+    }
+
+    // finds the lap where the rival actually pitted (stint changed or pitInTime detected)
+    private int findRivalPitLap(String rival, int stintAtDriverPit,
+            int fromLap, int toLap) throws Exception {
+        for (int lap = fromLap + 1; lap <= toLap; lap++) {
+            LapEvent rivalLap = lapEvents.get(lapKey(lap, rival));
+            if (rivalLap != null && rivalLap.getPitInTime() != null) {
+                return lap;
+            }
+            if (rivalLap != null && rivalLap.getStint() > stintAtDriverPit) {
+                return lap;
+            }
+        }
+        return -1;
+    }
+
+    // searches for gap data near the target lap, scanning +-3 laps for missing data
+    private Double findGapNearLap(String driverA, String driverB, int targetLap) throws Exception {
+        Double gap = computeDirectedGap(driverA, driverB, targetLap);
+        if (gap != null) {
+            return gap;
+        }
+        for (int offset = 1; offset <= 3; offset++) {
+            gap = computeDirectedGap(driverA, driverB, targetLap - offset);
+            if (gap != null) {
+                return gap;
+            }
+            gap = computeDirectedGap(driverA, driverB, targetLap + offset);
+            if (gap != null) {
+                return gap;
+            }
+        }
+        return null;
+    }
+
+    // checks if the driver emerged into traffic at the settle lap.
+    // traffic = car ahead has high tyre life (slow, blocking) with small gap
+    private boolean checkEmergenceTraffic(String driver, int settleLap) throws Exception {
+        LapEvent driverLap = lapEvents.get(lapKey(settleLap, driver));
+        if (driverLap == null) {
+            return false;
+        }
+
+        String prefix = settleLap + ":";
+        for (Map.Entry<String, LapEvent> entry : lapEvents.entries()) {
+            if (entry.getKey().startsWith(prefix)) {
+                LapEvent candidate = entry.getValue();
+                if (candidate.getPosition() == driverLap.getPosition() - 1) {
+                    return candidate.getTyreLife() >= TRAFFIC_TYRE_LIFE_THRESHOLD
+                            && driverLap.getGapToCarAhead() != null
+                            && driverLap.getGapToCarAhead() < 2.0;
+                }
+            }
+        }
+        return false;
     }
 
     // computes the directed time gap from driverA to driverB on a given lap.
-    // positive = A is behind B (B has lower position number), negative = A is ahead.
+    // positive = A is behind B, negative = A is ahead.
     // walks the position ladder, summing gapToCarAhead from each intermediate position.
-    // ex: A at P5, B at P3 -> sum gapToCarAhead[P4] + gapToCarAhead[P5] = total gap A behind B
-    // returns null if any intermediate gap data is missing (incomplete lap data)
     private Double computeDirectedGap(String driverA, String driverB, int lap) throws Exception {
-        // collect all events for this lap into a position-indexed map
         HashMap<Integer, LapEvent> byPosition = new HashMap<>();
         String prefix = lap + ":";
         int posA = -1, posB = -1;
@@ -236,8 +507,12 @@ public class PitStopEvaluator
             if (entry.getKey().startsWith(prefix)) {
                 LapEvent e = entry.getValue();
                 byPosition.put(e.getPosition(), e);
-                if (e.getDriver().equals(driverA)) posA = e.getPosition();
-                if (e.getDriver().equals(driverB)) posB = e.getPosition();
+                if (e.getDriver().equals(driverA)) {
+                    posA = e.getPosition();
+                }
+                if (e.getDriver().equals(driverB)) {
+                    posB = e.getPosition();
+                }
             }
         }
 
@@ -248,7 +523,6 @@ public class PitStopEvaluator
             return 0.0;
         }
 
-        // accumulate gaps from the higher position number toward the lower
         int lo = Math.min(posA, posB);
         int hi = Math.max(posA, posB);
         double gap = 0.0;
@@ -261,106 +535,165 @@ public class PitStopEvaluator
             gap += car.getGapToCarAhead();
         }
 
-        // positive = A behind B, negative = A ahead of B
         return posA > posB ? gap : -gap;
     }
 
-    // finds the net rival: the car directly ahead of the pitting driver at pit time.
-    // scans the current lap's events for the driver at position = pitDriver.position - 1.
-    private LapEvent findNetRival(LapEvent pitDriver) throws Exception {
-        if (pitDriver.getPosition() <= 1) {
+    // finds a driver at a specific position on a given lap.
+    // falls back to lap-1 if the target position isn't in state yet, which happens
+    // when cars cross the finish line sequentially (e.g. P3 hasn't arrived when P2 pits).
+    // the grid from the previous lap is valid for identifying net rivals at pit entry.
+    private RivalSnapshot findDriverAtPosition(int targetPos, int lap) throws Exception {
+        if (targetPos < 1) {
             return null;
         }
-        int targetPos = pitDriver.getPosition() - 1;
-        int lap = pitDriver.getLapNumber();
-        String prefix = lap + ":";
-
-        for (Map.Entry<String, LapEvent> entry : lapEvents.entries()) {
-            if (entry.getKey().startsWith(prefix)) {
-                if (entry.getValue().getPosition() == targetPos) {
-                    return entry.getValue();
+        for (int searchLap = lap; searchLap >= Math.max(1, lap - 1); searchLap--) {
+            String prefix = searchLap + ":";
+            for (Map.Entry<String, LapEvent> entry : lapEvents.entries()) {
+                if (entry.getKey().startsWith(prefix)) {
+                    LapEvent e = entry.getValue();
+                    if (e.getPosition() == targetPos) {
+                        return new RivalSnapshot(e.getDriver(), e.getStint(), searchLap);
+                    }
                 }
             }
         }
         return null;
     }
 
-    // finds the car directly behind the pitting driver (used when P1 pits)
-    private String findCarBehind(LapEvent pitDriver) throws Exception {
-        int targetPos = pitDriver.getPosition() + 1;
-        int lap = pitDriver.getLapNumber();
-        String prefix = lap + ":";
-
-        for (Map.Entry<String, LapEvent> entry : lapEvents.entries()) {
-            if (entry.getKey().startsWith(prefix)) {
-                if (entry.getValue().getPosition() == targetPos) {
-                    return entry.getValue().getDriver();
-                }
-            }
+    // updates stint best for a driver, tracking best green-flag lap per stint
+    private void updateStintBest(LapEvent event) throws Exception {
+        if (event.getLapTime() == null || event.getLapTime() <= 0) {
+            return;
         }
-        return null;
-    }
-
-    // fallback resolution when safety timer fires (driver retired, race ended, etc.)
-    private void resolveFromTimer(PitRecord record, Collector<PitStopEvaluationAlert> out) throws Exception {
-        if (record.netRival == null || record.prePitGapToRival == null) {
-            emit(record, null, Result.SUCCESS_DEFEND, out);
+        if (event.getPitInTime() != null || event.getPitOutTime() != null) {
+            return;
+        }
+        if (event.getTrackStatus() != null && !event.getTrackStatus().equals("1")) {
             return;
         }
 
-        // attempt to compute gap at the latest available lap near the settle window
-        int searchLap = record.pitLap + SETTLE_LAPS + 1;
+        String key = stintKey(event.getDriver(), event.getStint());
+        Double current = stintBests.get(key);
+        if (current == null || event.getLapTime() < current) {
+            stintBests.put(key, event.getLapTime());
+        }
+    }
+
+    // fallback resolution when safety timer fires
+    private void resolveFromTimer(PitCycle cycle, Collector<PitStopEvaluationAlert> out)
+            throws Exception {
+        if (cycle.primaryRival == null || cycle.prePitGapToPrimary == null) {
+            emitResult(cycle, null, null, Result.SUCCESS_DEFEND, "SAFETY_TIMER", false, out);
+            return;
+        }
+
         Double postGap = null;
-        for (int lap = searchLap + 5; lap >= searchLap; lap--) {
-            postGap = computeDirectedGap(record.driver, record.netRival, lap);
-            if (postGap != null) break;
+        for (int lap = cycle.settleLap + 5; lap >= cycle.settleLap; lap--) {
+            postGap = computeDirectedGap(cycle.driver, cycle.primaryRival, lap);
+            if (postGap != null) {
+                break;
+            }
         }
 
         if (postGap == null) {
-            emit(record, null, Result.SUCCESS_DEFEND, out);
+            emitResult(cycle, null, null, Result.SUCCESS_DEFEND, "SAFETY_TIMER", false, out);
             return;
         }
 
-        Result result = classifyByGap(record.prePitGapToRival, postGap, record.wasLeader);
-        emit(record, postGap, result, out);
+        Double gapDeltaPct = computeGapDeltaPct(cycle.prePitGapToPrimary, postGap,
+                cycle.baselineLapTime);
+        boolean emergenceTraffic = checkEmergenceTraffic(cycle.driver, cycle.settleLap);
+
+        Result result = classifyPitStop(cycle.prePitGapToPrimary, postGap,
+                cycle.baselineLapTime, cycle.driverPittedFirst,
+                cycle.trackStatusAtPit, emergenceTraffic, false);
+
+        emitResult(cycle, postGap, gapDeltaPct, result, "SAFETY_TIMER", false, out);
     }
 
-    private void emit(PitRecord record, Double postPitGapToRival, Result result,
+    private void emitResult(PitCycle cycle, Double postPitGap, Double gapDeltaPct,
+            Result result, String resolvedVia, boolean isOffset,
             Collector<PitStopEvaluationAlert> out) {
-        out.collect(new PitStopEvaluationAlert(
-                record.driver,
-                record.pitLap,
-                record.prePitGapToRival,
-                postPitGapToRival,
-                record.compound,
-                result,
-                record.trackStatus,
-                record.tyreAge,
-                record.gapToCarAhead,
-                record.race,
-                record.netRival
-        ));
-        LOG.info("Pit evaluation: {} lap {} -> {} (rival: {}, preGap: {}, postGap: {})",
-                record.driver, record.pitLap, result, record.netRival,
-                record.prePitGapToRival != null ? String.format("%.3f", record.prePitGapToRival) : "N/A",
-                postPitGapToRival != null ? String.format("%.3f", postPitGapToRival) : "N/A");
+
+        PitStopEvaluationAlert alert = PitStopEvaluationAlert.create(
+                cycle.driver, cycle.pitLap, result);
+        alert.setRivalAhead(cycle.rivalAhead);
+        alert.setRivalBehind(cycle.rivalBehind);
+        alert.setPrePitGapAhead(cycle.prePitGapAhead);
+        alert.setPrePitGapBehind(cycle.prePitGapBehind);
+        alert.setPostPitGapToRival(postPitGap);
+        alert.setCompound(cycle.compoundAfterPit);
+        alert.setTrackStatusAtPit(cycle.trackStatusAtPit);
+        alert.setTyreAgeAtPit(cycle.tyreAgeAtPit);
+        alert.setGapToCarAheadAtPit(cycle.gapToCarAheadAtPit);
+        alert.setRace(cycle.race);
+        alert.setGapDeltaPct(gapDeltaPct);
+        alert.setBaselineLapTime(cycle.baselineLapTime > 0 ? cycle.baselineLapTime : null);
+        alert.setDriverPittedFirst(cycle.driverPittedFirst);
+        alert.setOffsetStrategy(isOffset);
+        alert.setResolvedVia(resolvedVia);
+
+        out.collect(alert);
+        LOG.info("pit eval: {} lap {} -> {} (rival: {}, delta: {}%, via: {})",
+                cycle.driver, cycle.pitLap, result,
+                cycle.primaryRival,
+                gapDeltaPct != null ? String.format("%.2f", gapDeltaPct) : "N/A",
+                resolvedVia);
     }
 
-    // serializable record of a pending pit stop awaiting resolution.
-    // stored in MapState keyed by driver abbreviation.
-    public static class PitRecord implements Serializable {
-        private static final long serialVersionUID = 2L;
+    // snapshot of a rival at pit detection time, including which lap the data came from
+    private static class RivalSnapshot {
+
+        final String driver;
+        final int stint;
+        final int foundOnLap;
+
+        RivalSnapshot(String driver, int stint, int foundOnLap) {
+            this.driver = driver;
+            this.stint = stint;
+            this.foundOnLap = foundOnLap;
+        }
+    }
+
+    // state for each pending pit cycle
+    public static class PitCycle implements Serializable {
+
+        private static final long serialVersionUID = 3L;
 
         public String driver;
         public int pitLap;
-        public Double prePitGapToRival;   // directed gap at pit time
-        public boolean wasLeader;         // true if pitting from P1 (rival is car behind)
-        public String netRival;
-        public String compound;
-        public String trackStatus;
-        public int tyreAge;
-        public Double gapToCarAhead;
+        public int stintBeforePit;
+        public String compoundAfterPit;
+        public String trackStatusAtPit;
+        public int tyreAgeAtPit;
+        public double baselineLapTime;
+        public int totalLaps;
+
+        // rival cluster
+        public String rivalAhead;
+        public String rivalBehind;
+        public Double prePitGapAhead;
+        public Double prePitGapBehind;
+        public int rivalAheadStintAtPit;
+        public int rivalBehindStintAtPit;
+
+        // primary rival (ahead for most, behind for P1)
+        public String primaryRival;
+        public Double prePitGapToPrimary;
+        public int primaryRivalStintAtPit;
+        public boolean driverPittedFirst;
+
+        // resolution
+        public CycleState state;
+        public int settleLap;
+        public int offsetTimeoutLap;
+        public long safetyTimerTimestamp;
+        public Double gapToCarAheadAtPit;
         public String race;
-        public long registeredTimestamp;
+    }
+
+    public enum CycleState {
+        PENDING_SETTLE,
+        PENDING_RIVAL,
     }
 }

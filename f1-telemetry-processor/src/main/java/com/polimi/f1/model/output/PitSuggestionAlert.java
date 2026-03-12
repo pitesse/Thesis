@@ -1,42 +1,56 @@
 package com.polimi.f1.model.output;
 
-// emitted when the fuzzy-logic pit desirability score for a driver exceeds the emit threshold.
-// combines five scoring dimensions: pace degradation, track status (sc/vsc opportunity),
-// traffic analysis (clean air vs drs train), tire life feasibility, and urgency (closing window).
+// emitted when the continuous fuzzy-logic pit desirability score crosses the emit threshold.
+// combines six scoring dimensions: continuous pace degradation, track status (sc/vsc opportunity),
+// continuous traffic analysis (gap-based interpolation), tire urgency (quadratic ramp),
+// strategy penalty (compound feasibility), and end-of-race suppression (logistic sigmoid).
 //
-// the score ranges 0-100 (clamped). individual components can be negative (traffic, tire life).
-// urgencyScore adds +15/+30 based on current tyre age vs max stint for the compound.
-// ex csv: VER,25,2,MEDIUM,18,75,30,0,30,-15,10,1,5,4.200,"Pace drop + clean air + closing window"
+// all scores are doubles for continuous distributions (no more int clumping).
+// suggestionLabel provides discrete classification: MONITOR, GOOD_PIT, PIT_NOW, LOST_CHANCE.
+//
+// ex csv: VER,25,2,MEDIUM,18,75.3,22.1,0,18.7,-4.2,8.7,-2.5,1,5,4.200,GOOD_PIT,"pace drop + clean air"
 public class PitSuggestionAlert {
 
     public static final String CSV_HEADER
             = "driver,lapNumber,position,compound,tyreLife,totalScore,"
-            + "paceScore,trackStatusScore,trafficScore,tireLifePenalty,urgencyScore,"
-            + "trackStatus,emergencePosition,gapToPhysicalCar,suggestion";
+            + "paceScore,trackStatusScore,trafficScore,strategyPenalty,urgencyScore,"
+            + "endOfRacePenalty,trackStatus,emergencePosition,gapToPhysicalCar,suggestionLabel,suggestion";
+
+    // discrete labels derived from continuous totalScore
+    public enum SuggestionLabel {
+        MONITOR, // score 40-59, watch situation
+        GOOD_PIT, // score 60-79, window open
+        PIT_NOW, // score 80+, immediate action
+        LOST_CHANCE          // special: peak score was >= 70 but dropped below 40
+    }
 
     private String driver;
     private int lapNumber;
     private int position;
     private String compound;
     private int tyreLife;
-    private int totalScore;         // 0-100 fuzzy desirability
-    private int paceScore;          // 0-30
-    private int trackStatusScore;   // 0-60
-    private int trafficScore;       // -30 to +30
-    private int tireLifePenalty;    // -15 to 0
-    private int urgencyScore;       // 0 to +30, tyre age vs current compound max stint
+    private double totalScore;           // 0.0-100.0 continuous
+    private double paceScore;            // 0.0-30.0 continuous (power 1.5 curve)
+    private int trackStatusScore;        // 0 or 60 (crisp, binary event)
+    private double trafficScore;         // -30.0 to +30.0 continuous (linear interpolation)
+    private double strategyPenalty;      // -15.0 to 0.0 continuous (replaces tireLifePenalty)
+    private double urgencyScore;         // 0.0-30.0 continuous (quadratic ramp)
+    private double endOfRacePenalty;     // -100.0 to 0.0 continuous (logistic sigmoid)
     private String trackStatus;
-    private int emergencePosition;  // computed physical position after pit
+    private int emergencePosition;
     private double gapToPhysicalCar;
-    private String suggestion;      // human-readable summary, ex: "SC opportunity + clean air"
+    private String suggestionLabel;      // "MONITOR", "GOOD_PIT", "PIT_NOW", "LOST_CHANCE"
+    private String suggestion;           // human-readable summary
 
     public PitSuggestionAlert() {
     }
 
     public PitSuggestionAlert(String driver, int lapNumber, int position, String compound,
-            int tyreLife, int totalScore, int paceScore, int trackStatusScore,
-            int trafficScore, int tireLifePenalty, int urgencyScore, String trackStatus,
-            int emergencePosition, double gapToPhysicalCar, String suggestion) {
+            int tyreLife, double totalScore, double paceScore, int trackStatusScore,
+            double trafficScore, double strategyPenalty, double urgencyScore,
+            double endOfRacePenalty, String trackStatus,
+            int emergencePosition, double gapToPhysicalCar,
+            String suggestionLabel, String suggestion) {
         this.driver = driver;
         this.lapNumber = lapNumber;
         this.position = position;
@@ -46,60 +60,153 @@ public class PitSuggestionAlert {
         this.paceScore = paceScore;
         this.trackStatusScore = trackStatusScore;
         this.trafficScore = trafficScore;
-        this.tireLifePenalty = tireLifePenalty;
+        this.strategyPenalty = strategyPenalty;
         this.urgencyScore = urgencyScore;
+        this.endOfRacePenalty = endOfRacePenalty;
         this.trackStatus = trackStatus;
         this.emergencePosition = emergencePosition;
         this.gapToPhysicalCar = gapToPhysicalCar;
+        this.suggestionLabel = suggestionLabel;
         this.suggestion = suggestion;
     }
 
-    public String getDriver() { return driver; }
-    public void setDriver(String driver) { this.driver = driver; }
+    public String getDriver() {
+        return driver;
+    }
 
-    public int getLapNumber() { return lapNumber; }
-    public void setLapNumber(int lapNumber) { this.lapNumber = lapNumber; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
-    public int getPosition() { return position; }
-    public void setPosition(int position) { this.position = position; }
+    public int getLapNumber() {
+        return lapNumber;
+    }
 
-    public String getCompound() { return compound; }
-    public void setCompound(String compound) { this.compound = compound; }
+    public void setLapNumber(int lapNumber) {
+        this.lapNumber = lapNumber;
+    }
 
-    public int getTyreLife() { return tyreLife; }
-    public void setTyreLife(int tyreLife) { this.tyreLife = tyreLife; }
+    public int getPosition() {
+        return position;
+    }
 
-    public int getTotalScore() { return totalScore; }
-    public void setTotalScore(int totalScore) { this.totalScore = totalScore; }
+    public void setPosition(int position) {
+        this.position = position;
+    }
 
-    public int getPaceScore() { return paceScore; }
-    public void setPaceScore(int paceScore) { this.paceScore = paceScore; }
+    public String getCompound() {
+        return compound;
+    }
 
-    public int getTrackStatusScore() { return trackStatusScore; }
-    public void setTrackStatusScore(int trackStatusScore) { this.trackStatusScore = trackStatusScore; }
+    public void setCompound(String compound) {
+        this.compound = compound;
+    }
 
-    public int getTrafficScore() { return trafficScore; }
-    public void setTrafficScore(int trafficScore) { this.trafficScore = trafficScore; }
+    public int getTyreLife() {
+        return tyreLife;
+    }
 
-    public int getTireLifePenalty() { return tireLifePenalty; }
-    public void setTireLifePenalty(int tireLifePenalty) { this.tireLifePenalty = tireLifePenalty; }
+    public void setTyreLife(int tyreLife) {
+        this.tyreLife = tyreLife;
+    }
 
-    public int getUrgencyScore() { return urgencyScore; }
-    public void setUrgencyScore(int urgencyScore) { this.urgencyScore = urgencyScore; }
+    public double getTotalScore() {
+        return totalScore;
+    }
 
-    public String getTrackStatus() { return trackStatus; }
-    public void setTrackStatus(String trackStatus) { this.trackStatus = trackStatus; }
+    public void setTotalScore(double totalScore) {
+        this.totalScore = totalScore;
+    }
 
-    public int getEmergencePosition() { return emergencePosition; }
-    public void setEmergencePosition(int emergencePosition) { this.emergencePosition = emergencePosition; }
+    public double getPaceScore() {
+        return paceScore;
+    }
 
-    public double getGapToPhysicalCar() { return gapToPhysicalCar; }
-    public void setGapToPhysicalCar(double gapToPhysicalCar) { this.gapToPhysicalCar = gapToPhysicalCar; }
+    public void setPaceScore(double paceScore) {
+        this.paceScore = paceScore;
+    }
 
-    public String getSuggestion() { return suggestion; }
-    public void setSuggestion(String suggestion) { this.suggestion = suggestion; }
+    public int getTrackStatusScore() {
+        return trackStatusScore;
+    }
 
-    // ex: VER,25,2,MEDIUM,18,75,30,0,30,-15,10,1,5,4.200,Pace drop + clean air
+    public void setTrackStatusScore(int trackStatusScore) {
+        this.trackStatusScore = trackStatusScore;
+    }
+
+    public double getTrafficScore() {
+        return trafficScore;
+    }
+
+    public void setTrafficScore(double trafficScore) {
+        this.trafficScore = trafficScore;
+    }
+
+    public double getStrategyPenalty() {
+        return strategyPenalty;
+    }
+
+    public void setStrategyPenalty(double strategyPenalty) {
+        this.strategyPenalty = strategyPenalty;
+    }
+
+    public double getUrgencyScore() {
+        return urgencyScore;
+    }
+
+    public void setUrgencyScore(double urgencyScore) {
+        this.urgencyScore = urgencyScore;
+    }
+
+    public double getEndOfRacePenalty() {
+        return endOfRacePenalty;
+    }
+
+    public void setEndOfRacePenalty(double endOfRacePenalty) {
+        this.endOfRacePenalty = endOfRacePenalty;
+    }
+
+    public String getTrackStatus() {
+        return trackStatus;
+    }
+
+    public void setTrackStatus(String trackStatus) {
+        this.trackStatus = trackStatus;
+    }
+
+    public int getEmergencePosition() {
+        return emergencePosition;
+    }
+
+    public void setEmergencePosition(int emergencePosition) {
+        this.emergencePosition = emergencePosition;
+    }
+
+    public double getGapToPhysicalCar() {
+        return gapToPhysicalCar;
+    }
+
+    public void setGapToPhysicalCar(double gapToPhysicalCar) {
+        this.gapToPhysicalCar = gapToPhysicalCar;
+    }
+
+    public String getSuggestionLabel() {
+        return suggestionLabel;
+    }
+
+    public void setSuggestionLabel(String suggestionLabel) {
+        this.suggestionLabel = suggestionLabel;
+    }
+
+    public String getSuggestion() {
+        return suggestion;
+    }
+
+    public void setSuggestion(String suggestion) {
+        this.suggestion = suggestion;
+    }
+
+    // ex: VER,25,2,MEDIUM,18,75.300,22.1,0,18.7,-4.2,8.7,-2.5,1,5,4.200,GOOD_PIT,pace drop + clean air
     public String toCsvRow() {
         return String.join(",",
                 driver != null ? driver : "",
@@ -107,15 +214,17 @@ public class PitSuggestionAlert {
                 String.valueOf(position),
                 compound != null ? compound : "",
                 String.valueOf(tyreLife),
-                String.valueOf(totalScore),
-                String.valueOf(paceScore),
+                String.format("%.1f", totalScore),
+                String.format("%.1f", paceScore),
                 String.valueOf(trackStatusScore),
-                String.valueOf(trafficScore),
-                String.valueOf(tireLifePenalty),
-                String.valueOf(urgencyScore),
+                String.format("%.1f", trafficScore),
+                String.format("%.1f", strategyPenalty),
+                String.format("%.1f", urgencyScore),
+                String.format("%.1f", endOfRacePenalty),
                 trackStatus != null ? trackStatus : "",
                 String.valueOf(emergencePosition),
                 String.format("%.3f", gapToPhysicalCar),
+                suggestionLabel != null ? suggestionLabel : "",
                 suggestion != null ? suggestion : ""
         );
     }
@@ -123,10 +232,13 @@ public class PitSuggestionAlert {
     @Override
     public String toString() {
         return String.format(
-                "PIT SUGGESTION | %s Lap %d P%d | %s L%d | Score: %d/100 "
-                        + "[Pace:%d Status:%d Traffic:%d Penalty:%d Urgency:%d] | Emerge P%d (gap=%.1fs) | %s",
+                "PIT SUGGESTION | %s Lap %d P%d | %s L%d | Score: %.1f/100 [%s] "
+                + "[Pace:%.1f Status:%d Traffic:%.1f Penalty:%.1f Urgency:%.1f EoR:%.1f] "
+                + "| Emerge P%d (gap=%.1fs) | %s",
                 driver, lapNumber, position, compound, tyreLife, totalScore,
-                paceScore, trackStatusScore, trafficScore, tireLifePenalty, urgencyScore,
+                suggestionLabel != null ? suggestionLabel : "?",
+                paceScore, trackStatusScore, trafficScore, strategyPenalty,
+                urgencyScore, endOfRacePenalty,
                 emergencePosition, gapToPhysicalCar,
                 suggestion != null ? suggestion : "");
     }
