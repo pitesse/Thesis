@@ -260,10 +260,13 @@ def build_lap_events(session) -> pd.DataFrame:
     # get_weather_data joins the closest weather sample to each lap's timestamp.
     laps_df = _enrich_with_weather(session, laps_df)
 
-    # total scheduled race laps for fuel burn and strategy calculations in flink.
-    # ex: monza 2023 = 51 laps, spa = 44 laps
-    total_laps = getattr(session, 'total_laps', None) or 0
-    laps_df["TotalLaps"] = int(total_laps)
+    # total race laps derived from the highest lap number in the loaded session data.
+    # session.total_laps is unreliable (often None) because fastf1 only populates it
+    # from a specific api endpoint not always requested. max(LapNumber) is always
+    # available after session.load() and equals total laps for completed races.
+    # for red-flagged races it reflects laps actually raced, which is correct for strategy.
+    total_laps = int(all_laps["LapNumber"].max())
+    laps_df["TotalLaps"] = total_laps
 
     laps_df["event_topic"] = TOPIC_LAPS
     return laps_df
