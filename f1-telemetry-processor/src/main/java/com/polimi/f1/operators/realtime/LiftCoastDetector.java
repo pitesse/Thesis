@@ -46,6 +46,12 @@ public class LiftCoastDetector {
     // (monaco tops out at 7th on the tunnel straight) while filtering low-speed acceleration.
     private static final int MIN_GEAR = 6;
 
+    // throttle >= 95% qualifies as full-throttle, allowing for 1-5% sensor noise.
+    private static final int FULL_THROTTLE_MIN = 95;
+
+    // throttle < 5% qualifies as lift-off, ignoring 1-2% pedal sensor noise.
+    private static final int LIFT_THROTTLE_MAX = 5;
+
     // minimum coast duration (ms) between throttle lift-off and brake application.
     // at 4 Hz sampling, timestamps are spaced 250ms apart. a measured gap of 500ms (two samples)
     // could be a normal braking transition. 550ms threshold requires at least 3 samples of coast
@@ -79,7 +85,7 @@ public class LiftCoastDetector {
                 .where(new SimpleCondition<TelemetryEvent>() {
                     @Override
                     public boolean filter(TelemetryEvent e) {
-                        return e.getThrottle() >= 95
+                        return e.getThrottle() >= FULL_THROTTLE_MIN
                                 && e.getSpeed() >= MIN_SPEED
                                 && e.getNGear() >= MIN_GEAR
                                 && e.getBrake() == 0;
@@ -89,8 +95,8 @@ public class LiftCoastDetector {
                 .where(new SimpleCondition<TelemetryEvent>() {
                     @Override
                     public boolean filter(TelemetryEvent e) {
-                        // < 5 ignores 1-2% pedal sensor noise
-                        return e.getThrottle() < 5 && e.getBrake() == 0;
+                        // < LIFT_THROTTLE_MAX ignores 1-2% pedal sensor noise
+                        return e.getThrottle() < LIFT_THROTTLE_MAX && e.getBrake() == 0;
                     }
                 })
                 .followedBy("coast-brake")
@@ -137,27 +143,29 @@ public class LiftCoastDetector {
     // suppresses duplicate lift & coast alerts from the same braking zone.
     // cep with followedBy fires N matches for N consecutive throttle=100 samples that all
     // converge on the same lift+brake event. this function keeps only the first alert per
-    // braking zone by comparing brake timestamps, any alert with the same brakeDate as the
-    // previous one is a duplicate and gets dropped.
+    // braking zone by comparing a composite key of lift and brake timestamps, any alert with
+    // the same liftDate+brakeDate as the previous one is a duplicate and gets dropped.
+    // composite key handles edge cases where different full-throttle start points produce
+    // matches with identical brakeDate but different liftDates via relaxed contiguity.
     static class LiftCoastDedup extends KeyedProcessFunction<String, LiftCoastAlert, LiftCoastAlert> {
 
-        private transient ValueState<String> lastBrakeDate;
+        private transient ValueState<String> lastCompositeKey;
 
         @Override
         public void open(Configuration params) {
-            lastBrakeDate = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("lastBrake", String.class)
+            lastCompositeKey = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("lastLiftBrake", String.class)
             );
         }
 
         @Override
         public void processElement(LiftCoastAlert alert, Context ctx,
                 Collector<LiftCoastAlert> out) throws Exception {
-            String currentBrake = alert.getBrakeDate();
-            String last = lastBrakeDate.value();
-            if (!currentBrake.equals(last)) {
+            String currentKey = alert.getLiftDate() + "|" + alert.getBrakeDate();
+            String last = lastCompositeKey.value();
+            if (!currentKey.equals(last)) {
                 out.collect(alert);
-                lastBrakeDate.update(currentBrake);
+                lastCompositeKey.update(currentKey);
             }
         }
     }

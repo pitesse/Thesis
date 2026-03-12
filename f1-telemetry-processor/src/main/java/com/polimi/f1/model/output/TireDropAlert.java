@@ -89,9 +89,9 @@ public class TireDropAlert {
     // ml-ready csv row, ex: VER,25,SOFT,18,83.421,81.200,2.221
     public String toCsvRow() {
         return String.join(",",
-                driver,
+                driver != null ? driver : "",
                 String.valueOf(lapNumber),
-                compound,
+                compound != null ? compound : "",
                 String.valueOf(tyreLife),
                 String.format("%.3f", rollingAvg),
                 String.format("%.3f", stintBest),

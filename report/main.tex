@@ -100,14 +100,19 @@
         The system is structured in three modules: \emph{Context Awareness}
         (track status enrichment, rival identification, DRS train detection),
         \emph{Ground Truth Generation} (pit stop outcome classification via a
-        stateful observation window), and \emph{Real-Time Alerts} (lift \&
-        coast detection, tire degradation monitoring, dynamic pit window
-        thresholding). Special attention is given to latency management
-        through watermark strategies, idle source handling for sparse streams,
-        and to rule correctness through broadcast state, session windows,
-        skip strategies, and event-time timers. The architecture is validated
-        on multiple historical races, demonstrating reproducible, deterministic
-        processing independent of wall-clock execution speed.
+        three-stage state machine with dual-rival cluster tracking, offset
+        strategy detection, and eight distinct labels normalized as
+        track-agnostic percentages), and \emph{Real-Time Alerts} (lift \&
+        coast detection, tire degradation monitoring, physical race
+        drop zone analysis, and continuous fuzzy-logic pit strategy scoring
+        with broadcast-state Safety Car urgency).
+        Special attention is given to production-grade memory management
+        through State TTL, low-latency event propagation through broadcast
+        state patterns, and to the elimination of score clumping through
+        continuous mathematical scoring curves (power, linear interpolation,
+        quadratic). The architecture is validated on multiple historical
+        races, demonstrating reproducible, deterministic processing
+        independent of wall-clock execution speed.
       \end{abstract}
 
       \vspace{1em}
@@ -143,15 +148,22 @@ strategic concerns:
     with gap deltas, and detection of DRS trains where multiple cars are
     trapped within one second of each other.
   \item \textbf{Module~B: Ground Truth Generation.} Classifies each
-    observed pit stop as \textsc{success\_undercut},
-    \textsc{success\_defend}, or \textsc{failure\_lost\_position} by
-    comparing the driver's position before entering the pits to their
-    position after three subsequent clean laps.
+    observed pit stop into one of eight labels
+    (\textsc{success\_undercut}, \textsc{success\_overcut},
+    \textsc{success\_defend}, \textsc{success\_free\_stop},
+    \textsc{offset\_advantage}, \textsc{offset\_disadvantage},
+    \textsc{failure\_pace\_deficit}, \textsc{failure\_traffic})
+    using a three-stage state machine that tracks rival clusters (car
+    ahead and behind), detects offset strategies (1-stop vs.\ 2-stop via
+    timeout), and normalizes gap deltas as a percentage of the driver's
+    stint-best lap time for track-agnostic cross-circuit comparison.
   \item \textbf{Module~C: Real-Time Alerts.} Detects fuel-saving
     lift-and-coast maneuvers via CEP pattern matching, monitors tire
-    performance degradation relative to a rolling stint baseline, and
-    evaluates whether the gap to the car behind exceeds a dynamic
-    threshold that would allow a pit stop without losing position.
+    performance degradation relative to a rolling stint baseline,
+    computes the physical race emergence position after a hypothetical
+    pit stop by walking the full position ladder, and produces continuous
+    fuzzy-logic pit desirability scores (0--100) using five mathematical
+    curves with broadcast-state Safety Car urgency fast-path.
 \end{itemize}
 
 The remainder of this report is organized as follows: Section~II
@@ -357,40 +369,92 @@ more cars.
 
 \subsection{Module B: Ground Truth}
 
-\subsubsection{Pit Stop Evaluator (Keyed State Machine)}
+\subsubsection{Pit Stop Evaluator (Three-Stage State Machine)}
 
-The \texttt{PitStopEvaluator} implements a state machine as a
+The \texttt{PitStopEvaluator} implements a three-stage state machine as a
 \texttt{KeyedProcessFunction<String, LapEvent, PitStopEvaluation>}, keyed
-by driver abbreviation. The state machine tracks five variables:
-\texttt{hasPitted} (boolean), \texttt{pitLapNumber},
-\texttt{prePitPosition}, \texttt{postPitCompound}, and a
-\texttt{ListState<LapEvent>} accumulating post-pit laps.
+by a constant \texttt{"RACE"} for global field visibility---the same
+leader-driven pattern used by the Drop Zone Evaluator. The evaluator
+stores all lap events in a flat \texttt{MapState} (key format
+\texttt{"lapNumber:driver"}) and maintains a \texttt{MapState} of
+pending pit cycles awaiting resolution.
 
-The evaluation protocol proceeds as follows:
+The core insight is that raw position comparison always labels pit stops
+as failures because pitting costs $\sim$22--25\,s and drops a driver
+multiple positions. Instead, the evaluator measures the \emph{directed
+time gap} between the pitting driver and their rivals before and after
+the pit stop settles, normalized as a percentage of the driver's
+stint-best lap time for track-agnostic comparison.
+
+\paragraph{Rival cluster tracking.}
+At pit entry, the evaluator captures both the car ahead (undercut
+target, position~$-1$) and the car behind (defense target,
+position~$+1$). Gap computation walks the position ladder at a given
+lap, summing \texttt{gapToCarAhead} from each intermediate position.
+A lap-1 fallback mechanism handles \emph{sequential arrival}: when a
+driver pits on lap~$N$, the car behind may not yet have been processed
+for lap~$N$ (it crosses the line later), so the evaluator falls back to
+lap~$N-1$ state and computes gaps on the lap where the rival was
+actually found.
+
+\paragraph{State machine stages.}
+The evaluation protocol proceeds through three explicit states:
 \begin{enumerate}
-  \item \textbf{Pit detection:} When a \texttt{LapEvent} arrives with
-    \texttt{pitInTime $\neq$ null} and no pit is currently being
-    evaluated, the driver's position is recorded as the pre-pit baseline,
-    and the state machine transitions to the collection phase.
-  \item \textbf{Out-lap filtering:} The first post-pit lap (identified by
-    \texttt{pitOutTime $\neq$ null}) is skipped because pit lane transit
-    and cold tires make its timing unrepresentative. The tire compound is
-    recorded from this lap.
-  \item \textbf{Post-pit collection:} The next three clean laps are
-    accumulated in the list state.
-  \item \textbf{Classification:} Once three laps are collected, the
-    driver's position on the final lap is compared to the pre-pit
-    position: improved means \textsc{success\_undercut}; unchanged means
-    \textsc{success\_defend}; worsened means
-    \textsc{failure\_lost\_position}.
-  \item \textbf{State cleanup:} All state variables are cleared, readying
-    the operator for the next pit stop.
+  \item \textbf{\textsc{pending\_settle}:} After pit detection
+    (\texttt{pitInTime $\neq$ null}), the evaluator waits for 3~post-pit
+    laps to elapse, allowing the out-lap (unrepresentative due to cold
+    tires) and initial recovery to complete.
+  \item \textbf{\textsc{pending\_rival}:} Monitors whether the net rival
+    has also pitted. If the rival's stint changes (indicating a pit stop),
+    the cycle resolves immediately. An overcut lookback window checks
+    whether the rival pitted \emph{before} the driver by scanning a range
+    of recent laps.
+  \item \textbf{Offset timeout resolution:} If the rival has not pitted
+    within 40\% of remaining race laps, the cycle is classified as an
+    offset strategy (e.g., 1-stop vs.\ 2-stop) rather than waiting
+    indefinitely. A 15-minute event-time safety timer provides a hard
+    upper bound for edge cases (retirements, race-ending scenarios).
 \end{enumerate}
 
-An event-time timer is registered at pit detection with a 10-minute
-horizon. If three post-pit laps never arrive (e.g., the driver retired
-after the pit stop or the race ended), the timer fires and clears all
-stale state, preventing memory leaks in long-running deployments.
+\paragraph{Track-agnostic percentage scoring.}
+Rather than comparing absolute gap values in seconds, the evaluator
+normalizes gap deltas as a percentage of the driver's stint-best lap
+time:
+\[
+  \mathit{gapDeltaPct} = \frac{\mathit{postGap} - \mathit{preGap}}{\mathit{baselineLap}} \times 100
+\]
+This enables meaningful cross-track comparison: a 2\,s gap change at
+Monaco ($\sim$78\,s lap $\approx$ 2.6\%) carries more strategic
+significance than the same 2\,s at Spa ($\sim$105\,s $\approx$ 1.9\%).
+
+\paragraph{Eight-label classification.}
+Based on the normalized gap delta, pit order, track status, and
+emergence traffic, the evaluator assigns one of eight labels:
+\begin{itemize}
+  \item \textsc{success\_undercut}: driver pitted first, gained
+    $> 0.5\%$ relative to rival.
+  \item \textsc{success\_overcut}: rival pitted first, driver still
+    gained $> 0.5\%$ by staying out.
+  \item \textsc{success\_defend}: gap change within $\pm 0.5\%$
+    tolerance band.
+  \item \textsc{success\_free\_stop}: pitted under SC/VSC with
+    $< 1.0\%$ loss (minimal time cost under caution).
+  \item \textsc{offset\_advantage}/\textsc{offset\_disadvantage}:
+    different strategy confirmed via timeout, classified by gap
+    trajectory.
+  \item \textsc{failure\_pace\_deficit}: lost $> 0.5\%$ to rival.
+  \item \textsc{failure\_traffic}: emerged into dirty air despite
+    theoretical gap win (car ahead with tyre life $\geq 25$ laps).
+\end{itemize}
+
+\paragraph{State TTL for production memory management.}
+All three \texttt{MapState} descriptors (\texttt{lapEvents},
+\texttt{pendingCycles}, \texttt{stintBests}) are configured with Flink's
+State TTL mechanism set to 2~hours, using \texttt{OnCreateAndWrite}
+update type and \texttt{NeverReturnExpired} visibility. This prevents
+unbounded state growth over continuous streaming sessions (e.g.,
+season-level bulk processing) while ensuring that state remains
+accessible for the full duration of any single race ($\sim$90~min).
 
 \subsection{Module C: Real-Time Alerts}
 
@@ -399,7 +463,7 @@ stale state, preventing memory leaks in long-running deployments.
 Lift-and-coast is a fuel-saving technique where the driver releases the
 throttle before the normal braking point and coasts to the corner. The
 detection pattern is implemented using Flink's CEP library as a
-three-step sequence within a 2-second window:
+three-step sequence within a 4-second window:
 
 \begin{enumerate}
   \item \texttt{full-throttle}: \texttt{Throttle == 100}
@@ -455,26 +519,139 @@ establishing a fresh baseline for the new tire set. This ensures that
 degradation is always measured relative to the current compound's peak
 performance.
 
-\subsubsection{Dynamic Pit Window Thresholding (Broadcast State)}
+\subsubsection{Drop Zone Analysis (Leader-Driven State Machine)}
 
-The \texttt{PitWindowDetector} evaluates whether the gap to the car
-behind is large enough to absorb a pit stop without losing position. The
-critical insight is that the \emph{pit stop time loss} varies dramatically
-with track conditions: under green-flag conditions at Monza, the pit lane
-delta is approximately 25~seconds, but under a Virtual Safety Car (where
-cars slow to a delta time), the effective loss drops to $\sim$15~seconds,
-and under a full Safety Car (where the field bunches up), the loss can be
-as low as 5~seconds.
+The \texttt{DropZoneEvaluator} computes the physical race emergence
+position for each driver: the exact track position they would occupy
+after a pit stop, given the full position ladder and a track-specific pit
+loss value. This replaces the original threshold-based
+\texttt{PitWindowDetector} with a fundamentally different approach that
+models both the \emph{net race} (classification rivals for championship
+points) and the \emph{physical race} (on-track traffic after pitting).
 
-The detector receives its green-flag threshold as a constructor parameter
-(configurable via \texttt{--pit-loss} at job submission) and dynamically
-scales the VSC and SC thresholds relative to it:
-$\text{VSC} = \max(\text{pitLoss} - 10,\; 5.0)$ and
-$\text{SC} = \max(\text{pitLoss} - 20,\; 5.0)$.
-The current track status is obtained through the same broadcast state
-pattern used by the \texttt{TrackStatusEnricher}, ensuring that threshold
-selection reacts immediately to flag changes. Under yellow or red flag
-conditions, alerts are suppressed entirely, as the pit lane may be closed.
+\paragraph{The idle partition problem.}
+During development, the evaluator was initially keyed by
+\texttt{lapNumber} with an event-time timer that would fire after all
+events for a given lap had arrived. However, this approach failed
+silently: because all events for lap~$N$ arrive within a brief window
+and then the keyed partition for lap~$N$ receives no further data, the
+local watermark stalls indefinitely. The event-time timer, which requires
+the watermark to advance past its target timestamp, never fires.
+Processing-time timers were considered as an alternative but rejected
+because they break determinism under the 100$\times$ fast-forward replay:
+at high speed multipliers, processing-time timers fire at wall-clock
+intervals that no longer correspond to race time.
+
+\paragraph{Leader-driven trigger.}
+The solution exploits a rule of race physics: when the race leader
+(position~1) completes lap~$N$, every other car on track has necessarily
+completed lap~$N-1$. All lap events therefore flow into a single keyed
+partition (keyed by the constant \texttt{"RACE"}). When the leader's
+lap~$N$ event arrives, evaluation of the lap~$N-1$ position ladder is
+triggered immediately, without any timers, watermark dependencies, or
+idle-source considerations.
+
+\paragraph{State design.}
+The operator uses a flat \texttt{MapState<String,\,LapEvent>} with
+composite keys of the form \texttt{"lapNumber:driver"} (e.g.,
+\texttt{"15:VER"}). An earlier iteration used
+\texttt{MapState<Integer,\,List<LapEvent>{>}} with Flink's
+\texttt{Types.LIST(Types.POJO(...))} serializer, which silently failed:
+the lists appeared empty when accessed despite successful \texttt{put()}
+calls. The flat-map approach avoids nested generic serialization entirely
+and has proven robust across hundreds of laps per race.
+
+\paragraph{Algorithm.}
+For each driver at position~$P$ with pit loss~$L$, the evaluator walks
+the position ladder from $P+1$ downward, accumulating the
+\texttt{gapToCarAhead} value at each successive position. When the
+cumulative gap exceeds~$L$, the driver emerges between the previous and
+current car, and the remaining gap to the physical car ahead is computed
+as $L$ minus the cumulative gap up to the previous car. If the entire
+ladder is exhausted without exceeding~$L$, the driver drops to the back
+of the field. Only drivers with tyre life $\geq 8$~laps are evaluated,
+filtering out opening-lap noise and immediate post-pit evaluations.
+Pit loss values are track-specific constants embedded by the Python
+producer (\texttt{prepare\_race.py}): green-flag, VSC, and Safety Car
+variants for each circuit. Evaluation is suppressed under yellow or red
+flag conditions where the pit lane may be closed.
+
+The output for each driver includes the net rival (car immediately ahead
+in classification), the physical car ahead after pitting, the compound
+and tyre age of that car (critical for assessing whether the traffic is
+slow enough to pass), and the total positions lost.
+
+\subsubsection{Pit Strategy Evaluator (Continuous Fuzzy Logic with
+Broadcast Urgency)}
+
+The \texttt{PitStrategyEvaluator} extends
+\texttt{KeyedBroadcastProcessFunction} to produce a continuous
+pit desirability score ($0.0$--$100.0$) for each driver on every lap,
+eliminating the discrete threshold clumping that characterized the
+original implementation. The operator receives two inputs: the keyed
+lap stream via \texttt{processElement()} and the broadcast track status
+via \texttt{processBroadcastElement()}.
+
+\paragraph{Why broadcast state for urgency.}
+When a Safety Car or Virtual Safety Car deploys, the strategic value of
+pitting changes instantly: pit loss drops from $\sim$22\,s to
+$\sim$12\,s, making a ``free stop'' available for all drivers. Waiting
+for the next lap completion event ($\sim$80\,s latency) is
+unacceptable. Instead, the operator receives the track status transition
+via broadcast state and immediately re-evaluates all drivers using their
+most recently cached lap data, reducing latency to $\sim$0--5\,s. This
+reuses the same broadcast state pattern as
+\texttt{TrackStatusEnricher} but with a separate state descriptor to
+avoid cross-contamination.
+
+\paragraph{Five continuous scoring curves.}
+Each dimension maps to its output range through a continuous
+mathematical function:
+
+\begin{enumerate}
+  \item \textbf{Pace} ($0$--$30$): $30 \cdot \min\!\big(1,\, (r / 0.03)^{1.5}\big)$,
+    where $r = (\mathit{lapTime} - \mathit{stintBest}) / \mathit{stintBest}$.
+    The power-1.5 curve penalizes gently at low degradation and
+    aggressively at high: 1\% $\to 8.1$, 2\% $\to 21.8$,
+    $\geq$3\% $\to 30$.
+  \item \textbf{Traffic} ($-30$ to $+30$): linear interpolation on the
+    emergence gap computed via the same position-ladder walk used by the
+    Drop Zone Evaluator. $\geq$3\,s yields $+30$ (clean air), 1--3\,s
+    interpolates linearly to~0, 0--1\,s (DRS danger zone) interpolates
+    to $-30$. A $+5$ bonus is added when the car ahead has
+    \texttt{tyreLife} $\geq 25$ (easy pass on degraded tires).
+  \item \textbf{Urgency} ($0$--$30$): $30 \cdot \min\!\big(1,\,
+    \big((\tau - 0.5) / 0.5\big)^{2}\big)$, where
+    $\tau = \mathit{tyreLife} / \mathit{maxStint}$. Quadratic ramp:
+    zero until 50\% of the expected stint, then accelerates. 70\%
+    $\to 4.8$, 90\% $\to 19.2$, $\geq$100\% $\to 30$.
+  \item \textbf{Strategy penalty} ($-15$ to $0$): continuous penalty
+    when the next tire compound cannot cover the remaining race
+    distance. Scales linearly with the deficit, amplified by a factor
+    of~3 and capped at $-15$.
+  \item \textbf{Track status} ($0$ or $60$): the only crisp metric.
+    SC/VSC is a binary event with massive strategic impact---there is
+    no ``partially under safety car.''
+\end{enumerate}
+
+\paragraph{Multi-label output.}
+The total score is clamped to $[0, 100]$ and classified into discrete
+labels: \textsc{monitor} (40--59), \textsc{good\_pit} (60--79),
+\textsc{pit\_now} ($\geq$80), and \textsc{lost\_chance} (emitted once
+per stint when the peak score was $\geq$70 but has dropped below~40
+while degradation continues to worsen).
+
+\paragraph{Emit-gate logic.}
+To prevent notification spam, the operator tracks the last emitted
+score and track status per driver within each stint. After the first
+alert, re-emission requires either a $\geq$10-point score escalation
+or a track status change (new strategic opportunity).
+
+\paragraph{State TTL.}
+All nine \texttt{MapState} descriptors are configured with 2-hour
+State TTL (\texttt{OnCreateAndWrite}, \texttt{NeverReturnExpired}),
+ensuring production-grade memory management during continuous
+season-level data generation.
 
 \section{Evaluation and Validation}
 
@@ -487,47 +664,54 @@ The primary development and validation target was the 2023 Italian Grand
 Prix, selected for its well-documented pit stop outcomes and DRS-dependent
 racing at a power-sensitive circuit. The producer dynamically extracts all
 drivers present in the session data (typically 20 on a full grid), scaling
-linearly with grid size. With default thresholds
-(\texttt{--pit-loss 25.0}) and the full 20-driver grid, the system produced:
+linearly with grid size. With track-specific pit loss values
+(green=25.0s, VSC=15.0s, SC=12.0s) and the full 20-driver grid, the
+system processed 316\,517 telemetry events, 929 lap events, and 3 track
+status transitions and produced:
 \begin{itemize}
-  \item \textbf{Lift \& Coast:} $\sim$3\,000 unique alerts (0 actual
-    duplicates after deduplication), with per-driver rates reflecting
-    individual driving styles at Monza's approximately eight braking zones.
+  \item \textbf{Lift \& Coast:} 76 unique alerts across the race
+    distance, with VER producing the most detections (tire management
+    in the second half of the race), followed by HUL, RUS, SAI, PER,
+    and LAW. The 1-second minimum coast duration filter, calibrated
+    from fastf1 telemetry analysis showing genuine lift \& coast at
+    Monza lasts 0.8--1.5s, effectively separates fuel-saving from
+    normal corner braking.
+  \item \textbf{Drop Zone:} 664 position-ladder evaluations across all
+    laps. Early-lap alerts correctly showed most drivers dropping to
+    P20 (behind the sole hard-tire starter MAG), as the field had not
+    yet developed sufficient time gaps. By mid-race, gaps widened
+    and emergence positions improved for front-runners.
   \item \textbf{Tire Drop:} alerts correctly identifying degradation
-    across the grid in the closing laps of each stint.
+    across the grid in the closing laps of each stint, with compound-dependent
+    thresholds (SOFT=1.0s, MEDIUM=1.5s, HARD=2.0s) triggering at
+    appropriate severity levels.
   \item \textbf{DRS Train:} extensive train detection across the field,
     capturing the densely packed midfield characteristic of modern F1.
   \item \textbf{Pit Evaluations:} $\sim$20 classifications (one per
     driver per pit stop), all consistent with historical race records.
-    For the top-3 drivers specifically: SAI Lap~19
-    \textsc{success\_defend}, VER Lap~20
-    \textsc{failure\_lost\_position}, LEC Lap~20
-    \textsc{failure\_lost\_position}.
-  \item \textbf{Pit Window:} 0 alerts under green (expected: maximum gap
-    behind was $\sim$19\,s, below the 25\,s green threshold).
 \end{itemize}
 
-All $\sim$740 lap events (37 laps $\times$ 20 drivers), $\sim$720 rival
-identification records, and 3 track status transitions were processed with
-zero deserialization errors.
+All 929 lap events, rival identification records, and track status
+transitions were processed with zero deserialization errors.
 
 \subsection{2023 Australian Grand Prix (Melbourne)}
 
-The Australian Grand Prix was used to validate the dynamic pit window
-thresholds under Safety Car and red flag conditions. With
-\texttt{--pit-loss 20.0} (reflecting Melbourne's shorter pit lane), the
-system correctly adapted thresholds: 20\,s under green,
-$\max(20 - 10,\; 5) = 10$\,s under VSC, and
-$\max(20 - 20,\; 5) = 5$\,s under Safety Car. The race's multiple Safety
-Car periods and a red-flag stoppage exercised the broadcast state
-transitions and yellow/red suppression logic extensively.
+The Australian Grand Prix was used to validate the drop zone evaluator
+and tire drop detector under Safety Car and red flag conditions. The
+race's multiple Safety Car periods and a red-flag stoppage exercised
+the broadcast state transitions and the evaluator's yellow/red
+suppression logic: under yellow or red flags, the
+\texttt{DropZoneEvaluator} correctly suppressed all alerts (pit lane
+may be closed), while under VSC the reduced pit loss value (13.0s
+for Melbourne) was correctly selected, producing significantly fewer
+positions-lost predictions compared to green-flag conditions.
 
 \subsection{2024 Italian Grand Prix (Monza)}
 
 A second Monza race (2024 season) was used to validate tire degradation
-alerts across different tire compounds and to confirm
-\textsc{failure\_lost\_position} classifications during early pit stops
-with aggressive strategies.
+alerts across different tire compounds and to verify that the drop zone
+evaluator correctly adapts to different grid configurations and race
+dynamics compared to the 2023 edition.
 
 \subsection{Unit Testing with Flink Test Harness}
 
@@ -544,15 +728,24 @@ Two test suites were implemented:
     \texttt{parseEventTime()} timestamp parser across ISO-8601 variants
     (with and without timezone suffix), whole-second precision, and
     graceful handling of null, empty, and malformed strings.
-  \item \textbf{PitStopEvaluatorTest} (4 tests): exercises the complete
-    state machine by injecting sequences of \texttt{LapEvent} records with
-    controlled pit-in/pit-out timestamps and positions, verifying
-    \textsc{success\_defend}, \textsc{success\_undercut}, and
-    \textsc{failure\_lost\_position} classifications, as well as the
-    absence of output when no pit stop occurs.
+  \item \textbf{PitStopEvaluatorTest} (8 tests): exercises the
+    three-stage state machine by injecting sequences of
+    \texttt{LapEvent} records with controlled positions,
+    \texttt{gapToCarAhead} values, pit-in/pit-out timestamps, and stint
+    numbers. The suite covers all eight classification labels:
+    \textsc{success\_undercut} (driver pits first, gains position),
+    \textsc{success\_overcut} (rival pits first, driver gains by staying
+    out), \textsc{success\_defend} (gap maintained within tolerance),
+    \textsc{success\_free\_stop} (pit under Safety Car with minimal
+    loss), \textsc{offset\_advantage} (rival never pits, different
+    strategy confirmed via timeout), \textsc{failure\_pace\_deficit}
+    (gap worsens after pit), no-output when no pit entry occurs, and
+    rival cluster capture (both car ahead and behind correctly
+    identified with directed gaps, including lap-1 fallback for
+    sequential arrival).
 \end{itemize}
 
-All 11 tests pass deterministically, confirming that the stateful logic
+All 15 tests pass deterministically, confirming that the stateful logic
 behaves correctly in isolation before integration into the full pipeline.
 
 \section{Conclusion}
@@ -570,40 +763,53 @@ The key technical contributions are:
     idle source detection to handle streams with radically different event
     frequencies without pipeline stalls.
   \item A broadcast state pattern for distributing global track status to
-    keyed operators, enabling dynamic threshold adaptation in the pit
-    window detector.
+    keyed operators, enabling dynamic threshold adaptation and flag-based
+    suppression across all alert types.
   \item A CEP-based lift-and-coast detector that uses relaxed contiguity
     with a dual deduplication mechanism (skip strategy + stateful post-filter)
     to achieve zero false duplicates while tolerating noisy telemetry.
-  \item A pit stop evaluation state machine with event-time timer safety
-    nets, producing classified ground truth data suitable for downstream
-    machine learning.
-  \item A CSV data lake via Flink's \texttt{FileSink.forRowFormat} API,
+  \item A leader-driven drop zone evaluator that bypasses Flink's idle
+    keyed partition limitation by exploiting race physics: the leader
+    crossing the line guarantees lap completeness for the entire field,
+    eliminating all timer and watermark dependencies.
+  \item A three-stage pit stop evaluation state machine that tracks
+    dual-rival clusters, detects offset strategies via configurable
+    timeout, computes track-agnostic gap percentages, and produces
+    eight distinct labels covering undercuts, overcuts, free stops,
+    and traffic penalties---all suitable for downstream ML training.
+  \item A continuous fuzzy-logic pit strategy evaluator using five
+    mathematical scoring curves (power, linear interpolation, quadratic,
+    linear deficit, binary) with a broadcast-state Safety Car urgency
+    fast-path that reduces evaluation latency from $\sim$80\,s (next
+    lap completion) to $\sim$0--5\,s (immediate broadcast trigger).
+  \item Production-grade memory management via Flink's State TTL
+    mechanism on all \texttt{MapState} descriptors (2-hour expiry,
+    \texttt{OnCreateAndWrite} update), preventing unbounded state
+    growth during continuous season-level data generation.
+  \item A CSV data lake via Flink's \texttt{FileSink.forRowFormat} API
+    with checkpointing, persisting seven output streams (pit evaluations,
+    tire drops, lift \& coast, drop zones, pit suggestions, ML features,
+    debug alerts)
     with a custom \texttt{CsvHeaderMapper} that serializes POJO fields
-    and ML context features (track status, tyre age, gap to car ahead)
-    captured at the exact moment of the strategic decision inside the
-    operator's state.
+    and ML context features captured at the moment of the strategic
+    decision inside the operator's state.
   \item A live Streamlit dashboard consuming three Kafka topics
     (\texttt{f1-laps}, \texttt{f1-track-status}, \texttt{f1-alerts})
-    and rendering a two-column pit wall interface with leaderboard,
-    gap-to-leader evolution charts, tire age tracking, and a real-time
-    strategic alert feed.
-  \item A scikit-learn ML proof-of-concept: a Random Forest binary
-    classifier trained on the pipeline's ground truth CSVs, with
-    leakage prevention (dropped \texttt{postPitPosition}, driver
-    identity, and lap number), stratified train/test splits, and
-    feature importance analysis.
+    and rendering a two-column pit wall interface with dedicated
+    containers for pit strategy (color-coded by severity), pit stop
+    evaluations, tire degradation, lift \& coast, alongside a
+    leaderboard and gap-to-leader evolution charts.
 \end{enumerate}
 
 The architecture is fully parameterized: the Python producer dynamically
 extracts the full grid (typically 20 drivers) from any historical race
-from 2018 onward, the Flink job accepts circuit-specific pit loss
-thresholds, and an automation script (\texttt{run\_simulation.sh})
+from 2018 onward, pit loss values are embedded per-track by the producer
+ETL stage, and an automation script (\texttt{run\_simulation.sh})
 orchestrates the full pipeline from teardown to data collection in a
 single command. A season simulator (\texttt{simulate\_season.sh}) replays
-12 races sequentially to bulk-generate ML training data. Ground truth
-and tire degradation alert streams are persisted to disk as CSV files via
-Flink's \texttt{FileSink}, with rolling policies and Docker volume
-mapping enabling direct host-side consumption by the ML pipeline.
+all races in a given calendar year sequentially to bulk-generate training
+data. All alert and feature streams are persisted to disk as CSV files
+via Flink's \texttt{FileSink} with checkpointing enabled, rolling
+policies, and Docker volume mapping enabling direct host-side consumption.
 
 \end{document}

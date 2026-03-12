@@ -215,12 +215,19 @@ public class F1StreamingJob {
                 .process(new DropZoneEvaluator())
                 .name("Drop Zone Analysis");
 
-        // c4: pit strategy evaluation (fuzzy-logic pit desirability scoring)
-        // computes a 0-100 score per driver per lap based on pace degradation,
-        // track status, traffic after pit, and compound feasibility.
+        // c4: pit strategy evaluation (continuous fuzzy-logic pit desirability scoring)
+        // computes a 0.0-100.0 continuous score per driver per lap based on pace degradation
+        // (power 1.5 curve), traffic (linear interpolation), urgency (quadratic ramp),
+        // strategy penalty (compound feasibility), and track status (crisp +60 for SC/VSC).
+        // uses broadcast state for SC/VSC urgency: when safety car deploys, immediately
+        // re-evaluates all drivers without waiting for next lap completion (~80s latency).
         // keyed by "RACE" for global position-ladder visibility (same as drop zone).
+        BroadcastStream<TrackStatusEvent> broadcastForStrategy
+                = trackStatusWithWatermarks.broadcast(PitStrategyEvaluator.TRACK_STATUS_STATE);
+
         DataStream<PitSuggestionAlert> pitSuggestions = lapWithWatermarks
                 .keyBy(e -> "RACE")
+                .connect(broadcastForStrategy)
                 .process(new PitStrategyEvaluator())
                 .name("Pit Strategy Evaluation");
 

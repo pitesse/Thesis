@@ -29,15 +29,25 @@ TOPIC_ALERTS = "f1-alerts"
 # max laps to keep in the gap evolution chart history
 GAP_HISTORY_MAX_LAPS = 40
 
-# track status code -> human readable label and color
+# max alerts to keep per category in session state
+MAX_ALERTS_PER_CATEGORY = 20
+
+# track status code -> human readable label and color (fia standard codes)
 TRACK_STATUS_MAP = {
     "1": ("Green", "#00ff00"),
     "2": ("Yellow", "#ffff00"),
-    "3": ("SC (Safety Car)", "#ff8c00"),
-    "4": ("Red", "#ff0000"),
-    "5": ("VSC (Virtual Safety Car)", "#ff8c00"),
-    "6": ("VSC Ending", "#bfff00"),
-    "7": ("SC Ending", "#bfff00"),
+    "4": ("SC (Safety Car)", "#ff8c00"),
+    "5": ("Red Flag", "#ff0000"),
+    "6": ("VSC (Virtual Safety Car)", "#ff8c00"),
+    "7": ("VSC Ending", "#bfff00"),
+}
+
+# color map for pit suggestion labels
+SUGGESTION_LABEL_COLORS = {
+    "MONITOR": "#f0ad4e",  # amber/yellow
+    "GOOD_PIT": "#5cb85c",  # green
+    "PIT_NOW": "#d9534f",  # red
+    "LOST_CHANCE": "#888888",  # gray
 }
 
 
@@ -55,10 +65,7 @@ def format_lap_time(seconds):
 
 
 def create_consumer():
-    """create a kafka consumer subscribed to lap, track status, and flink alert topics.
-    uses a short poll timeout (200ms) so the streamlit loop stays responsive.
-    consumer_timeout_ms prevents blocking indefinitely when no messages arrive.
-    """
+    """create a kafka consumer subscribed to lap, track status, and flink alert topics."""
     return KafkaConsumer(
         TOPIC_LAPS,
         TOPIC_TRACK_STATUS,
@@ -80,6 +87,19 @@ def try_connect():
         return None
 
 
+def style_suggestion_label(val):
+    """apply background color to suggestion label cells."""
+    color = SUGGESTION_LABEL_COLORS.get(val, "transparent")
+    return f"background-color: {color}; color: white; font-weight: bold; border-radius: 4px; padding: 2px 6px;"
+
+
+def bound_alerts(alert_list):
+    """keep only the most recent MAX_ALERTS_PER_CATEGORY entries."""
+    if len(alert_list) > MAX_ALERTS_PER_CATEGORY:
+        return alert_list[-MAX_ALERTS_PER_CATEGORY:]
+    return alert_list
+
+
 # session state: persist data across streamlit reruns
 if "leaderboard" not in st.session_state:
     st.session_state.leaderboard = {}
@@ -87,13 +107,22 @@ if "track_status" not in st.session_state:
     st.session_state.track_status = ("Green", "#00ff00")
 if "track_message" not in st.session_state:
     st.session_state.track_message = "Waiting for data..."
-if "alerts" not in st.session_state:
-    st.session_state.alerts = []
+
+# per-category alert lists (bounded to MAX_ALERTS_PER_CATEGORY each)
+if "pit_strategy_alerts" not in st.session_state:
+    st.session_state.pit_strategy_alerts = []
+if "tire_drop_alerts" not in st.session_state:
+    st.session_state.tire_drop_alerts = []
+if "lift_coast_alerts" not in st.session_state:
+    st.session_state.lift_coast_alerts = []
+if "pit_eval_alerts" not in st.session_state:
+    st.session_state.pit_eval_alerts = []
+if "drop_zone_alerts" not in st.session_state:
+    st.session_state.drop_zone_alerts = []
+
 # gap history: {driver: {lap_number: cumulative_gap_seconds}}
-# cumulative gap is computed from race time relative to the leader each lap
 if "gap_history" not in st.session_state:
     st.session_state.gap_history = {}
-# raw lap data keyed by driver, used for computing gaps per lap
 if "lap_race_times" not in st.session_state:
     st.session_state.lap_race_times = {}
 
@@ -101,22 +130,36 @@ if "lap_race_times" not in st.session_state:
 status_placeholder = st.empty()
 st.divider()
 
-# two-column layout: leaderboard + alerts on left, charts on right
+# main layout: two columns
 col_left, col_right = st.columns([1, 1])
 
 with col_left:
     st.subheader("Leaderboard")
     leaderboard_placeholder = st.empty()
+
     st.divider()
-    st.subheader("Live Strategic Alerts")
-    alerts_placeholder = st.empty()
+    st.subheader("Pit Strategy")
+    pit_strategy_placeholder = st.empty()
+
+    st.divider()
+    st.subheader("Pit Stop Evaluations")
+    pit_eval_placeholder = st.empty()
 
 with col_right:
     st.subheader("Gap to Leader Evolution")
     gap_chart_placeholder = st.empty()
+
     st.divider()
     st.subheader("Tire Age Tracker")
     tire_chart_placeholder = st.empty()
+
+    st.divider()
+    st.subheader("Tire Degradation")
+    tire_drop_placeholder = st.empty()
+
+    st.divider()
+    st.subheader("Lift & Coast")
+    lift_coast_placeholder = st.empty()
 
 # connection status
 conn_placeholder = st.sidebar.empty()
@@ -131,14 +174,11 @@ if consumer is None:
 
 conn_placeholder.success("Connected to Kafka")
 
-# main polling loop: continuously fetch new messages and update the ui.
-# streamlit reruns the entire script on each interaction, but the while True
-# loop keeps it alive for streaming updates between interactions.
+# main polling loop
 while True:
     try:
-        messages = consumer.poll(timeout_ms=500, max_records=100) # type: ignore
+        messages = consumer.poll(timeout_ms=500, max_records=100)
     except Exception:
-        # if consumer disconnects, try to reconnect
         time.sleep(2)
         consumer = try_connect()
         if consumer is None:
@@ -172,8 +212,8 @@ while True:
                         "Driver": driver,
                         "Lap": lap_num,
                         "Lap Time": format_lap_time(msg.get("LapTime")),
-                        "Compound": msg.get("Compound", "—"),
-                        "Tyre Life": tyre_life if tyre_life else "—",
+                        "Compound": msg.get("Compound", "---"),
+                        "Tyre Life": tyre_life if tyre_life else "---",
                         "Gap Ahead": (
                             f"+{msg['GapToCarAhead']:.3f}s"
                             if msg.get("GapToCarAhead") is not None
@@ -181,11 +221,7 @@ while True:
                         ),
                     }
 
-                    # track cumulative gap to leader for the evolution chart.
-                    # the producer sends GapToCarAhead (gap to the car immediately ahead),
-                    # so we accumulate these per-lap to build a relative picture.
-                    # approach: store each driver's position and gap-to-car-ahead per lap,
-                    # then reconstruct cumulative gap to P1 from sorted positions.
+                    # track cumulative gap to leader for the evolution chart
                     if lap_num is not None:
                         if lap_num not in st.session_state.lap_race_times:
                             st.session_state.lap_race_times[lap_num] = {}
@@ -194,9 +230,7 @@ while True:
                             "gap_to_car_ahead": msg.get("GapToCarAhead"),
                         }
 
-                        # once we have data for this lap, recompute cumulative gaps
                         lap_data = st.session_state.lap_race_times[lap_num]
-                        # sort drivers by position for this lap
                         sorted_drivers = sorted(
                             lap_data.items(), key=lambda x: x[1]["position"] or 99
                         )
@@ -206,7 +240,7 @@ while True:
                             if gap_ahead is not None and info["position"] > 1:
                                 cumulative += float(gap_ahead)
                             else:
-                                cumulative = 0.0  # leader
+                                cumulative = 0.0
                             if drv not in st.session_state.gap_history:
                                 st.session_state.gap_history[drv] = {}
                             st.session_state.gap_history[drv][lap_num] = round(
@@ -215,36 +249,128 @@ while True:
 
             elif topic == TOPIC_ALERTS:
                 # classify alert type from json fields emitted by flink's JsonSerializer.
-                # each alert pojo serializes to different keys, ex: tireDropAlerts have "delta",
-                # liftCoastAlerts have "brakeDate", pitWindowAlerts have "gapBehind".
-                if "brakeDate" in msg:
-                    alert_type = "Lift & Coast"
-                    summary = f"{msg.get('driver', '?')} — lift→brake"
-                elif "delta" in msg:
-                    alert_type = "Tire Drop"
-                    summary = (
-                        f"{msg.get('driver', '?')} Lap {msg.get('lapNumber', '?')} "
-                        f"— delta +{msg.get('delta', 0):.3f}s"
-                    )
-                elif "gapBehind" in msg:
-                    alert_type = "Pit Window"
-                    summary = (
-                        f"{msg.get('driver', '?')} — gap {msg.get('gapBehind', 0):.1f}s "
-                        f"(threshold {msg.get('threshold', 0):.1f}s)"
-                    )
-                else:
-                    alert_type = "Alert"
-                    summary = json.dumps(msg, default=str)[:120]
+                # each alert pojo serializes to different keys:
+                #   pit suggestions: "suggestionLabel" (Phase 2 multi-label field)
+                #   pit evaluations: "result" (Phase 1 8-label enum)
+                #   tire drops: "delta"
+                #   lift & coast: "brakeDate"
+                #   drop zones: "positionsLost"
+                if "suggestionLabel" in msg:
+                    label = msg.get("suggestionLabel", "?")
+                    score = msg.get("totalScore", 0)
+                    driver = msg.get("driver", "?")
+                    lap = msg.get("lapNumber", "?")
+                    compound = msg.get("compound", "?")
+                    tyre_life = msg.get("tyreLife", "?")
+                    suggestion = msg.get("suggestion", "")
 
-                st.session_state.alerts.append(
-                    {
-                        "Type": alert_type,
-                        "Detail": summary,
-                    }
-                )
-                # keep only the most recent 50 alerts to bound memory
-                if len(st.session_state.alerts) > 50:
-                    st.session_state.alerts = st.session_state.alerts[-50:]
+                    st.session_state.pit_strategy_alerts.append(
+                        {
+                            "Driver": driver,
+                            "Lap": lap,
+                            "Label": label,
+                            "Score": (
+                                f"{score:.1f}"
+                                if isinstance(score, (int, float))
+                                else str(score)
+                            ),
+                            "Compound": compound,
+                            "Tyre": tyre_life,
+                            "Reason": suggestion,
+                        }
+                    )
+                    st.session_state.pit_strategy_alerts = bound_alerts(
+                        st.session_state.pit_strategy_alerts
+                    )
+
+                elif "result" in msg:
+                    driver = msg.get("driver", "?")
+                    pit_lap = msg.get("pitLapNumber", "?")
+                    result = msg.get("result", "?")
+                    rival_ahead = msg.get("rivalAhead", "---")
+                    rival_behind = msg.get("rivalBehind", "---")
+                    gap_delta = msg.get("gapDeltaPct")
+                    resolved_via = msg.get("resolvedVia", "?")
+
+                    gap_str = "---"
+                    if gap_delta is not None and isinstance(gap_delta, (int, float)):
+                        gap_str = f"{gap_delta:.2f}%"
+
+                    st.session_state.pit_eval_alerts.append(
+                        {
+                            "Driver": driver,
+                            "Pit Lap": pit_lap,
+                            "Result": result,
+                            "Rival Ahead": rival_ahead if rival_ahead else "---",
+                            "Rival Behind": rival_behind if rival_behind else "---",
+                            "Gap Delta": gap_str,
+                            "Via": resolved_via,
+                        }
+                    )
+                    st.session_state.pit_eval_alerts = bound_alerts(
+                        st.session_state.pit_eval_alerts
+                    )
+
+                elif "brakeDate" in msg:
+                    driver = msg.get("driver", "?")
+                    # compute coast duration from lift and brake iso timestamps
+                    try:
+                        lift_dt = pd.to_datetime(msg.get("liftDate"))
+                        brake_dt = pd.to_datetime(msg.get("brakeDate"))
+                        coast_s = f"{(brake_dt - lift_dt).total_seconds():.2f}"
+                        time_str = brake_dt.strftime("%H:%M:%S")
+                    except Exception:
+                        coast_s = "?"
+                        time_str = "?"
+                    st.session_state.lift_coast_alerts.append(
+                        {
+                            "Driver": driver,
+                            "Speed": msg.get("speed", "?"),
+                            "Gear": msg.get("gear", "?"),
+                            "Coast (s)": coast_s,
+                            "Time": time_str,
+                        }
+                    )
+                    st.session_state.lift_coast_alerts = bound_alerts(
+                        st.session_state.lift_coast_alerts
+                    )
+
+                elif "delta" in msg:
+                    driver = msg.get("driver", "?")
+                    lap = msg.get("lapNumber", "?")
+                    compound = msg.get("compound", "?")
+                    tyre_life = msg.get("tyreLife", "?")
+                    delta = msg.get("delta", 0)
+
+                    st.session_state.tire_drop_alerts.append(
+                        {
+                            "Driver": driver,
+                            "Lap": lap,
+                            "Compound": compound,
+                            "Tyre Life": tyre_life,
+                            "Delta": (
+                                f"+{delta:.3f}s"
+                                if isinstance(delta, (int, float))
+                                else str(delta)
+                            ),
+                        }
+                    )
+                    st.session_state.tire_drop_alerts = bound_alerts(
+                        st.session_state.tire_drop_alerts
+                    )
+
+                elif "positionsLost" in msg:
+                    st.session_state.drop_zone_alerts.append(
+                        {
+                            "Driver": msg.get("driver", "?"),
+                            "Lap": msg.get("lapNumber", "?"),
+                            "Emerge P": msg.get("emergencePosition", "?"),
+                            "Lost": msg.get("positionsLost", "?"),
+                        }
+                    )
+                    st.session_state.drop_zone_alerts = bound_alerts(
+                        st.session_state.drop_zone_alerts
+                    )
 
     # render track status banner
     label, color = st.session_state.track_status
@@ -273,25 +399,34 @@ while True:
     if st.session_state.leaderboard:
         df = pd.DataFrame(st.session_state.leaderboard.values())
         df = df.sort_values("Position").reset_index(drop=True)
-        df.index = df.index + 1  # 1-based display index
+        df.index = df.index + 1
         leaderboard_placeholder.dataframe(df, use_container_width=True, hide_index=True)
     else:
         leaderboard_placeholder.info("Waiting for lap data...")
 
-    # render live alerts (most recent 10, newest first)
-    if st.session_state.alerts:
-        recent = st.session_state.alerts[-10:][::-1]
-        alerts_df = pd.DataFrame(recent)
-        alerts_placeholder.dataframe(alerts_df, use_container_width=True, hide_index=True)
+    # render pit strategy alerts (most recent first, with color-coded labels)
+    if st.session_state.pit_strategy_alerts:
+        recent = st.session_state.pit_strategy_alerts[::-1]
+        strategy_df = pd.DataFrame(recent)
+        styled = strategy_df.style.applymap(style_suggestion_label, subset=["Label"])
+        pit_strategy_placeholder.dataframe(
+            styled, use_container_width=True, hide_index=True
+        )
     else:
-        alerts_placeholder.info("Waiting for Flink alerts...")
+        pit_strategy_placeholder.info("Waiting for pit strategy alerts...")
 
-    # render gap to leader evolution chart.
-    # builds a dataframe with lap numbers as index and drivers as columns,
-    # showing cumulative gap in seconds. only includes the top 3 drivers
-    # (by most recent position) to keep the chart readable.
+    # render pit stop evaluations (most recent first)
+    if st.session_state.pit_eval_alerts:
+        recent = st.session_state.pit_eval_alerts[::-1]
+        eval_df = pd.DataFrame(recent)
+        pit_eval_placeholder.dataframe(
+            eval_df, use_container_width=True, hide_index=True
+        )
+    else:
+        pit_eval_placeholder.info("Waiting for pit stop evaluations...")
+
+    # render gap to leader evolution chart
     if st.session_state.gap_history:
-        # determine top 3 drivers by current leaderboard position
         if st.session_state.leaderboard:
             sorted_board = sorted(
                 st.session_state.leaderboard.values(),
@@ -301,7 +436,6 @@ while True:
         else:
             top_drivers = list(st.session_state.gap_history.keys())[:3]
 
-        # build the chart dataframe: rows = lap numbers, columns = drivers
         gap_data = {}
         for drv in top_drivers:
             if drv in st.session_state.gap_history:
@@ -311,7 +445,6 @@ while True:
             gap_df = pd.DataFrame(gap_data)
             gap_df.index.name = "Lap"
             gap_df = gap_df.sort_index()
-            # trim to last N laps for readability
             if len(gap_df) > GAP_HISTORY_MAX_LAPS:
                 gap_df = gap_df.iloc[-GAP_HISTORY_MAX_LAPS:]
             gap_chart_placeholder.line_chart(gap_df)
@@ -320,8 +453,7 @@ while True:
     else:
         gap_chart_placeholder.info("Waiting for gap data...")
 
-    # render tire age tracker as a horizontal bar chart.
-    # shows tyre life (laps) for the top 5 drivers by position.
+    # render tire age tracker (horizontal bar for top 5)
     if st.session_state.leaderboard:
         sorted_board = sorted(
             st.session_state.leaderboard.values(), key=lambda x: x.get("Position") or 99
@@ -329,24 +461,40 @@ while True:
         top5 = sorted_board[:5]
         tire_drivers = []
         tire_lives = []
-        tire_compounds = []
         for entry in top5:
             tl = entry.get("Tyre Life", 0)
-            if tl == "—":
+            if tl == "---":
                 tl = 0
             tire_drivers.append(entry["Driver"])
             tire_lives.append(int(tl))
-            tire_compounds.append(entry.get("Compound", "?"))
 
         tire_df = pd.DataFrame(
-            {
-                "Tyre Life (laps)": tire_lives,
-            },
+            {"Tyre Life (laps)": tire_lives},
             index=tire_drivers,
         )
         tire_df.index.name = "Driver"
         tire_chart_placeholder.bar_chart(tire_df, horizontal=True)
     else:
         tire_chart_placeholder.info("Waiting for lap data...")
+
+    # render tire drop alerts (most recent first)
+    if st.session_state.tire_drop_alerts:
+        recent = st.session_state.tire_drop_alerts[::-1]
+        drop_df = pd.DataFrame(recent)
+        tire_drop_placeholder.dataframe(
+            drop_df, use_container_width=True, hide_index=True
+        )
+    else:
+        tire_drop_placeholder.info("Waiting for tire degradation alerts...")
+
+    # render lift & coast alerts (most recent first)
+    if st.session_state.lift_coast_alerts:
+        recent = st.session_state.lift_coast_alerts[::-1]
+        lc_df = pd.DataFrame(recent)
+        lift_coast_placeholder.dataframe(
+            lc_df, use_container_width=True, hide_index=True
+        )
+    else:
+        lift_coast_placeholder.info("Waiting for lift & coast alerts...")
 
     time.sleep(0.5)
