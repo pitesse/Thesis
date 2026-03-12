@@ -1,25 +1,25 @@
 package com.polimi.f1.model.output;
 
 // classification of a completed pit stop as success or failure.
-// emitted after collecting 3 post-pit laps to evaluate position changes.
+// emitted after collecting 3 post-pit laps to evaluate time gap changes vs the net rival.
 // enriched with context features (track status, tyre age, gap) for ml training.
-// ex csv: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832
+// ex csv: VER,15,2.500,1.200,HARD,SUCCESS_UNDERCUT,1,24,4.832,Italian Grand Prix,LEC
 public class PitStopEvaluationAlert {
 
     public static final String CSV_HEADER
-            = "driver,pitLapNumber,prePitPosition,postPitPosition,compound,result,"
+            = "driver,pitLapNumber,prePitGapToRival,postPitGapToRival,compound,result,"
             + "trackStatusAtPit,tyreAgeAtPit,gapToCarAheadAtPit,race,netRival";
 
     public enum Result {
-        SUCCESS_UNDERCUT, // gained positions (effective undercut)
-        SUCCESS_DEFEND, // maintained position (defended successfully)
-        FAILURE_LOST_POSITION   // lost positions
+        SUCCESS_UNDERCUT, // gained time on rival (effective undercut)
+        SUCCESS_DEFEND, // maintained time gap to rival (defended successfully)
+        FAILURE_LOST_POSITION   // lost time to rival
     }
 
     private String driver;
     private int pitLapNumber;
-    private int prePitPosition;
-    private int postPitPosition;
+    private Double prePitGapToRival;      // directed gap at pit entry: positive = behind rival, negative = ahead
+    private Double postPitGapToRival;     // directed gap 3 laps after pit, same sign convention
     private String compound;              // tire compound after pit stop
     private Result result;
     private String trackStatusAtPit;      // track status code at pit entry, ex: "1" (green), "4" (sc)
@@ -31,14 +31,14 @@ public class PitStopEvaluationAlert {
     public PitStopEvaluationAlert() {
     }
 
-    public PitStopEvaluationAlert(String driver, int pitLapNumber, int prePitPosition,
-            int postPitPosition, String compound, Result result,
+    public PitStopEvaluationAlert(String driver, int pitLapNumber, Double prePitGapToRival,
+            Double postPitGapToRival, String compound, Result result,
             String trackStatusAtPit, int tyreAgeAtPit,
             Double gapToCarAheadAtPit, String race, String netRival) {
         this.driver = driver;
         this.pitLapNumber = pitLapNumber;
-        this.prePitPosition = prePitPosition;
-        this.postPitPosition = postPitPosition;
+        this.prePitGapToRival = prePitGapToRival;
+        this.postPitGapToRival = postPitGapToRival;
         this.compound = compound;
         this.result = result;
         this.trackStatusAtPit = trackStatusAtPit;
@@ -64,20 +64,20 @@ public class PitStopEvaluationAlert {
         this.pitLapNumber = pitLapNumber;
     }
 
-    public int getPrePitPosition() {
-        return prePitPosition;
+    public Double getPrePitGapToRival() {
+        return prePitGapToRival;
     }
 
-    public void setPrePitPosition(int prePitPosition) {
-        this.prePitPosition = prePitPosition;
+    public void setPrePitGapToRival(Double prePitGapToRival) {
+        this.prePitGapToRival = prePitGapToRival;
     }
 
-    public int getPostPitPosition() {
-        return postPitPosition;
+    public Double getPostPitGapToRival() {
+        return postPitGapToRival;
     }
 
-    public void setPostPitPosition(int postPitPosition) {
-        this.postPitPosition = postPitPosition;
+    public void setPostPitGapToRival(Double postPitGapToRival) {
+        this.postPitGapToRival = postPitGapToRival;
     }
 
     public String getCompound() {
@@ -136,13 +136,13 @@ public class PitStopEvaluationAlert {
         this.netRival = netRival;
     }
 
-    // ml-ready csv row, ex: VER,15,2,2,HARD,SUCCESS_DEFEND,1,24,4.832,Italian Grand Prix,LEC
+    // ml-ready csv row, ex: VER,15,2.500,1.200,HARD,SUCCESS_UNDERCUT,1,24,4.832,Italian Grand Prix,LEC
     public String toCsvRow() {
         return String.join(",",
                 driver,
                 String.valueOf(pitLapNumber),
-                String.valueOf(prePitPosition),
-                String.valueOf(postPitPosition),
+                prePitGapToRival != null ? String.format("%.3f", prePitGapToRival) : "",
+                postPitGapToRival != null ? String.format("%.3f", postPitGapToRival) : "",
                 compound,
                 result.name(),
                 trackStatusAtPit != null ? trackStatusAtPit : "",
@@ -156,9 +156,12 @@ public class PitStopEvaluationAlert {
     @Override
     public String toString() {
         return String.format(
-                "PIT EVAL | Driver: %s | Lap: %d | Pre: P%d | Post: P%d | %s | Result: %s"
+                "PIT EVAL | Driver: %s | Lap: %d | PreGap: %s | PostGap: %s | %s | Result: %s"
                 + " | Track: %s | TyreAge: %d | Gap: %s | Race: %s | Rival: %s",
-                driver, pitLapNumber, prePitPosition, postPitPosition, compound, result,
+                driver, pitLapNumber,
+                prePitGapToRival != null ? String.format("%.3fs", prePitGapToRival) : "N/A",
+                postPitGapToRival != null ? String.format("%.3fs", postPitGapToRival) : "N/A",
+                compound, result,
                 trackStatusAtPit, tyreAgeAtPit,
                 gapToCarAheadAtPit != null ? String.format("%.3f", gapToCarAheadAtPit) : "N/A",
                 race != null ? race : "N/A",
