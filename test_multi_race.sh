@@ -29,9 +29,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROCESSOR_DIR="$PROJECT_DIR/f1-telemetry-processor"
-PRODUCER_DIR="$PROJECT_DIR/f1-telemetry-producer"
-JAR_NAME="f1-telemetry-processor-1.0-SNAPSHOT.jar"
+COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 
 # two races with different characteristics:
 #   monza: low downforce, 25s pit loss, few overtakes, long straights
@@ -51,10 +49,14 @@ echo "=========================================="
 # 1. tear down + start stack
 # ===========================
 echo "[1/6] Starting fresh Docker stack..."
-docker compose -f "$PROJECT_DIR/docker-compose.yml" down -v 2>/dev/null || true
+docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
 mkdir -p "$PROJECT_DIR/data_lake"
 chmod -R 777 "$PROJECT_DIR/data_lake" 2>/dev/null || true
-docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d
+
+# build all docker images (flink multi-stage + python)
+docker compose -f "$COMPOSE_FILE" build
+
+docker compose -f "$COMPOSE_FILE" up -d
 
 echo "       Waiting for Flink JobManager..."
 for i in $(seq 1 30); do
@@ -78,16 +80,7 @@ for topic in f1-telemetry f1-laps f1-track-status f1-alerts; do
 		--if-not-exists 2>/dev/null || true
 done
 
-docker exec flink-jobmanager mkdir -p /opt/flink/usrlib
-docker cp "$PROCESSOR_DIR/target/$JAR_NAME" flink-jobmanager:/opt/flink/usrlib/
-docker exec flink-jobmanager flink run -d "/opt/flink/usrlib/$JAR_NAME"
-
-# activate producer venv
-if [ -f "$PRODUCER_DIR/.venv/bin/activate" ]; then
-	source "$PRODUCER_DIR/.venv/bin/activate"
-elif [ -f "$PRODUCER_DIR/venv/bin/activate" ]; then
-	source "$PRODUCER_DIR/venv/bin/activate"
-fi
+docker exec flink-jobmanager flink run -d /opt/flink/usrlib/f1-stream-processor.jar
 
 # ===========================
 # 3. race 1
@@ -95,9 +88,11 @@ fi
 echo ""
 echo "[3/6] Race 1: $RACE_1"
 echo "       Preparing parquet..."
-python "$PRODUCER_DIR/src/prepare_race.py" --year "$YEAR" --race "$RACE_1"
+docker compose -f "$COMPOSE_FILE" run --rm producer \
+	python f1-telemetry-producer/src/prepare_race.py --year "$YEAR" --race "$RACE_1"
 echo "       Streaming to Kafka..."
-python "$PRODUCER_DIR/src/stream_race.py" --year "$YEAR" --race "$RACE_1" --speed "$SPEED"
+docker compose -f "$COMPOSE_FILE" run --rm producer \
+	python f1-telemetry-producer/src/stream_race.py --year "$YEAR" --race "$RACE_1" --speed "$SPEED"
 
 echo "       Draining (20s for checkpoint + watermark advance)..."
 sleep 20
@@ -112,9 +107,11 @@ echo "       Race 1 complete. CSV files in data_lake: $RACE1_FILES"
 echo ""
 echo "[4/6] Race 2: $RACE_2"
 echo "       Preparing parquet..."
-python "$PRODUCER_DIR/src/prepare_race.py" --year "$YEAR" --race "$RACE_2"
+docker compose -f "$COMPOSE_FILE" run --rm producer \
+	python f1-telemetry-producer/src/prepare_race.py --year "$YEAR" --race "$RACE_2"
 echo "       Streaming to Kafka..."
-python "$PRODUCER_DIR/src/stream_race.py" --year "$YEAR" --race "$RACE_2" --speed "$SPEED"
+docker compose -f "$COMPOSE_FILE" run --rm producer \
+	python f1-telemetry-producer/src/stream_race.py --year "$YEAR" --race "$RACE_2" --speed "$SPEED"
 
 echo "       Draining (20s for final checkpoint)..."
 sleep 20
@@ -188,5 +185,6 @@ echo "=========================================="
 echo ""
 echo " Stack is still running for inspection:"
 echo "   Flink UI:   http://localhost:8081"
+echo "   Dashboard:  http://localhost:8501"
 echo "   Flink logs: docker logs -f flink-taskmanager"
 echo "   Tear down:  docker compose down -v"

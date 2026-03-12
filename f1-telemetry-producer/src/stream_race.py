@@ -14,6 +14,7 @@ optimized for high-speed replay:
 import argparse
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -111,8 +112,9 @@ def filter_by_start_lap(replay_df: pd.DataFrame, start_lap: int) -> pd.DataFrame
 
 
 def create_producer() -> KafkaProducer:
+    broker = os.environ.get("KAFKA_BROKER", "kafka:29092")
     return KafkaProducer(
-        bootstrap_servers="localhost:9092",
+        bootstrap_servers=broker,
         value_serializer=lambda payload: json.dumps(payload).encode("utf-8"),
     )
 

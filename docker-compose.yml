@@ -1,8 +1,9 @@
-# infrastructure stack: kafka (message broker) + flink (stream processor).
-# the python producer runs on the host, the flink job jar is submitted into the cluster.
+# full stack: kafka (broker), flink (stream processor, built from source), python services.
+# flink fat jar is baked into the image via multi-stage docker build.
+# the job is submitted at runtime via `flink run` inside the jobmanager container.
 
 services:
-  # --- kafka cluster (single-broker, zookeeper-based) ---
+  #  kafka cluster (single-broker, zookeeper-based) 
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.7.1
@@ -36,10 +37,13 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
 
-  # --- flink cluster (1 jobmanager + 1 taskmanager) ---
+  #  flink cluster (1 jobmanager + 1 taskmanager) 
 
   jobmanager:
-    image: flink:1.20-java17
+    build:
+      context: ./f1-telemetry-processor
+      dockerfile: Dockerfile
+    image: f1-flink-processor
     container_name: flink-jobmanager
     depends_on:
       - kafka
@@ -50,7 +54,10 @@ services:
       - JOB_MANAGER_RPC_ADDRESS=jobmanager
 
   taskmanager:
-    image: flink:1.20-java17
+    build:
+      context: ./f1-telemetry-processor
+      dockerfile: Dockerfile
+    image: f1-flink-processor
     container_name: flink-taskmanager
     depends_on:
       - jobmanager
@@ -64,3 +71,42 @@ services:
       # maps container output to host for ml dataset access.
       # flink FileSink writes json-lines to /opt/flink/data_lake/{pit_evals,tire_drops}/
       - ./data_lake:/opt/flink/data_lake
+
+  # python services (shared image: f1-python-app) 
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: f1-python-app
+    container_name: f1-dashboard
+    depends_on:
+      - kafka
+    ports:
+      - "8501:8501"
+    environment:
+      - KAFKA_BROKER=kafka:29092
+    volumes:
+      - ./data_lake:/app/data_lake
+    command: ["streamlit", "run", "dashboard/app.py", "--server.headless", "true", "--server.address", "0.0.0.0"]
+
+  # cli service for ad-hoc python commands (prepare_race, stream_race, ml training).
+  # not started by `docker compose up`, invoked via `docker compose run --rm producer <cmd>`.
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: f1-python-app
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_BROKER=kafka:29092
+    volumes:
+      # fastf1 cache and prepared parquet files (shared between host and container)
+      - ./data:/app/data
+      # flink output csvs (needed by ml pipeline)
+      - ./data_lake:/app/data_lake
+      # ml pipeline source + artifacts (persist model pkl and plots)
+      - ./ml_pipeline:/app/ml_pipeline
+    profiles:
+      - cli
