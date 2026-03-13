@@ -25,7 +25,6 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
 import org.apache.flink.streaming.api.windowing.assigners.EventTimeSessionWindows;
-import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -172,7 +171,7 @@ public class F1StreamingJob {
         // SingleOutputStreamOperator (not DataStream) to access the ml features side output.
         SingleOutputStreamOperator<RivalInfoAlert> rivalResult = lapWithWatermarks
                 .keyBy(LapEvent::getLapNumber)
-                .window(EventTimeSessionWindows.withGap(Time.seconds(30)))
+                .window(EventTimeSessionWindows.withGap(Duration.ofSeconds(30)))
                 .process(new RivalIdentificationFunction())
                 .name("Rival Identification");
 
@@ -187,7 +186,7 @@ public class F1StreamingJob {
         // re-window the rival info by lap number to detect contiguous groups within 1s gap
         DataStream<String> drsTrainAlerts = rivalStream
                 .keyBy(RivalInfoAlert::getLapNumber)
-                .window(EventTimeSessionWindows.withGap(Time.seconds(10)))
+                .window(EventTimeSessionWindows.withGap(Duration.ofSeconds(10)))
                 .process(new DrsTrainDetector())
                 .name("DRS Train Detection");
 
@@ -267,12 +266,7 @@ public class F1StreamingJob {
 
         FileSink<String> pitEvalSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/pit_evals"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(
-                        DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofSeconds(15))
-                                .withInactivityInterval(Duration.ofSeconds(15))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
-                                .build())
+                .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-eval")
                         .withPartSuffix(".csv")
@@ -281,12 +275,7 @@ public class F1StreamingJob {
 
         FileSink<String> tireDropSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/tire_drops"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(
-                        DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofSeconds(15))
-                                .withInactivityInterval(Duration.ofSeconds(15))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
-                                .build())
+                .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("tire-drop")
                         .withPartSuffix(".csv")
@@ -304,12 +293,7 @@ public class F1StreamingJob {
 
         FileSink<String> liftCoastSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/lift_coast"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(
-                        DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofSeconds(15))
-                                .withInactivityInterval(Duration.ofSeconds(15))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
-                                .build())
+                .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("lift-coast")
                         .withPartSuffix(".csv")
@@ -326,12 +310,7 @@ public class F1StreamingJob {
 
         FileSink<String> dropZoneSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/drop_zones"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(
-                        DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofSeconds(15))
-                                .withInactivityInterval(Duration.ofSeconds(15))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
-                                .build())
+                .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("drop-zone")
                         .withPartSuffix(".csv")
@@ -349,12 +328,7 @@ public class F1StreamingJob {
         FileSink<String> pitSuggestionsSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/pit_suggestions"),
                         new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(
-                        DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofSeconds(15))
-                                .withInactivityInterval(Duration.ofSeconds(15))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
-                                .build())
+                .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-suggestion")
                         .withPartSuffix(".csv")
@@ -372,12 +346,7 @@ public class F1StreamingJob {
 
         FileSink<String> mlFeaturesSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/ml_features"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(
-                        DefaultRollingPolicy.builder()
-                                .withRolloverInterval(Duration.ofSeconds(15))
-                                .withInactivityInterval(Duration.ofSeconds(15))
-                                .withMaxPartSize(MemorySize.ofMebiBytes(10))
-                                .build())
+                .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("ml-features")
                         .withPartSuffix(".csv")
@@ -497,6 +466,17 @@ public class F1StreamingJob {
         public String map(T value) throws Exception {
             return mapper.writeValueAsString(value);
         }
+    }
+
+    // creates a standardized rolling policy for csv data lake outputs.
+    // rolls files every 15s, after 15s inactivity, or when reaching 10 MB.
+    // consistent across all ml dataset sinks for predictable file organization.
+    private static DefaultRollingPolicy buildCsvRollingPolicy() {
+        return DefaultRollingPolicy.builder()
+                .withRolloverInterval(Duration.ofSeconds(15))
+                .withInactivityInterval(Duration.ofSeconds(15))
+                .withMaxPartSize(MemorySize.ofMebiBytes(10))
+                .build();
     }
 
     // emits a csv header as the first row, then delegates to toCsvRow() for data rows.

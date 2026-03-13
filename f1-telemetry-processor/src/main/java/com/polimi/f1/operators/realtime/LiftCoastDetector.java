@@ -1,8 +1,10 @@
 package com.polimi.f1.operators.realtime;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.cep.CEP;
@@ -10,10 +12,8 @@ import org.apache.flink.cep.PatternStream;
 import org.apache.flink.cep.nfa.aftermatch.AfterMatchSkipStrategy;
 import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.cep.pattern.conditions.SimpleCondition;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
-import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
 
 import com.polimi.f1.model.input.TelemetryEvent;
@@ -107,7 +107,7 @@ public class LiftCoastDetector {
                         return e.getBrake() == 1;
                     }
                 })
-                .within(Time.seconds(4));
+                .within(Duration.ofSeconds(4));
 
         PatternStream<TelemetryEvent> patternStream = CEP.pattern(
                 cleanTelemetry.keyBy(TelemetryEvent::getDriver),
@@ -152,7 +152,7 @@ public class LiftCoastDetector {
         private transient ValueState<String> lastCompositeKey;
 
         @Override
-        public void open(Configuration params) {
+        public void open(OpenContext openContext) {
             lastCompositeKey = getRuntimeContext().getState(
                     new ValueStateDescriptor<>("lastLiftBrake", String.class)
             );

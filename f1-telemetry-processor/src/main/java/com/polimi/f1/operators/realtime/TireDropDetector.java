@@ -1,9 +1,9 @@
 package com.polimi.f1.operators.realtime;
 
+import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
@@ -59,7 +59,7 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
     private transient ValueState<Integer> consecutiveSlowLaps;
 
     @Override
-    public void open(Configuration parameters) {
+    public void open(OpenContext openContext) {
         currentStint = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("current-stint", Types.INT));
         stintBestLap = getRuntimeContext().getState(
@@ -145,11 +145,16 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
             return MEDIUM_BASE_PCT;
         }
         return switch (compound.toUpperCase()) {
-            case "SOFT" -> SOFT_BASE_PCT;
-            case "MEDIUM" -> MEDIUM_BASE_PCT;
-            case "HARD" -> HARD_BASE_PCT;
-            case "INTERMEDIATE", "WET" -> WET_BASE_PCT;
-            default -> MEDIUM_BASE_PCT;
+            case "SOFT" ->
+                SOFT_BASE_PCT;
+            case "MEDIUM" ->
+                MEDIUM_BASE_PCT;
+            case "HARD" ->
+                HARD_BASE_PCT;
+            case "INTERMEDIATE", "WET" ->
+                WET_BASE_PCT;
+            default ->
+                MEDIUM_BASE_PCT;
         };
     }
 
