@@ -1,5 +1,7 @@
 package com.polimi.f1.model.output;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 // classification of a completed pit cycle as success or failure.
 // tracks rival clusters (car ahead + behind), detects offset strategies (1-stop vs 2-stop),
 // and normalizes gap deltas as percentage of baseline lap time for track-agnostic scoring.
@@ -14,13 +16,28 @@ public class PitStopEvaluationAlert {
             + "driverPittedFirst,isOffsetStrategy,resolvedVia";
 
     public enum Result {
+        @JsonProperty("SUCCESS_UNDERCUT")
         SUCCESS_UNDERCUT, // gained time on rival by pitting first (effective undercut)
+
+        @JsonProperty("SUCCESS_OVERCUT")
         SUCCESS_OVERCUT, // gained time by staying out while rival pitted first
+
+        @JsonProperty("SUCCESS_DEFEND")
         SUCCESS_DEFEND, // maintained gap to rival within tolerance band
+
+        @JsonProperty("SUCCESS_FREE_STOP")
         SUCCESS_FREE_STOP, // pitted under sc/vsc with minimal loss
+
+        @JsonProperty("OFFSET_ADVANTAGE")
         OFFSET_ADVANTAGE, // on different strategy (e.g. 1-stop vs 2-stop), gap improved
+
+        @JsonProperty("OFFSET_DISADVANTAGE")
         OFFSET_DISADVANTAGE, // on different strategy, gap worsened
+
+        @JsonProperty("FAILURE_PACE_DEFICIT")
         FAILURE_PACE_DEFICIT, // lost ground to rival due to poor pace after pit
+
+        @JsonProperty("FAILURE_TRAFFIC")
         FAILURE_TRAFFIC             // emerged into dirty air / traffic nullified position gain
     }
 

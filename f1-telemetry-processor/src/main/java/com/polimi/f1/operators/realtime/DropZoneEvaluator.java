@@ -5,9 +5,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
@@ -54,7 +54,7 @@ public class DropZoneEvaluator
     private transient MapState<String, LapEvent> lapEvents;
 
     @Override
-    public void open(Configuration parameters) {
+    public void open(OpenContext openContext) {
         lapEvents = getRuntimeContext().getMapState(
                 new MapStateDescriptor<>("lap-events", String.class, LapEvent.class));
     }
@@ -197,11 +197,15 @@ public class DropZoneEvaluator
         }
 
         return switch (status) {
-            case "1" -> lap.getPitLoss();
-            case "6", "7" -> lap.getVscPitLoss();
-            case "4" -> lap.getScPitLoss();
+            case "1" ->
+                lap.getPitLoss();
+            case "6", "7" ->
+                lap.getVscPitLoss();
+            case "4" ->
+                lap.getScPitLoss();
             // yellow ("2"), red ("5"): suppress, pit lane may be closed
-            default -> null;
+            default ->
+                null;
         };
     }
 }
