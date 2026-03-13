@@ -31,7 +31,7 @@ public class PitSuggestionAlert {
     private int tyreLife;
     private double totalScore;           // 0.0-100.0 continuous
     private double paceScore;            // 0.0-30.0 continuous (power 1.5 curve)
-    private int trackStatusScore;        // 0 or 60 (crisp, binary event)
+    private double trackStatusScore;     // 0.0 or 60.0 (crisp, binary event)
     private double trafficScore;         // -30.0 to +30.0 continuous (linear interpolation)
     private double strategyPenalty;      // -15.0 to 0.0 continuous (replaces tireLifePenalty)
     private double urgencyScore;         // 0.0-30.0 continuous (quadratic ramp)
@@ -46,7 +46,7 @@ public class PitSuggestionAlert {
     }
 
     public PitSuggestionAlert(String driver, int lapNumber, int position, String compound,
-            int tyreLife, double totalScore, double paceScore, int trackStatusScore,
+            int tyreLife, double totalScore, double paceScore, double trackStatusScore,
             double trafficScore, double strategyPenalty, double urgencyScore,
             double endOfRacePenalty, String trackStatus,
             int emergencePosition, double gapToPhysicalCar,
@@ -126,11 +126,11 @@ public class PitSuggestionAlert {
         this.paceScore = paceScore;
     }
 
-    public int getTrackStatusScore() {
+    public double getTrackStatusScore() {
         return trackStatusScore;
     }
 
-    public void setTrackStatusScore(int trackStatusScore) {
+    public void setTrackStatusScore(double trackStatusScore) {
         this.trackStatusScore = trackStatusScore;
     }
 
@@ -216,7 +216,7 @@ public class PitSuggestionAlert {
                 String.valueOf(tyreLife),
                 String.format("%.1f", totalScore),
                 String.format("%.1f", paceScore),
-                String.valueOf(trackStatusScore),
+                String.format("%.1f", trackStatusScore),
                 String.format("%.1f", trafficScore),
                 String.format("%.1f", strategyPenalty),
                 String.format("%.1f", urgencyScore),
@@ -233,7 +233,7 @@ public class PitSuggestionAlert {
     public String toString() {
         return String.format(
                 "PIT SUGGESTION | %s Lap %d P%d | %s L%d | Score: %.1f/100 [%s] "
-                + "[Pace:%.1f Status:%d Traffic:%.1f Penalty:%.1f Urgency:%.1f EoR:%.1f] "
+                + "[Pace:%.1f Status:%.1f Traffic:%.1f Penalty:%.1f Urgency:%.1f EoR:%.1f] "
                 + "| Emerge P%d (gap=%.1fs) | %s",
                 driver, lapNumber, position, compound, tyreLife, totalScore,
                 suggestionLabel != null ? suggestionLabel : "?",
