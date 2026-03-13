@@ -1,17 +1,17 @@
 package com.polimi.f1.operators.realtime;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.StateTtlConfig;
-import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.Types;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.co.KeyedBroadcastProcessFunction;
 import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
@@ -21,6 +21,7 @@ import com.polimi.f1.model.input.LapEvent;
 import com.polimi.f1.model.input.TrackStatusEvent;
 import com.polimi.f1.model.output.PitSuggestionAlert;
 import com.polimi.f1.model.output.PitSuggestionAlert.SuggestionLabel;
+import com.polimi.f1.state.realtime.DriverPitState;
 
 // computes a continuous fuzzy-logic "pit desirability score" (0.0-100.0) for each driver,
 // using fully continuous scoring curves that eliminate the discrete score clumping of the
@@ -141,9 +142,9 @@ public class PitStrategyEvaluator
     private transient MapState<String, Integer> lastCompletedLap;
 
     @Override
-    public void open(Configuration parameters) {
+    public void open(OpenContext openContext) {
         // 2h ttl: prevents unbounded state growth over continuous streaming
-        StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Time.hours(2))
+        StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Duration.ofHours(2))
                 .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
                 .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
                 .build();
@@ -266,13 +267,13 @@ public class PitStrategyEvaluator
             return;
         }
 
-        if (state.currentStint != -1
-                && state.currentStint != event.getStint()
-                && state.lastCompound != null) {
-            String prevCompound = state.lastCompound;
+        if (state.getCurrentStint() != -1
+                && state.getCurrentStint() != event.getStint()
+                && state.getLastCompound() != null) {
+            String prevCompound = state.getLastCompound();
             Integer current = maxStintByCompound.get(prevCompound);
-            if (current == null || state.lastTyreLife > current) {
-                maxStintByCompound.put(prevCompound, state.lastTyreLife);
+            if (current == null || state.getLastTyreLife() > current) {
+                maxStintByCompound.put(prevCompound, state.getLastTyreLife());
             }
         }
     }
@@ -286,36 +287,36 @@ public class PitStrategyEvaluator
         }
 
         // stint change: reset pace tracking, peak score, lost chance flag
-        if (state.currentStint != event.getStint()) {
-            state.currentStint = event.getStint();
-            state.stintBestLap = Double.MAX_VALUE;
-            state.consecutiveSlowLaps = 0;
-            state.lastPaceRatio = 0.0;
+        if (state.getCurrentStint() != event.getStint()) {
+            state.setCurrentStint(event.getStint());
+            state.setStintBestLap(Double.MAX_VALUE);
+            state.setConsecutiveSlowLaps(0);
+            state.setLastPaceRatio(0.0);
             peakScores.put(driver, 0.0);
             lostChanceEmitted.put(driver, false);
         }
 
-        state.lastCompound = event.getCompound();
-        state.lastTyreLife = event.getTyreLife();
+        state.setLastCompound(event.getCompound());
+        state.setLastTyreLife(event.getTyreLife());
 
         Double lapTime = event.getLapTime();
         if (lapTime != null && lapTime > 0
                 && event.getPitInTime() == null && event.getPitOutTime() == null
                 && ("1".equals(event.getTrackStatus()) || event.getTrackStatus() == null)) {
-            if (lapTime < state.stintBestLap) {
-                state.stintBestLap = lapTime;
+            if (lapTime < state.getStintBestLap()) {
+                state.setStintBestLap(lapTime);
             }
 
             // pace ratio for continuous scoring
-            if (state.stintBestLap > 0 && state.stintBestLap < Double.MAX_VALUE) {
-                state.lastPaceRatio = (lapTime - state.stintBestLap) / state.stintBestLap;
+            if (state.getStintBestLap() > 0 && state.getStintBestLap() < Double.MAX_VALUE) {
+                state.setLastPaceRatio((lapTime - state.getStintBestLap()) / state.getStintBestLap());
             }
 
             // track consecutive slow laps (still needed for filtering one-off blips)
-            if (state.lastPaceRatio > 0.005) {
-                state.consecutiveSlowLaps++;
+            if (state.getLastPaceRatio() > 0.005) {
+                state.setConsecutiveSlowLaps(state.getConsecutiveSlowLaps() + 1);
             } else {
-                state.consecutiveSlowLaps = 0;
+                state.setConsecutiveSlowLaps(0);
             }
         }
 
@@ -386,7 +387,7 @@ public class PitStrategyEvaluator
             if (!lostEmitted && peak >= LOST_CHANCE_PEAK && totalScore < LOST_CHANCE_DROP) {
                 DriverPitState ds = driverStates.get(driver);
                 // only emit if degradation is still worsening (not improvement from new tires)
-                if (ds != null && ds.lastPaceRatio > 0.005) {
+                if (ds != null && ds.getLastPaceRatio() > 0.005) {
                     lostChanceEmitted.put(driver, true);
                     emitAlert(current, totalScore, paceScore, trackStatusScore,
                             traffic, strategyPenalty, urgencyScore, endOfRacePenalty,
@@ -492,16 +493,16 @@ public class PitStrategyEvaluator
         if (state == null || current.getLapTime() == null) {
             return 0.0;
         }
-        if (state.stintBestLap >= Double.MAX_VALUE) {
+        if (state.getStintBestLap() >= Double.MAX_VALUE) {
             return 0.0;
         }
 
         // require at least 1 consecutive slow lap to filter one-off blips
-        if (state.consecutiveSlowLaps < 1) {
+        if (state.getConsecutiveSlowLaps() < 1) {
             return 0.0;
         }
 
-        double paceRatio = state.lastPaceRatio;
+        double paceRatio = state.getLastPaceRatio();
         if (paceRatio <= 0) {
             return 0.0;
         }
@@ -759,21 +760,5 @@ public class PitStrategyEvaluator
         double score = 0;
         int emergencePosition = 0;
         double gapToPhysicalCar = 0;
-    }
-
-    // per-driver strategy tracking state
-    public static class DriverPitState implements java.io.Serializable {
-
-        private static final long serialVersionUID = 2L;
-
-        public int currentStint = -1;
-        public double stintBestLap = Double.MAX_VALUE;
-        public int consecutiveSlowLaps = 0;
-        public String lastCompound;
-        public int lastTyreLife;
-        public double lastPaceRatio = 0.0;  // (lapTime - stintBest) / stintBest
-
-        public DriverPitState() {
-        }
     }
 }
