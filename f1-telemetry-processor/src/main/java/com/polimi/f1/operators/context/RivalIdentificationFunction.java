@@ -34,12 +34,12 @@ public class RivalIdentificationFunction
     public void process(
             Integer lapNumber,
             ProcessWindowFunction<LapEvent, RivalInfoAlert, Integer, TimeWindow>.Context context,
-            Iterable<LapEvent> elements,
+            Iterable<LapEvent> lapEvents,
             Collector<RivalInfoAlert> out) {
 
         // collect all lap events in this window and sort by position
         List<LapEvent> laps = new ArrayList<>();
-        elements.forEach(laps::add);
+        lapEvents.forEach(laps::add);
         laps.sort(Comparator.comparingInt(LapEvent::getPosition));
 
         for (int i = 0; i < laps.size(); i++) {

@@ -3,12 +3,8 @@ package com.polimi.f1;
 import java.time.Duration;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.functions.MapFunction;
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.file.sink.FileSink;
@@ -25,12 +21,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
 import org.apache.flink.streaming.api.windowing.assigners.EventTimeSessionWindows;
-import org.apache.flink.util.Collector;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.polimi.f1.model.input.LapEvent;
 import com.polimi.f1.model.input.TelemetryEvent;
 import com.polimi.f1.model.input.TrackStatusEvent;
@@ -49,6 +40,9 @@ import com.polimi.f1.operators.realtime.DropZoneEvaluator;
 import com.polimi.f1.operators.realtime.LiftCoastDetector;
 import com.polimi.f1.operators.realtime.PitStrategyEvaluator;
 import com.polimi.f1.operators.realtime.TireDropDetector;
+import com.polimi.f1.utils.CsvHeaderMapper;
+import com.polimi.f1.utils.JsonDeserializer;
+import com.polimi.f1.utils.JsonSerializer;
 
 // main flink job: wires kafka sources, event-time watermarks, and all processing pipelines.
 // consumes three topics: f1-telemetry (high-freq car data), f1-laps (per-lap summaries),
@@ -59,7 +53,6 @@ import com.polimi.f1.operators.realtime.TireDropDetector;
 // module c (real-time alerts): lift & coast cep, tire drop detection, drop zone analysis
 public class F1StreamingJob {
 
-    private static final Logger LOG = LoggerFactory.getLogger(F1StreamingJob.class);
     private static final String KAFKA_BOOTSTRAP = "kafka:29092";
 
     public static void main(String[] args) throws Exception {
@@ -73,7 +66,7 @@ public class F1StreamingJob {
 
         // kafka sources
         // high-frequency car telemetry (~4 Hz per driver)
-        KafkaSource<String> telemetrySource = KafkaSource.<String>builder()
+        KafkaSource<String> telemetrySourceFromKafka = KafkaSource.<String>builder()
                 .setBootstrapServers(KAFKA_BOOTSTRAP)
                 .setTopics("f1-telemetry")
                 .setGroupId("f1-telemetry-processor")
@@ -82,7 +75,7 @@ public class F1StreamingJob {
                 .build();
 
         // lap completion events (~1 per driver per ~80s)
-        KafkaSource<String> lapSource = KafkaSource.<String>builder()
+        KafkaSource<String> lapSourceFromKafka = KafkaSource.<String>builder()
                 .setBootstrapServers(KAFKA_BOOTSTRAP)
                 .setTopics("f1-laps")
                 .setGroupId("f1-lap-processor")
@@ -91,7 +84,7 @@ public class F1StreamingJob {
                 .build();
 
         // global track status changes (sparse, ~1-5 per race)
-        KafkaSource<String> trackStatusSource = KafkaSource.<String>builder()
+        KafkaSource<String> trackStatusSourceFromKafka = KafkaSource.<String>builder()
                 .setBootstrapServers(KAFKA_BOOTSTRAP)
                 .setTopics("f1-track-status")
                 .setGroupId("f1-track-status-processor")
@@ -99,13 +92,13 @@ public class F1StreamingJob {
                 .setValueOnlyDeserializer(new SimpleStringSchema())
                 .build();
 
-        // raw streams + deserialization
+        // raw streams from kafka (Json strings). separate streams to allow independent watermarking strategies per event type.
         DataStream<String> rawTelemetry = env
-                .fromSource(telemetrySource, WatermarkStrategy.noWatermarks(), "Kafka: f1-telemetry");
+                .fromSource(telemetrySourceFromKafka, WatermarkStrategy.noWatermarks(), "Kafka: f1-telemetry");
         DataStream<String> rawLaps = env
-                .fromSource(lapSource, WatermarkStrategy.noWatermarks(), "Kafka: f1-laps");
+                .fromSource(lapSourceFromKafka, WatermarkStrategy.noWatermarks(), "Kafka: f1-laps");
         DataStream<String> rawTrackStatus = env
-                .fromSource(trackStatusSource, WatermarkStrategy.noWatermarks(), "Kafka: f1-track-status");
+                .fromSource(trackStatusSourceFromKafka, WatermarkStrategy.noWatermarks(), "Kafka: f1-track-status");
 
         // flatMap drops malformed records (logged, not thrown) to prevent pipeline failures.
         // .returns() is required because generic JsonDeserializer<T> loses type info at runtime (erasure)
@@ -175,6 +168,7 @@ public class F1StreamingJob {
                 .process(new RivalIdentificationFunction())
                 .name("Rival Identification");
 
+        // output stream of RivalInfoAlert (identified rivals and gaps per driver per lap)
         DataStream<RivalInfoAlert> rivalStream = rivalResult;
 
         // ml feature side output: denormalized feature row per driver per lap,
@@ -189,6 +183,15 @@ public class F1StreamingJob {
                 .window(EventTimeSessionWindows.withGap(Duration.ofSeconds(10)))
                 .process(new DrsTrainDetector())
                 .name("DRS Train Detection");
+
+        // module b: ground truth
+        // pit stop evaluation: classifies each pit stop as success (undercut/defend) or failure
+        // by comparing the pitting driver against their net rival (car directly ahead at pit time).
+        // keyed by "RACE" for global field visibility (needs to see all drivers' positions).
+        DataStream<PitStopEvaluationAlert> pitEvals = lapWithWatermarks
+                .keyBy(e -> "RACE")
+                .process(new PitStopEvaluator())
+                .name("Pit Stop Evaluation");
 
         // module c: real-time alerts
         // c1: lift & coast detection (cep)
@@ -229,15 +232,6 @@ public class F1StreamingJob {
                 .connect(broadcastForStrategy)
                 .process(new PitStrategyEvaluator())
                 .name("Pit Strategy Evaluation");
-
-        // module b: ground truth
-        // pit stop evaluation: classifies each pit stop as success (undercut/defend) or failure
-        // by comparing the pitting driver against their net rival (car directly ahead at pit time).
-        // keyed by "RACE" for global field visibility (needs to see all drivers' positions).
-        DataStream<PitStopEvaluationAlert> pitEvals = lapWithWatermarks
-                .keyBy(e -> "RACE")
-                .process(new PitStopEvaluator())
-                .name("Pit Stop Evaluation");
 
         // sinks (print to taskmanager stdout for development)
         // pitEvals and tireDropAlerts are persisted via FileSink and routed via KafkaSink,
@@ -424,50 +418,6 @@ public class F1StreamingJob {
         env.execute("F1 Strategy Operations");
     }
 
-    // generic jackson deserializer, reusable across all event types.
-    // creates one ObjectMapper per parallel instance (not serializable, so transient + open()).
-    private static class JsonDeserializer<T> extends RichFlatMapFunction<String, T> {
-
-        private final Class<T> targetClass;
-        private transient ObjectMapper mapper;
-
-        JsonDeserializer(Class<T> targetClass) {
-            this.targetClass = targetClass;
-        }
-
-        @Override
-        public void open(Configuration parameters) {
-            mapper = new ObjectMapper();
-        }
-
-        @Override
-        public void flatMap(String value, Collector<T> out) {
-            try {
-                out.collect(mapper.readValue(value, targetClass));
-            } catch (JsonProcessingException e) {
-                LOG.warn("Skipping malformed {} record: {}", targetClass.getSimpleName(), value, e);
-            }
-        }
-    }
-
-    // generic jackson serializer for kafka sinks, mirrors JsonDeserializer.
-    // converts pojos to json format (one compact json object per line).
-    // ex: PitStopEvaluationAlert -> {"driver":"VER","pitLapNumber":15,"result":"SUCCESS_UNDERCUT",...}
-    private static class JsonSerializer<T> extends RichMapFunction<T, String> {
-
-        private transient ObjectMapper mapper;
-
-        @Override
-        public void open(Configuration parameters) {
-            mapper = new ObjectMapper();
-        }
-
-        @Override
-        public String map(T value) throws Exception {
-            return mapper.writeValueAsString(value);
-        }
-    }
-
     // creates a standardized rolling policy for csv data lake outputs.
     // rolls files every 15s, after 15s inactivity, or when reaching 10 MB.
     // consistent across all ml dataset sinks for predictable file organization.
@@ -477,37 +427,6 @@ public class F1StreamingJob {
                 .withInactivityInterval(Duration.ofSeconds(15))
                 .withMaxPartSize(MemorySize.ofMebiBytes(10))
                 .build();
-    }
-
-    // emits a csv header as the first row, then delegates to toCsvRow() for data rows.
-    // uses a boolean flag to emit the header exactly once per parallel instance.
-    // ex output: "driver,pitLapNumber,...\nVER,15,..."
-    private static class CsvHeaderMapper<T> implements MapFunction<T, String> {
-
-        private final String header;
-        private final SerializableToCsvRow<T> toCsvRow;
-        private boolean headerEmitted = false;
-
-        CsvHeaderMapper(String header, SerializableToCsvRow<T> toCsvRow) {
-            this.header = header;
-            this.toCsvRow = toCsvRow;
-        }
-
-        @Override
-        public String map(T value) throws Exception {
-            if (!headerEmitted) {
-                headerEmitted = true;
-                return header + "\n" + toCsvRow.apply(value);
-            }
-            return toCsvRow.apply(value);
-        }
-    }
-
-    // functional interface for toCsvRow method references, must be serializable for flink
-    @FunctionalInterface
-    private interface SerializableToCsvRow<T> extends java.io.Serializable {
-
-        String apply(T value);
     }
 
 }
