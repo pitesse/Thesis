@@ -168,6 +168,7 @@ public class F1StreamingJob {
                 .process(new RivalIdentificationFunction())
                 .name("Rival Identification");
 
+        // output stream of RivalInfoAlert (identified rivals and gaps per driver per lap)
         DataStream<RivalInfoAlert> rivalStream = rivalResult;
 
         // ml feature side output: denormalized feature row per driver per lap,
@@ -182,6 +183,15 @@ public class F1StreamingJob {
                 .window(EventTimeSessionWindows.withGap(Duration.ofSeconds(10)))
                 .process(new DrsTrainDetector())
                 .name("DRS Train Detection");
+
+        // module b: ground truth
+        // pit stop evaluation: classifies each pit stop as success (undercut/defend) or failure
+        // by comparing the pitting driver against their net rival (car directly ahead at pit time).
+        // keyed by "RACE" for global field visibility (needs to see all drivers' positions).
+        DataStream<PitStopEvaluationAlert> pitEvals = lapWithWatermarks
+                .keyBy(e -> "RACE")
+                .process(new PitStopEvaluator())
+                .name("Pit Stop Evaluation");
 
         // module c: real-time alerts
         // c1: lift & coast detection (cep)
@@ -222,15 +232,6 @@ public class F1StreamingJob {
                 .connect(broadcastForStrategy)
                 .process(new PitStrategyEvaluator())
                 .name("Pit Strategy Evaluation");
-
-        // module b: ground truth
-        // pit stop evaluation: classifies each pit stop as success (undercut/defend) or failure
-        // by comparing the pitting driver against their net rival (car directly ahead at pit time).
-        // keyed by "RACE" for global field visibility (needs to see all drivers' positions).
-        DataStream<PitStopEvaluationAlert> pitEvals = lapWithWatermarks
-                .keyBy(e -> "RACE")
-                .process(new PitStopEvaluator())
-                .name("Pit Stop Evaluation");
 
         // sinks (print to taskmanager stdout for development)
         // pitEvals and tireDropAlerts are persisted via FileSink and routed via KafkaSink,
