@@ -373,8 +373,13 @@ public class F1StreamingJob {
                 .returns(String.class)
                 .name("Serialize Pit Suggestions (Kafka)");
 
+        DataStream<String> pitEvalsJson = pitEvals
+                .map(new JsonSerializer<>())
+                .returns(String.class)
+                .name("Serialize Pit Evaluations (Kafka)");
+
         DataStream<String> allAlerts = liftCoastJson
-                .union(tireDropsJson, dropZoneJson, pitSuggestionsJson);
+                .union(tireDropsJson, dropZoneJson, pitSuggestionsJson, pitEvalsJson);
 
         KafkaSink<String> alertsSink = KafkaSink.<String>builder()
                 .setBootstrapServers(KAFKA_BOOTSTRAP)
