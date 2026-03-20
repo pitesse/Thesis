@@ -2,7 +2,7 @@
 # simulate_season.sh, bulk data generation for ml training.
 # dynamically fetches the full race calendar for the given year using fastf1,
 # then runs the two-stage python producer for each race to accumulate
-# ground truth csv data in the data_lake directory.
+# ground truth jsonl data in the data_lake directory.
 #
 # pit loss thresholds are embedded per-track by prepare_race.py (upstream enrichment),
 # no manual specification needed.
@@ -138,27 +138,21 @@ for i in "${!RACES[@]}"; do
 	fi
 done
 
-# flink's FileSink produces files like "pit-eval-0-0.csv" or "tire-drop-0-0.csv"
+# flink's FileSink produces files like "pit-eval-0-0.jsonl" plus transient
+# .inprogress parts while the stream is active.
 # under date-partitioned directories (e.g., 2026-03-06--14/). consolidate
-# all part-files into a single csv per sink type with a clear name.
+# all part-files into a single jsonl per sink type with a clear name.
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 for SINK_DIR in pit_evals tire_drops lift_coast drop_zones ml_features; do
 	TARGET_DIR="$PROJECT_DIR/data_lake/$SINK_DIR"
 	if [ -d "$TARGET_DIR" ]; then
-		MERGED_FILE="$PROJECT_DIR/data_lake/${SINK_DIR}_${YEAR}_season_${TIMESTAMP}.csv"
-		HEADER_WRITTEN=false
-		for f in $(find "$TARGET_DIR" -name "*.csv" -type f | sort); do
-			if [ "$HEADER_WRITTEN" = false ]; then
-				cat "$f" >"$MERGED_FILE"
-				HEADER_WRITTEN=true
-			else
-				# skip header line from subsequent files to avoid duplicate headers
-				tail -n +2 "$f" >>"$MERGED_FILE"
-			fi
-		done
-		if [ "$HEADER_WRITTEN" = true ]; then
+		MERGED_FILE="$PROJECT_DIR/data_lake/${SINK_DIR}_${YEAR}_season_${TIMESTAMP}.jsonl"
+		find "$TARGET_DIR" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) -exec cat {} + > "$MERGED_FILE"
+		if [ -s "$MERGED_FILE" ]; then
 			echo " Merged: $MERGED_FILE"
+		else
+			rm -f "$MERGED_FILE"
 		fi
 	fi
 done
@@ -172,10 +166,10 @@ if [ "$FAILED" -gt 0 ]; then
 fi
 echo ""
 echo " Raw output:    data_lake/{pit_evals,tire_drops,lift_coast,drop_zones,ml_features}/"
-echo " Merged CSVs:   data_lake/pit_evals_${YEAR}_season_${TIMESTAMP}.csv"
-echo "                 data_lake/tire_drops_${YEAR}_season_${TIMESTAMP}.csv"
+echo " Merged JSONLs: data_lake/pit_evals_${YEAR}_season_${TIMESTAMP}.jsonl"
+echo "                 data_lake/tire_drops_${YEAR}_season_${TIMESTAMP}.jsonl"
 echo ""
 echo " Wait ~3 min for Flink's rolling policy to finalize the"
-echo " last CSV file, then run the ML pipeline:"
+echo " last JSONL file, then run the ML pipeline:"
 echo "   docker compose run --rm producer python ml_pipeline/train_pit_strategy.py"
 echo "=========================================="

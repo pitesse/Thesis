@@ -40,7 +40,6 @@ import com.polimi.f1.operators.realtime.DropZoneEvaluator;
 import com.polimi.f1.operators.realtime.LiftCoastDetector;
 import com.polimi.f1.operators.realtime.PitStrategyEvaluator;
 import com.polimi.f1.operators.realtime.TireDropDetector;
-import com.polimi.f1.utils.CsvHeaderMapper;
 import com.polimi.f1.utils.JsonDeserializer;
 import com.polimi.f1.utils.JsonSerializer;
 
@@ -63,6 +62,11 @@ public class F1StreamingJob {
         env.enableCheckpointing(10_000);
         env.getCheckpointConfig().setCheckpointStorage(
                 new FileSystemCheckpointStorage("file:///opt/flink/data_lake/checkpoints"));
+        //TODO enabling these slow down the dashboard and json dumping significantly, investigate further and consider re-enabling if they can be optimized.
+        // env.getCheckpointConfig().setCheckpointingMode(
+        //         org.apache.flink.streaming.api.CheckpointingMode.EXACTLY_ONCE);
+        // env.getCheckpointConfig().enableUnalignedCheckpoints();
+        // env.setStateBackend(new org.apache.flink.contrib.streaming.state.EmbeddedRocksDBStateBackend(true));
 
         // kafka sources
         // high-frequency car telemetry (~4 Hz per driver)
@@ -242,28 +246,27 @@ public class F1StreamingJob {
         pitSuggestions.map(PitSuggestionAlert::toString).returns(String.class)
                 .print().name("Pit Suggestions");
 
-        // file sinks (csv for ml dataset generation)
-        // persists ground truth and alert streams to disk as csv (one row per event, header-prefixed).
+        // file sinks (jsonl for ml dataset generation)
+        // persists ground truth and alert streams to disk as newline-delimited json.
         // rolling policy: new file every 15s or 10 MB, whichever comes first.
         // inactivity interval (15s) ensures files are finalized promptly when the simulation ends.
         // output lands in /opt/flink/data_lake/ inside the container, mapped to ./data_lake/ on the host.
-        // serialize pojos to csv rows via toCsvRow(), csv header emitted once via CsvHeaderMapper
-        DataStream<String> pitEvalsCsv = pitEvals
-                .map(new CsvHeaderMapper<>(PitStopEvaluationAlert.CSV_HEADER, PitStopEvaluationAlert::toCsvRow))
+        DataStream<String> pitEvalsJsonStream = pitEvals
+                .map(new JsonSerializer<>())
                 .returns(String.class)
-                .name("Serialize Pit Evaluations (CSV)");
+                .name("Serialize Pit Evaluations (JSONL)");
 
-        DataStream<String> tireDropsCsv = tireDropAlerts
-                .map(new CsvHeaderMapper<>(TireDropAlert.CSV_HEADER, TireDropAlert::toCsvRow))
+        DataStream<String> tireDropsJsonStream = tireDropAlerts
+                .map(new JsonSerializer<>())
                 .returns(String.class)
-                .name("Serialize Tire Drops (CSV)");
+                .name("Serialize Tire Drops (JSONL)");
 
         FileSink<String> pitEvalSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/pit_evals"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-eval")
-                        .withPartSuffix(".csv")
+                        .withPartSuffix(".jsonl")
                         .build())
                 .build();
 
@@ -272,52 +275,52 @@ public class F1StreamingJob {
                 .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("tire-drop")
-                        .withPartSuffix(".csv")
+                        .withPartSuffix(".jsonl")
                         .build())
                 .build();
 
-        pitEvalsCsv.sinkTo(pitEvalSink).name("FileSink: Pit Evaluations").uid("sink-pit-evals");
-        tireDropsCsv.sinkTo(tireDropSink).name("FileSink: Tire Drops").uid("sink-tire-drops");
+        pitEvalsJsonStream.sinkTo(pitEvalSink).name("FileSink: Pit Evaluations").uid("sink-pit-evals");
+        tireDropsJsonStream.sinkTo(tireDropSink).name("FileSink: Tire Drops").uid("sink-tire-drops");
 
-        // lift & coast csv sink
-        DataStream<String> liftCoastCsv = liftCoastAlerts
-                .map(new CsvHeaderMapper<>(LiftCoastAlert.CSV_HEADER, LiftCoastAlert::toCsvRow))
+        // lift & coast jsonl sink
+        DataStream<String> liftCoastJsonStream = liftCoastAlerts
+                .map(new JsonSerializer<>())
                 .returns(String.class)
-                .name("Serialize Lift & Coast (CSV)");
+                .name("Serialize Lift & Coast (JSONL)");
 
         FileSink<String> liftCoastSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/lift_coast"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("lift-coast")
-                        .withPartSuffix(".csv")
+                        .withPartSuffix(".jsonl")
                         .build())
                 .build();
 
-        liftCoastCsv.sinkTo(liftCoastSink).name("FileSink: Lift & Coast").uid("sink-lift-coast");
+        liftCoastJsonStream.sinkTo(liftCoastSink).name("FileSink: Lift & Coast").uid("sink-lift-coast");
 
-        // drop zone csv sink (replaces pit window)
-        DataStream<String> dropZoneCsv = dropZoneAlerts
-                .map(new CsvHeaderMapper<>(DropZoneAlert.CSV_HEADER, DropZoneAlert::toCsvRow))
+        // drop zone jsonl sink (replaces pit window)
+        DataStream<String> dropZoneJsonStream = dropZoneAlerts
+                .map(new JsonSerializer<>())
                 .returns(String.class)
-                .name("Serialize Drop Zones (CSV)");
+                .name("Serialize Drop Zones (JSONL)");
 
         FileSink<String> dropZoneSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/drop_zones"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("drop-zone")
-                        .withPartSuffix(".csv")
+                        .withPartSuffix(".jsonl")
                         .build())
                 .build();
 
-        dropZoneCsv.sinkTo(dropZoneSink).name("FileSink: Drop Zones").uid("sink-drop-zones");
+        dropZoneJsonStream.sinkTo(dropZoneSink).name("FileSink: Drop Zones").uid("sink-drop-zones");
 
-        // pit suggestions csv sink
-        DataStream<String> pitSuggestionsCsv = pitSuggestions
-                .map(new CsvHeaderMapper<>(PitSuggestionAlert.CSV_HEADER, PitSuggestionAlert::toCsvRow))
+        // pit suggestions jsonl sink
+        DataStream<String> pitSuggestionsJsonStream = pitSuggestions
+                .map(new JsonSerializer<>())
                 .returns(String.class)
-                .name("Serialize Pit Suggestions (CSV)");
+                .name("Serialize Pit Suggestions (JSONL)");
 
         FileSink<String> pitSuggestionsSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/pit_suggestions"),
@@ -325,29 +328,29 @@ public class F1StreamingJob {
                 .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-suggestion")
-                        .withPartSuffix(".csv")
+                        .withPartSuffix(".jsonl")
                         .build())
                 .build();
 
-        pitSuggestionsCsv.sinkTo(pitSuggestionsSink)
+        pitSuggestionsJsonStream.sinkTo(pitSuggestionsSink)
                 .name("FileSink: Pit Suggestions").uid("sink-pit-suggestions");
 
-        // ml features csv sink (denormalized per-lap feature rows for model training)
-        DataStream<String> mlFeaturesCsv = mlFeatures
-                .map(new CsvHeaderMapper<>(MLFeatureRow.CSV_HEADER, MLFeatureRow::toCsvRow))
+        // ml features jsonl sink (denormalized per-lap feature rows for model training)
+        DataStream<String> mlFeaturesJsonStream = mlFeatures
+                .map(new JsonSerializer<>())
                 .returns(String.class)
-                .name("Serialize ML Features (CSV)");
+                .name("Serialize ML Features (JSONL)");
 
         FileSink<String> mlFeaturesSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/ml_features"), new SimpleStringEncoder<String>("UTF-8"))
                 .withRollingPolicy(buildCsvRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("ml-features")
-                        .withPartSuffix(".csv")
+                        .withPartSuffix(".jsonl")
                         .build())
                 .build();
 
-        mlFeaturesCsv.sinkTo(mlFeaturesSink).name("FileSink: ML Features").uid("sink-ml-features");
+        mlFeaturesJsonStream.sinkTo(mlFeaturesSink).name("FileSink: ML Features").uid("sink-ml-features");
 
         // kafka sink (route alerts to dashboard via f1-alerts topic)
         // the dashboard subscribes to f1-alerts to display live strategic alerts.
