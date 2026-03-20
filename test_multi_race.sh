@@ -4,7 +4,7 @@
 # back-to-back races to verify that:
 #   1. flink state (DropZoneEvaluator MapState, TireDropDetector stint state,
 #      PitStopEvaluator state machine) clears correctly between races
-#   2. the data lake accumulates CSVs from both races without corruption
+#   2. the data lake accumulates JSONL outputs from both races without corruption
 #   3. checkpointing commits files between race boundaries
 #
 # usage:
@@ -98,8 +98,8 @@ echo "       Draining (20s for checkpoint + watermark advance)..."
 sleep 20
 
 # snapshot data lake after race 1
-RACE1_FILES=$(find "$PROJECT_DIR/data_lake" -name "*.csv" -type f 2>/dev/null | wc -l)
-echo "       Race 1 complete. CSV files in data_lake: $RACE1_FILES"
+RACE1_FILES=$(find "$PROJECT_DIR/data_lake" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) 2>/dev/null | wc -l)
+echo "       Race 1 complete. JSONL/inprogress files in data_lake: $RACE1_FILES"
 
 # ===========================
 # 4. race 2
@@ -122,16 +122,16 @@ sleep 20
 echo ""
 echo "[5/6] Verifying Data Lake output..."
 
-TOTAL_FILES=$(find "$PROJECT_DIR/data_lake" -name "*.csv" -type f 2>/dev/null | wc -l)
-echo "       Total CSV files: $TOTAL_FILES (was $RACE1_FILES after race 1)"
+TOTAL_FILES=$(find "$PROJECT_DIR/data_lake" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) 2>/dev/null | wc -l)
+echo "       Total JSONL/inprogress files: $TOTAL_FILES (was $RACE1_FILES after race 1)"
 
 # check each sink directory for content
 for SINK in pit_evals tire_drops lift_coast drop_zones ml_features; do
 	DIR="$PROJECT_DIR/data_lake/$SINK"
 	if [ -d "$DIR" ]; then
-		COUNT=$(find "$DIR" -name "*.csv" -type f 2>/dev/null | wc -l)
+		COUNT=$(find "$DIR" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) 2>/dev/null | wc -l)
 		LINES=0
-		for f in $(find "$DIR" -name "*.csv" -type f 2>/dev/null); do
+		for f in $(find "$DIR" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) 2>/dev/null); do
 			LINES=$((LINES + $(wc -l < "$f")))
 		done
 		echo "       $SINK: $COUNT files, $LINES total lines"
@@ -142,7 +142,7 @@ done
 
 # verify both races appear in the data
 echo ""
-echo "       Checking race names in CSV data..."
+echo "       Checking race names in JSONL data..."
 for SINK in pit_evals drop_zones ml_features; do
 	DIR="$PROJECT_DIR/data_lake/$SINK"
 	if [ -d "$DIR" ]; then
