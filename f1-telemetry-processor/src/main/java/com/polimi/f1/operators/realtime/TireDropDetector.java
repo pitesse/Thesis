@@ -1,6 +1,9 @@
 package com.polimi.f1.operators.realtime;
 
+import java.time.Duration;
+
 import org.apache.flink.api.common.functions.OpenContext;
+import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
@@ -63,12 +66,25 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
 
     @Override
     public void open(OpenContext openContext) {
-        currentStint = getRuntimeContext().getState(
-                new ValueStateDescriptor<>("current-stint", Types.INT));
-        stintBestLap = getRuntimeContext().getState(
-                new ValueStateDescriptor<>("stint-best-lap", Types.DOUBLE));
-        consecutiveSlowLaps = getRuntimeContext().getState(
-                new ValueStateDescriptor<>("consecutive-slow-laps", Types.INT));
+        StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Duration.ofHours(2))
+            .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+            .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+            .build();
+
+        ValueStateDescriptor<Integer> currentStintDesc =
+            new ValueStateDescriptor<>("current-stint", Types.INT);
+        currentStintDesc.enableTimeToLive(ttlConfig);
+        currentStint = getRuntimeContext().getState(currentStintDesc);
+
+        ValueStateDescriptor<Double> stintBestDesc =
+            new ValueStateDescriptor<>("stint-best-lap", Types.DOUBLE);
+        stintBestDesc.enableTimeToLive(ttlConfig);
+        stintBestLap = getRuntimeContext().getState(stintBestDesc);
+
+        ValueStateDescriptor<Integer> slowLapsDesc =
+            new ValueStateDescriptor<>("consecutive-slow-laps", Types.INT);
+        slowLapsDesc.enableTimeToLive(ttlConfig);
+        consecutiveSlowLaps = getRuntimeContext().getState(slowLapsDesc);
     }
 
     @Override
@@ -127,7 +143,8 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
         double thresholdTime = best * (1.0 + threshold);
 
         if (lapTimeSec > thresholdTime) {
-            int consecutive = consecutiveSlowLaps.value() != null ? consecutiveSlowLaps.value() : 0;
+            Integer previousSlowLaps = consecutiveSlowLaps.value();
+            int consecutive = previousSlowLaps != null ? previousSlowLaps : 0;
             consecutive++;
             consecutiveSlowLaps.update(consecutive);
 
