@@ -13,7 +13,7 @@ import java.io.Serializable;
  */
 public class PitCycle implements Serializable {
 
-    private static final long serialVersionUID = 3L;
+    private static final long serialVersionUID = 4L;
 
     // basic pit cycle info
     private String driver;
@@ -42,6 +42,7 @@ public class PitCycle implements Serializable {
     // resolution tracking
     private CycleState state;
     private int settleLap;
+    private int greenLapsSincePit = 0;
     private int offsetTimeoutLap;
     private long safetyTimerTimestamp;
     private Double gapToCarAheadAtPit;
@@ -215,6 +216,14 @@ public class PitCycle implements Serializable {
 
     public void setSettleLap(int settleLap) {
         this.settleLap = settleLap;
+    }
+
+    public int getGreenLapsSincePit() {
+        return greenLapsSincePit;
+    }
+
+    public void setGreenLapsSincePit(int greenLapsSincePit) {
+        this.greenLapsSincePit = greenLapsSincePit;
     }
 
     public int getOffsetTimeoutLap() {

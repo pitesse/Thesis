@@ -34,7 +34,7 @@ public class DrsTrainDetector
 
         List<RivalInfoAlert> rivals = new ArrayList<>();
         elements.forEach(rivals::add);
-        rivals.sort(Comparator.comparingInt(RivalInfoAlert::getPosition));
+        rivals.sort(Comparator.comparing(RivalInfoAlert::getPosition));
 
         if (rivals.size() < 2) {
             return;

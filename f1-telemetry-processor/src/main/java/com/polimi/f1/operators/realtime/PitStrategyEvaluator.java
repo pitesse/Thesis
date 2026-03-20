@@ -4,12 +4,13 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 
 import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.StateTtlConfig;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.streaming.api.functions.co.KeyedBroadcastProcessFunction;
@@ -28,8 +29,9 @@ import com.polimi.f1.state.realtime.DriverPitState;
 // previous implementation.
 //
 // architecture: KeyedBroadcastProcessFunction receiving lap events (keyed by "RACE")
-// and broadcast track status changes. the broadcast path enables immediate urgency
-// evaluation when SC/VSC deploys, without waiting for next lap completion (~80s latency).
+// and broadcast track status changes. strategy is evaluated instantly using a
+// continuous O(1) snapshot of the physical grid from latestGridState,
+// filtering out retired or ghost cars.
 //
 // scoring dimensions (all continuous except track status):
 //   pace:     0-30, power 1.5 curve: 30 * min(1.0, (paceRatio / 0.03)^1.5)
@@ -52,7 +54,7 @@ import com.polimi.f1.state.realtime.DriverPitState;
 // while degradation worsens, emits LOST_CHANCE once per stint.
 //
 // keyed by constant "RACE" for global position-ladder visibility (same as DropZoneEvaluator).
-// leader-driven trigger: P1 finishing lap N triggers evaluation of lap N-1.
+// max-lap trigger advances global race progress and refreshes snapshot-based evaluation.
 public class PitStrategyEvaluator
         extends KeyedBroadcastProcessFunction<String, LapEvent, TrackStatusEvent, PitSuggestionAlert> {
 
@@ -99,7 +101,7 @@ public class PitStrategyEvaluator
     private static final double LOST_CHANCE_DROP = 40.0;
 
     // default max stint estimates per compound when no observation is available yet
-    private static final int DEFAULT_SOFT_STINT = 18;
+    private static final int DEFAULT_SOFT_STINT = 18; //TODO these values may be better as percenteges of race length rather than fixed lap counts
     private static final int DEFAULT_MEDIUM_STINT = 30;
     private static final int DEFAULT_HARD_STINT = 40;
     private static final int DEFAULT_WET_STINT = 25;
@@ -114,11 +116,11 @@ public class PitStrategyEvaluator
     // meaningless aligns with ~4 laps remaining in a 50-lap race.
     private static final double EOR_SIGMOID_MIDPOINT = 0.92;
 
-    // flat state accumulating all lap events, key format: "lapNumber:driver"
-    private transient MapState<String, LapEvent> lapEvents;
-
     // per-driver strategy tracking, key = driver abbreviation
     private transient MapState<String, DriverPitState> driverStates;
+
+    // latest event per driver, used to build an always-current full grid snapshot
+    private transient MapState<String, LapEvent> latestGridState;
 
     // global maximum observed stint length per compound across all drivers
     private transient MapState<String, Integer> maxStintByCompound;
@@ -138,8 +140,11 @@ public class PitStrategyEvaluator
     // per-driver flag: whether LOST_CHANCE has been emitted this stint
     private transient MapState<String, Boolean> lostChanceEmitted;
 
-    // cache the most recent completed lap number for urgency fast-path
+    // cache latest observed race progress for broadcast urgency fast-path
     private transient MapState<String, Integer> lastCompletedLap;
+
+    // max observed lap across all events, used as a stall-safe progress trigger
+    private transient ValueState<Integer> maxLapState;
 
     @Override
     public void open(OpenContext openContext) {
@@ -149,15 +154,15 @@ public class PitStrategyEvaluator
                 .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
                 .build();
 
-        MapStateDescriptor<String, LapEvent> lapDesc
-                = new MapStateDescriptor<>("strategy-lap-events", String.class, LapEvent.class);
-        lapDesc.enableTimeToLive(ttlConfig);
-        lapEvents = getRuntimeContext().getMapState(lapDesc);
-
         MapStateDescriptor<String, DriverPitState> driverDesc
                 = new MapStateDescriptor<>("strategy-driver-states", String.class, DriverPitState.class);
         driverDesc.enableTimeToLive(ttlConfig);
         driverStates = getRuntimeContext().getMapState(driverDesc);
+
+        MapStateDescriptor<String, LapEvent> latestGridDesc
+                = new MapStateDescriptor<>("strategy-latest-grid", Types.STRING, Types.POJO(LapEvent.class));
+        latestGridDesc.enableTimeToLive(ttlConfig);
+        latestGridState = getRuntimeContext().getMapState(latestGridDesc);
 
         MapStateDescriptor<String, Integer> maxStintDesc
                 = new MapStateDescriptor<>("strategy-max-stint", Types.STRING, Types.INT);
@@ -193,13 +198,14 @@ public class PitStrategyEvaluator
                 = new MapStateDescriptor<>("strategy-last-completed-lap", Types.STRING, Types.INT);
         lastLapDesc.enableTimeToLive(ttlConfig);
         lastCompletedLap = getRuntimeContext().getMapState(lastLapDesc);
+
+        ValueStateDescriptor<Integer> maxLapDesc
+                = new ValueStateDescriptor<>("strategy-max-lap", Types.INT);
+        maxLapDesc.enableTimeToLive(ttlConfig);
+        maxLapState = getRuntimeContext().getState(maxLapDesc);
     }
 
-    private static String stateKey(int lap, String driver) {
-        return lap + ":" + driver;
-    }
-
-    // lap-driven evaluation: normal path, triggered on every lap completion
+    // data-driven evaluation path, updates snapshot and triggers scoring on race progress
     @Override
     public void processElement(LapEvent event,
             KeyedBroadcastProcessFunction<String, LapEvent, TrackStatusEvent, PitSuggestionAlert>.ReadOnlyContext ctx,
@@ -207,26 +213,31 @@ public class PitStrategyEvaluator
         int lap = event.getLapNumber();
         String driver = event.getDriver();
 
-        lapEvents.put(stateKey(lap, driver), event);
+        latestGridState.put(driver, event);
         updateMaxStint(event);
         updateDriverState(event);
 
-        // leader-driven trigger: when P1 finishes lap N, evaluate lap N-1
-        if (event.getPosition() == 1 && lap > 1) {
-            int previousLap = lap - 1;
-            lastCompletedLap.put("latest", previousLap);
-            List<LapEvent> previousLapEvents = collectLap(previousLap);
-            if (!previousLapEvents.isEmpty()) {
-                String trackStatus = readTrackStatus(ctx);
-                evaluateAll(previousLapEvents, trackStatus, out);
-                removeLap(previousLap, previousLapEvents);
+        Integer maxLap = maxLapState.value();
+        if (maxLap == null) {
+            maxLap = 0;
+        }
+
+        if (lap > maxLap) {
+            maxLapState.update(lap);
+            if (lap > 1) {
+                int previousLap = lap - 1;
+                lastCompletedLap.put("latest", previousLap);
+                List<LapEvent> currentGrid = collectFreshGrid(lap);
+                if (!currentGrid.isEmpty()) {
+                    String trackStatus = readTrackStatus(ctx);
+                    evaluateAll(currentGrid, trackStatus, out);
+                }
             }
         }
     }
 
-    // broadcast-driven urgency: fires immediately when SC/VSC deploys.
-    // iterates all drivers on the most recent completed lap, re-evaluates with +60 track bonus.
-    // gives ~0-5s latency vs ~80s wait for next lap completion.
+    // broadcast-driven urgency path, fires immediately when SC/VSC deploys
+    // re-evaluates the filtered physical-grid snapshot with current track status
     @Override
     public void processBroadcastElement(TrackStatusEvent statusEvent,
             KeyedBroadcastProcessFunction<String, LapEvent, TrackStatusEvent, PitSuggestionAlert>.Context ctx,
@@ -240,15 +251,15 @@ public class PitStrategyEvaluator
 
         LOG.info("sc/vsc urgency trigger: status={}", status);
 
-        // re-evaluate all drivers using the most recent completed lap data
+        // re-evaluate all drivers using latest observed race progress
         Integer latestLap = lastCompletedLap.get("latest");
         if (latestLap == null) {
             return;
         }
 
-        List<LapEvent> latestLapEvents = collectLap(latestLap);
-        if (!latestLapEvents.isEmpty()) {
-            evaluateAll(latestLapEvents, status, out);
+        List<LapEvent> currentGrid = collectFreshGrid(latestLap);
+        if (!currentGrid.isEmpty()) {
+            evaluateAll(currentGrid, status, out);
         }
     }
 
@@ -260,21 +271,17 @@ public class PitStrategyEvaluator
         return status != null ? status : "1";
     }
 
-    // when a driver's stint changes, record the tyre life as max observed for that compound
+    // updates max observed tyre life per compound in real time, each lap
     private void updateMaxStint(LapEvent event) throws Exception {
-        DriverPitState state = driverStates.get(event.getDriver());
-        if (state == null) {
+        String compound = event.getCompound();
+        if (compound == null) {
             return;
         }
 
-        if (state.getCurrentStint() != -1
-                && state.getCurrentStint() != event.getStint()
-                && state.getLastCompound() != null) {
-            String prevCompound = state.getLastCompound();
-            Integer current = maxStintByCompound.get(prevCompound);
-            if (current == null || state.getLastTyreLife() > current) {
-                maxStintByCompound.put(prevCompound, state.getLastTyreLife());
-            }
+        Integer currentMax = maxStintByCompound.get(compound);
+        int tyreLife = event.getTyreLife();
+        if (currentMax == null || tyreLife > currentMax) {
+            maxStintByCompound.put(compound, tyreLife);
         }
     }
 
@@ -323,21 +330,24 @@ public class PitStrategyEvaluator
         driverStates.put(driver, state);
     }
 
-    private List<LapEvent> collectLap(int lap) throws Exception {
-        String prefix = lap + ":";
-        List<LapEvent> result = new ArrayList<>();
-        for (Map.Entry<String, LapEvent> entry : lapEvents.entries()) {
-            if (entry.getKey().startsWith(prefix)) {
-                result.add(entry.getValue());
+    private List<LapEvent> collectFreshGrid(int leaderLap) throws Exception {
+        List<LapEvent> currentGrid = new ArrayList<>();
+        List<String> staleDrivers = new ArrayList<>();
+
+        for (LapEvent e : latestGridState.values()) {
+            if (e.getLapNumber() >= leaderLap - 3) {
+                currentGrid.add(e);
+            }
+            if (e.getLapNumber() < leaderLap - 3) {
+                staleDrivers.add(e.getDriver());
             }
         }
-        return result;
-    }
 
-    private void removeLap(int lap, List<LapEvent> events) throws Exception {
-        for (LapEvent e : events) {
-            lapEvents.remove(stateKey(lap, e.getDriver()));
+        for (String staleDriver : staleDrivers) {
+            latestGridState.remove(staleDriver);
         }
+
+        return currentGrid;
     }
 
     // evaluates the pit desirability score for each eligible driver
@@ -359,7 +369,7 @@ public class PitStrategyEvaluator
 
             double paceScore = computePaceScore(current);
             int trackStatusScore = computeTrackStatusScore(currentTrackStatus);
-            TrafficResult traffic = computeTrafficResult(current, laps, i);
+            TrafficResult traffic = computeTrafficResult(current, laps, i, currentTrackStatus);
             double strategyPenalty = computeStrategyPenalty(current);
             double urgencyScore = computeUrgencyScore(current);
             double endOfRacePenalty = computeEndOfRacePenalty(current);
@@ -400,8 +410,10 @@ public class PitStrategyEvaluator
                 continue;
             }
 
+            SuggestionLabel label = classifyScore(totalScore);
+
             // emit-gate: check if we should suppress this alert
-            if (!shouldEmit(driver, current.getStint(), totalScore, currentTrackStatus)) {
+            if (!shouldEmit(driver, current.getStint(), totalScore, currentTrackStatus, label)) {
                 continue;
             }
 
@@ -410,7 +422,6 @@ public class PitStrategyEvaluator
             lastEmittedStint.put(driver, current.getStint());
             lastEmittedTrackStatus.put(driver, currentTrackStatus);
 
-            SuggestionLabel label = classifyScore(totalScore);
             emitAlert(current, totalScore, paceScore, trackStatusScore,
                     traffic, strategyPenalty, urgencyScore, endOfRacePenalty,
                     currentTrackStatus, label, out);
@@ -452,7 +463,7 @@ public class PitStrategyEvaluator
 
     // emit-gate: suppresses re-emission unless score escalated or track status changed
     private boolean shouldEmit(String driver, int currentStint, double currentScore,
-            String currentTrackStatus) throws Exception {
+            String currentTrackStatus, SuggestionLabel currentLabel) throws Exception {
         Integer prevStint = lastEmittedStint.get(driver);
         Double prevScore = lastEmittedScore.get(driver);
 
@@ -464,14 +475,20 @@ public class PitStrategyEvaluator
             return true;
         }
 
+        // class changed, always emit to keep dashboard and ml timeline aligned
+        SuggestionLabel prevLabel = classifyScore(prevScore);
+        if (currentLabel != prevLabel) {
+            return true;
+        }
+
         // track status changed -> re-emit (new opportunity)
         String prevTrackStatus = lastEmittedTrackStatus.get(driver);
         if (prevTrackStatus != null && !prevTrackStatus.equals(currentTrackStatus)) {
             return true;
         }
 
-        // score escalated by >= RE_EMIT_DELTA
-        return (currentScore - prevScore) >= RE_EMIT_DELTA;
+        // score moved enough in either direction, emit escalation or downgrade
+        return Math.abs(currentScore - prevScore) >= RE_EMIT_DELTA;
     }
 
     // classifies continuous score into discrete label for pit wall decision
@@ -531,11 +548,15 @@ public class PitStrategyEvaluator
     // 0.0-1.0s -> linear -30 to 0 (DRS danger zone)
     // < 0.0s -> -30 (stuck behind)
     // bonus +5 if car ahead has old tires (easy pass)
-    private TrafficResult computeTrafficResult(LapEvent current, List<LapEvent> laps, int posIndex) {
+    private TrafficResult computeTrafficResult(
+            LapEvent current,
+            List<LapEvent> laps,
+            int posIndex,
+            String currentTrackStatus) {
         TrafficResult result = new TrafficResult();
         result.emergencePosition = current.getPosition();
 
-        Double pitLoss = selectPitLoss(current);
+        Double pitLoss = selectPitLoss(current, currentTrackStatus);
         if (pitLoss == null) {
             return result;
         }
@@ -665,18 +686,15 @@ public class PitStrategyEvaluator
     private static double computeEndOfRacePenalty(LapEvent current) {
         int totalLaps = current.getTotalLaps();
         if (totalLaps <= 0) {
-            return 0.0; // TODO we always get 0 totalLaps so end of race computation never triggers. need to fix upstream to populate totalLaps correctly.
+            return 0.0;
         }
         double raceCompletionRatio = (double) current.getLapNumber() / totalLaps;
         return -100.0 / (1.0 + Math.exp(-EOR_SIGMOID_K * (raceCompletionRatio - EOR_SIGMOID_MIDPOINT)));
     }
 
     // selects pit loss based on track status (green, sc, vsc)
-    private static Double selectPitLoss(LapEvent lap) {
-        String status = lap.getTrackStatus();
-        if (status == null) {
-            status = "1";
-        }
+    private static Double selectPitLoss(LapEvent lap, String currentTrackStatus) {
+        String status = currentTrackStatus != null ? currentTrackStatus : "1";
         return switch (status) {
             case "1" ->
                 lap.getPitLoss();
