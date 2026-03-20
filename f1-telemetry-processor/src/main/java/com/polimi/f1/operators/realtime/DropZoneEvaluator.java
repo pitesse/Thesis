@@ -1,13 +1,16 @@
 package com.polimi.f1.operators.realtime;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 
 import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.StateTtlConfig;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
@@ -49,18 +52,28 @@ public class DropZoneEvaluator
     // minimum tire age (laps) before strategic pit stop evaluation is meaningful
     private static final int MIN_TYRE_LIFE = 8;
 
-    // flat state accumulating lap events across the entire field.
-    // key format: "lapNumber:driver", e.g. "15:VER"
-    private transient MapState<String, LapEvent> lapEvents;
+        // latest event per driver, used as a compact physical-grid snapshot
+        private transient MapState<String, LapEvent> latestGridState;
+
+        // max observed lap across all events, used as a stall-safe trigger
+        private transient ValueState<Integer> maxLapState;
 
     @Override
     public void open(OpenContext openContext) {
-        lapEvents = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("lap-events", String.class, LapEvent.class));
-    }
+        StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Duration.ofHours(2))
+            .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+            .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+            .build();
 
-    private static String stateKey(int lap, String driver) {
-        return lap + ":" + driver;
+        MapStateDescriptor<String, LapEvent> gridDesc
+            = new MapStateDescriptor<>("drop-zone-latest-grid", String.class, LapEvent.class);
+        gridDesc.enableTimeToLive(ttlConfig);
+        latestGridState = getRuntimeContext().getMapState(gridDesc);
+
+        ValueStateDescriptor<Integer> maxLapDesc
+            = new ValueStateDescriptor<>("drop-zone-max-lap", Integer.class);
+        maxLapDesc.enableTimeToLive(ttlConfig);
+        maxLapState = getRuntimeContext().getState(maxLapDesc);
     }
 
     // accumulates each incoming lap event and checks for the leader trigger.
@@ -68,37 +81,27 @@ public class DropZoneEvaluator
     @Override
     public void processElement(LapEvent event, Context ctx, Collector<DropZoneAlert> out) throws Exception {
         int lap = event.getLapNumber();
-        lapEvents.put(stateKey(lap, event.getDriver()), event);
+        latestGridState.put(event.getDriver(), event);
 
-        // leader-driven trigger: when P1 finishes lap N, evaluate lap N-1
-        if (event.getPosition() == 1) {
+        Integer maxLap = maxLapState.value();
+        if (maxLap == null) {
+            maxLap = 0;
+        }
+
+        if (lap > maxLap) {
+            maxLapState.update(lap);
+
             if (lap > 1) {
-                int previousLap = lap - 1;
-                List<LapEvent> previousLapEvents = collectLap(previousLap);
-                if (!previousLapEvents.isEmpty()) {
-                    evaluate(previousLapEvents, out);
-                    removeLap(previousLap, previousLapEvents);
+                List<LapEvent> currentGrid = new ArrayList<>();
+                for (LapEvent e : latestGridState.values()) {
+                    if (lap - e.getLapNumber() <= 3) {
+                        currentGrid.add(e);
+                    }
+                }
+                if (!currentGrid.isEmpty()) {
+                    evaluate(currentGrid, out);
                 }
             }
-        }
-    }
-
-    // collects all events for a given lap number by scanning the flat map for matching prefix
-    private List<LapEvent> collectLap(int lap) throws Exception {
-        String prefix = lap + ":";
-        List<LapEvent> result = new ArrayList<>();
-        for (Map.Entry<String, LapEvent> entry : lapEvents.entries()) {
-            if (entry.getKey().startsWith(prefix)) {
-                result.add(entry.getValue());
-            }
-        }
-        return result;
-    }
-
-    // removes all entries for a completed lap to bound state memory growth
-    private void removeLap(int lap, List<LapEvent> events) throws Exception {
-        for (LapEvent e : events) {
-            lapEvents.remove(stateKey(lap, e.getDriver()));
         }
     }
 
