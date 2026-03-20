@@ -46,6 +46,9 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
     // floor to prevent threshold from going negative on late-race hot laps
     private static final double MIN_THRESHOLD_PCT = 0.005;
 
+    // anomaly filter, ignores single laps that are far above stint pace
+    private static final double ANOMALY_MULTIPLIER = 1.07;
+
     // consecutive laps above threshold required before emitting alert.
     // single-lap spikes (traffic, mistake) are filtered, two consecutive laps
     // confirm a systematic tire performance cliff.
@@ -96,6 +99,15 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
         // skip laps with missing lap time (can happen with data quality issues)
         Double lapTimeSec = lap.getLapTime();
         if (lapTimeSec == null || lapTimeSec <= 0) {
+            return;
+        }
+
+        // ignore lockups or heavy traffic spikes, they are not tire degradation
+        Double stintBestValue = stintBestLap.value();
+        if (stintBestValue != null
+                && stintBestValue < Double.MAX_VALUE
+                && lapTimeSec > stintBestValue * ANOMALY_MULTIPLIER) {
+            consecutiveSlowLaps.update(0);
             return;
         }
 
