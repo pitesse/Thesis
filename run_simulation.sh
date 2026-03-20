@@ -174,6 +174,28 @@ docker compose -f "$COMPOSE_FILE" run --rm producer \
 	--speed "$SPEED" \
 	--start-lap "$START_LAP"
 
+# ===========================
+# 8. consolidate sink outputs for this race
+# ===========================
+# FileSink may leave the latest valid records in .inprogress parts when the
+# stream becomes idle after the producer exits. consolidate both committed
+# jsonl and hidden .inprogress parts into a single race-level jsonl per sink.
+echo "[8/8] Consolidating race outputs (jsonl + inprogress)..."
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+for SINK_DIR in pit_evals tire_drops lift_coast drop_zones ml_features pit_suggestions; do
+	TARGET_DIR="$PROJECT_DIR/data_lake/$SINK_DIR"
+	if [ -d "$TARGET_DIR" ]; then
+		MERGED_FILE="$PROJECT_DIR/data_lake/${SINK_DIR}_${YEAR}_${SAFE_RACE}_${SESSION}_${TIMESTAMP}.jsonl"
+		find "$TARGET_DIR" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) -exec cat {} + > "$MERGED_FILE"
+		if [ -s "$MERGED_FILE" ]; then
+			echo "       Merged: $MERGED_FILE"
+		else
+			rm -f "$MERGED_FILE"
+		fi
+	fi
+done
+
 echo ""
 echo "========================================"
 echo " Simulation complete."

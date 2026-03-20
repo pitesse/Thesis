@@ -34,7 +34,7 @@ public class DrsTrainDetector
 
         List<RivalInfoAlert> rivals = new ArrayList<>();
         elements.forEach(rivals::add);
-        rivals.sort(Comparator.comparingInt(RivalInfoAlert::getPosition));
+        rivals.sort(Comparator.comparing(RivalInfoAlert::getPosition));
 
         if (rivals.size() < 2) {
             return;
@@ -52,14 +52,14 @@ public class DrsTrainDetector
             if (gap != null && gap < DRS_THRESHOLD_SECONDS) {
                 currentTrain.add(current);
             } else {
-                if (currentTrain.size() >= 2) {
+                if (currentTrain.size() >= 3) {
                     trains.add(currentTrain);
                 }
                 currentTrain = new ArrayList<>();
                 currentTrain.add(current);
             }
         }
-        if (currentTrain.size() >= 2) {
+        if (currentTrain.size() >= 3) {
             trains.add(currentTrain);
         }
 

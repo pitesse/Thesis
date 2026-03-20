@@ -52,6 +52,8 @@ services:
     command: jobmanager
     environment:
       - JOB_MANAGER_RPC_ADDRESS=jobmanager
+    volumes:
+      - ./data_lake:/opt/flink/data_lake
 
   taskmanager:
     build:
