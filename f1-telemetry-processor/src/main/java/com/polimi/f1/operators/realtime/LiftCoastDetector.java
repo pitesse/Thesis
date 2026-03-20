@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.flink.api.common.functions.OpenContext;
+import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.cep.CEP;
@@ -153,9 +154,15 @@ public class LiftCoastDetector {
 
         @Override
         public void open(OpenContext openContext) {
-            lastCompositeKey = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("lastLiftBrake", String.class)
-            );
+            StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Duration.ofHours(2))
+                .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+                .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+                .build();
+
+            ValueStateDescriptor<String> dedupDesc =
+                new ValueStateDescriptor<>("lastLiftBrake", String.class);
+            dedupDesc.enableTimeToLive(ttlConfig);
+            lastCompositeKey = getRuntimeContext().getState(dedupDesc);
         }
 
         @Override

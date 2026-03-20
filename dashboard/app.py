@@ -27,7 +27,7 @@ TOPIC_TRACK_STATUS = "f1-track-status"
 TOPIC_ALERTS = "f1-alerts"
 
 # max laps to keep in the gap evolution chart history
-GAP_HISTORY_MAX_LAPS = 40
+GAP_HISTORY_MAX_LAPS = 70
 
 # max alerts to keep per category in session state
 MAX_ALERTS_PER_CATEGORY = 20
