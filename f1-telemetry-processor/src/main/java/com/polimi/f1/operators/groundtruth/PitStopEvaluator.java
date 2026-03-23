@@ -55,6 +55,12 @@ public class PitStopEvaluator
     // safety timeout: 15 minutes event time to clear stale records
     private static final long TIMER_TIMEOUT_MS = 900_000;
 
+    private static final int RECENT_LAP_WINDOW = 3;
+    private static final int RIVAL_LOOKBACK_EXTRA_LAPS = 2;
+    private static final int GAP_SEARCH_WINDOW = 3;
+    private static final int TIMER_FALLBACK_LOOKBACK = 5;
+    private static final double TRAFFIC_GAP_THRESHOLD_SECONDS = 2.0;
+
     // percentage thresholds for gap classification (as % of baseline lap time)
     // ex: 0.5% of 80s baseline = 0.4s, of 105s baseline = 0.525s
     private static final double UNDERCUT_THRESHOLD_PCT = 0.5;
@@ -131,6 +137,10 @@ public class PitStopEvaluator
     @Override
     public void processElement(LapEvent event, Context ctx, Collector<PitStopEvaluationAlert> out)
             throws Exception {
+        if (event == null || event.getDriver() == null || event.getLapNumber() <= 0) {
+            return;
+        }
+
         int lap = event.getLapNumber();
         String driver = event.getDriver();
 
@@ -314,7 +324,7 @@ public class PitStopEvaluator
                 cycle.getPitLap(), currentLap);
 
         // overcut check: rival pitted in the window before our pit (within SETTLE_LAPS + 2 laps)
-        int lookbackStart = Math.max(1, cycle.getPitLap() - SETTLE_LAPS - 2);
+        int lookbackStart = Math.max(1, cycle.getPitLap() - SETTLE_LAPS - RIVAL_LOOKBACK_EXTRA_LAPS);
         boolean rivalPittedBefore = hasRivalPittedInRange(cycle.getPrimaryRival(),
                 lookbackStart, cycle.getPitLap());
 
@@ -338,10 +348,10 @@ public class PitStopEvaluator
             int comparisonLap = Math.max(cycle.getSettleLap(), rivalSettleLap);
 
             Double postGap = findGapNearLap(cycle.getDriver(), cycle.getPrimaryRival(), comparisonLap);
-            if (postGap == null && currentLap >= comparisonLap + 2) {
+            if (postGap == null && currentLap >= comparisonLap + RIVAL_LOOKBACK_EXTRA_LAPS) {
                 postGap = findGapNearLap(cycle.getDriver(), cycle.getPrimaryRival(), cycle.getSettleLap());
             }
-            if (postGap == null && currentLap < comparisonLap + 3) {
+            if (postGap == null && currentLap < comparisonLap + GAP_SEARCH_WINDOW) {
                 return false; // wait for more data
             }
 
@@ -512,7 +522,7 @@ public class PitStopEvaluator
         if (gap != null) {
             return gap;
         }
-        for (int offset = 1; offset <= 3; offset++) {
+        for (int offset = 1; offset <= GAP_SEARCH_WINDOW; offset++) {
             gap = computeDirectedGap(driverA, driverB, targetLap - offset);
             if (gap != null) {
                 return gap;
@@ -546,7 +556,7 @@ public class PitStopEvaluator
         List<String> staleDrivers = new ArrayList<>();
         for (String d : driverLatestLap.keys()) {
             Integer latestLap = driverLatestLap.get(d);
-            if (latestLap == null || maxLap - latestLap > 3) {
+            if (latestLap == null || maxLap - latestLap > RECENT_LAP_WINDOW) {
                 staleDrivers.add(d);
                 continue;
             }
@@ -555,7 +565,7 @@ public class PitStopEvaluator
             if (candidate != null && candidate.getPosition() == targetPosition) {
                 return candidate.getTyreLife() >= TRAFFIC_TYRE_LIFE_THRESHOLD
                         && driverLap.getGapToCarAhead() != null
-                        && driverLap.getGapToCarAhead() < 2.0;
+                        && driverLap.getGapToCarAhead() < TRAFFIC_GAP_THRESHOLD_SECONDS;
             }
         }
 
@@ -594,7 +604,7 @@ public class PitStopEvaluator
         List<String> staleDrivers = new ArrayList<>();
         for (String d : driverLatestLap.keys()) {
             Integer latestLap = driverLatestLap.get(d);
-            if (latestLap == null || maxLap - latestLap > 3) {
+            if (latestLap == null || maxLap - latestLap > RECENT_LAP_WINDOW) {
                 staleDrivers.add(d);
                 continue;
             }
@@ -642,7 +652,7 @@ public class PitStopEvaluator
         for (int searchLap = lap; searchLap >= Math.max(1, lap - 1); searchLap--) {
             for (String d : driverLatestLap.keys()) {
                 Integer latestLap = driverLatestLap.get(d);
-                if (latestLap == null || maxLap - latestLap > 3) {
+                if (latestLap == null || maxLap - latestLap > RECENT_LAP_WINDOW) {
                     staleDrivers.add(d);
                     continue;
                 }
@@ -696,7 +706,7 @@ public class PitStopEvaluator
         }
 
         Double postGap = null;
-        for (int lap = settleLap + 5; lap >= settleLap; lap--) {
+        for (int lap = settleLap + TIMER_FALLBACK_LOOKBACK; lap >= settleLap; lap--) {
             postGap = computeDirectedGap(cycle.getDriver(), cycle.getPrimaryRival(), lap);
             if (postGap != null) {
                 break;

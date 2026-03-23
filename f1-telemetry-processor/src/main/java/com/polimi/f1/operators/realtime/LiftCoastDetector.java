@@ -63,6 +63,7 @@ public class LiftCoastDetector {
     // opening laps with standing start chaos, cold tires, and traffic are non-representative.
     // filter telemetry from laps 1-5 before cep matching.
     private static final int MIN_LAP_FOR_DETECTION = 5;
+    private static final int PATTERN_WINDOW_SECONDS = 4;
 
     private LiftCoastDetector() {
     }
@@ -108,7 +109,7 @@ public class LiftCoastDetector {
                         return e.getBrake() == 1;
                     }
                 })
-                .within(Duration.ofSeconds(4));
+                .within(Duration.ofSeconds(PATTERN_WINDOW_SECONDS));
 
         PatternStream<TelemetryEvent> patternStream = CEP.pattern(
                 cleanTelemetry.keyBy(TelemetryEvent::getDriver),
@@ -155,12 +156,12 @@ public class LiftCoastDetector {
         @Override
         public void open(OpenContext openContext) {
             StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Duration.ofHours(2))
-                .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
-                .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
-                .build();
+                    .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+                    .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+                    .build();
 
-            ValueStateDescriptor<String> dedupDesc =
-                new ValueStateDescriptor<>("lastLiftBrake", String.class);
+            ValueStateDescriptor<String> dedupDesc
+                    = new ValueStateDescriptor<>("lastLiftBrake", String.class);
             dedupDesc.enableTimeToLive(ttlConfig);
             lastCompositeKey = getRuntimeContext().getState(dedupDesc);
         }
