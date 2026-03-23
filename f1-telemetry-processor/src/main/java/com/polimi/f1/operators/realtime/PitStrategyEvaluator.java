@@ -71,9 +71,17 @@ public class PitStrategyEvaluator
 
     // emit threshold: minimum score to generate an alert
     private static final double EMIT_THRESHOLD = 40.0;
+    private static final double GOOD_PIT_THRESHOLD = 60.0;
+    private static final double PIT_NOW_THRESHOLD = 80.0;
 
     // emit-gate: minimum score increase since last emission before re-emitting
     private static final double RE_EMIT_DELTA = 10.0;
+    private static final double SLOW_LAP_RATIO_THRESHOLD = 0.005;
+    private static final int RECENT_LAP_WINDOW = 3;
+    private static final String CURRENT_STATUS_KEY = "current";
+    private static final String LATEST_LAP_KEY = "latest";
+    private static final String DEFAULT_GREEN_STATUS = "1";
+    private static final double PACE_CURVE_POWER = 1.5;
 
     // track status score: +60 for sc/vsc (crisp, binary event)
     private static final int TRACK_STATUS_SCORE = 60;
@@ -210,6 +218,10 @@ public class PitStrategyEvaluator
     public void processElement(LapEvent event,
             KeyedBroadcastProcessFunction<String, LapEvent, TrackStatusEvent, PitSuggestionAlert>.ReadOnlyContext ctx,
             Collector<PitSuggestionAlert> out) throws Exception {
+        if (event == null || event.getDriver() == null || event.getLapNumber() <= 0) {
+            return;
+        }
+
         int lap = event.getLapNumber();
         String driver = event.getDriver();
 
@@ -226,7 +238,7 @@ public class PitStrategyEvaluator
             maxLapState.update(lap);
             if (lap > 1) {
                 int previousLap = lap - 1;
-                lastCompletedLap.put("latest", previousLap);
+                lastCompletedLap.put(LATEST_LAP_KEY, previousLap);
                 List<LapEvent> currentGrid = collectFreshGrid(lap);
                 if (!currentGrid.isEmpty()) {
                     String trackStatus = readTrackStatus(ctx);
@@ -242,7 +254,11 @@ public class PitStrategyEvaluator
     public void processBroadcastElement(TrackStatusEvent statusEvent,
             KeyedBroadcastProcessFunction<String, LapEvent, TrackStatusEvent, PitSuggestionAlert>.Context ctx,
             Collector<PitSuggestionAlert> out) throws Exception {
-        ctx.getBroadcastState(TRACK_STATUS_STATE).put("current", statusEvent.getStatus());
+        if (statusEvent == null || statusEvent.getStatus() == null) {
+            return;
+        }
+
+        ctx.getBroadcastState(TRACK_STATUS_STATE).put(CURRENT_STATUS_KEY, statusEvent.getStatus());
 
         String status = statusEvent.getStatus();
         if (!"4".equals(status) && !"6".equals(status) && !"7".equals(status)) {
@@ -252,7 +268,7 @@ public class PitStrategyEvaluator
         LOG.info("sc/vsc urgency trigger: status={}", status);
 
         // re-evaluate all drivers using latest observed race progress
-        Integer latestLap = lastCompletedLap.get("latest");
+        Integer latestLap = lastCompletedLap.get(LATEST_LAP_KEY);
         if (latestLap == null) {
             return;
         }
@@ -267,8 +283,8 @@ public class PitStrategyEvaluator
     private String readTrackStatus(
             KeyedBroadcastProcessFunction<String, LapEvent, TrackStatusEvent, PitSuggestionAlert>.ReadOnlyContext ctx)
             throws Exception {
-        String status = ctx.getBroadcastState(TRACK_STATUS_STATE).get("current");
-        return status != null ? status : "1";
+        String status = ctx.getBroadcastState(TRACK_STATUS_STATE).get(CURRENT_STATUS_KEY);
+        return status != null ? status : DEFAULT_GREEN_STATUS;
     }
 
     // updates max observed tyre life per compound in real time, each lap
@@ -320,7 +336,7 @@ public class PitStrategyEvaluator
             }
 
             // track consecutive slow laps (still needed for filtering one-off blips)
-            if (state.getLastPaceRatio() > 0.005) {
+            if (state.getLastPaceRatio() > SLOW_LAP_RATIO_THRESHOLD) {
                 state.setConsecutiveSlowLaps(state.getConsecutiveSlowLaps() + 1);
             } else {
                 state.setConsecutiveSlowLaps(0);
@@ -335,10 +351,10 @@ public class PitStrategyEvaluator
         List<String> staleDrivers = new ArrayList<>();
 
         for (LapEvent e : latestGridState.values()) {
-            if (e.getLapNumber() >= leaderLap - 3) {
+            if (e.getLapNumber() >= leaderLap - RECENT_LAP_WINDOW) {
                 currentGrid.add(e);
             }
-            if (e.getLapNumber() < leaderLap - 3) {
+            if (e.getLapNumber() < leaderLap - RECENT_LAP_WINDOW) {
                 staleDrivers.add(e.getDriver());
             }
         }
@@ -397,7 +413,7 @@ public class PitStrategyEvaluator
             if (!lostEmitted && peak >= LOST_CHANCE_PEAK && totalScore < LOST_CHANCE_DROP) {
                 DriverPitState ds = driverStates.get(driver);
                 // only emit if degradation is still worsening (not improvement from new tires)
-                if (ds != null && ds.getLastPaceRatio() > 0.005) {
+                if (ds != null && ds.getLastPaceRatio() > SLOW_LAP_RATIO_THRESHOLD) {
                     lostChanceEmitted.put(driver, true);
                     emitAlert(current, totalScore, paceScore, trackStatusScore,
                             traffic, strategyPenalty, urgencyScore, endOfRacePenalty,
@@ -493,10 +509,10 @@ public class PitStrategyEvaluator
 
     // classifies continuous score into discrete label for pit wall decision
     private static SuggestionLabel classifyScore(double score) {
-        if (score >= 80.0) {
+        if (score >= PIT_NOW_THRESHOLD) {
             return SuggestionLabel.PIT_NOW;
         }
-        if (score >= 60.0) {
+        if (score >= GOOD_PIT_THRESHOLD) {
             return SuggestionLabel.GOOD_PIT;
         }
         return SuggestionLabel.MONITOR;
@@ -526,7 +542,7 @@ public class PitStrategyEvaluator
 
         // 30 * min(1.0, (paceRatio / 0.03)^1.5)
         double normalized = paceRatio / PACE_CEILING_RATIO;
-        return 30.0 * Math.min(1.0, Math.pow(normalized, 1.5));
+        return 30.0 * Math.min(1.0, Math.pow(normalized, PACE_CURVE_POWER));
     }
 
     // +60 if sc or vsc is active (crisp, binary event)
@@ -628,7 +644,10 @@ public class PitStrategyEvaluator
         String compound = current.getCompound();
         int tyreAge = current.getTyreLife();
 
-        Integer maxStint = maxStintByCompound.get(compound);
+        Integer maxStint = null;
+        if (compound != null) {
+            maxStint = maxStintByCompound.get(compound);
+        }
         if (maxStint == null) {
             maxStint = defaultMaxStint(compound);
         }
