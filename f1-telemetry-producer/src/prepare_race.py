@@ -11,11 +11,14 @@ separating etl from streaming avoids re-running the expensive fastf1 extraction
 
 import argparse
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from fastf1 import Cache, get_session
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import Timeout
 
 TOPIC_TELEMETRY = "f1-telemetry"
 TOPIC_LAPS = "f1-laps"
@@ -60,10 +63,30 @@ PIT_LOSS_BY_RACE = {
 
 PIT_LOSS_DEFAULT = {"green": 22.0, "vsc": 14.0, "sc": 11.0}
 
+MERGE_TOLERANCE_MS = 100
+MAX_FASTF1_LOAD_ATTEMPTS = 3
+FASTF1_RETRY_DELAY_SECONDS = 2
+POST_RACE_BUFFER_SECONDS = 120
+TRACK_STATUS_SEVERITY_ORDER = ("5", "4", "7", "6", "2", "1")
+TRACK_STATUS_DEFAULT = "1"
+
 
 def get_pit_losses(race_name: str) -> dict:
     """look up pit loss times for a given race name, fall back to default if unknown."""
     return PIT_LOSS_BY_RACE.get(race_name, PIT_LOSS_DEFAULT)
+
+
+def _canonical_track_status(raw_status) -> str:
+    """normalize fastf1 status tokens to a single fia code with severity precedence."""
+    if pd.isna(raw_status):
+        return TRACK_STATUS_DEFAULT
+
+    status_str = str(raw_status)
+    for code in TRACK_STATUS_SEVERITY_ORDER:
+        if code in status_str:
+            return code
+
+    return TRACK_STATUS_DEFAULT
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,6 +111,15 @@ def parse_args() -> argparse.Namespace:
         default="R",
         help="session type: R=race, Q=qualifying, FP1/FP2/FP3=practice (default: R)",
     )
+    parser.add_argument(
+        "--post-race-buffer-seconds",
+        type=int,
+        default=POST_RACE_BUFFER_SECONDS,
+        help=(
+            "keep events up to N seconds after the last completed lap timestamp "
+            "to preserve cooldown telemetry while trimming post-race dead time"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -110,9 +142,29 @@ def load_session(
     year: int = 2023, race: str = "Italian Grand Prix", session_type: str = "R"
 ):
     """load a fastf1 session, configurable via cli args for replaying different historical races."""
-    session = get_session(year, race, session_type)
-    session.load()
-    return session
+    last_exception: Exception | None = None
+
+    for attempt in range(1, MAX_FASTF1_LOAD_ATTEMPTS + 1):
+        try:
+            session = get_session(year, race, session_type)
+            session.load()
+            return session
+        except (Timeout, RequestsConnectionError) as exc:
+            last_exception = exc
+            if attempt == MAX_FASTF1_LOAD_ATTEMPTS:
+                break
+            logging.warning(
+                "FastF1 load attempt %d/%d failed (%s), retrying in %ds",
+                attempt,
+                MAX_FASTF1_LOAD_ATTEMPTS,
+                exc,
+                FASTF1_RETRY_DELAY_SECONDS,
+            )
+            time.sleep(FASTF1_RETRY_DELAY_SECONDS)
+
+    raise RuntimeError(
+        f"Failed to load FastF1 session after {MAX_FASTF1_LOAD_ATTEMPTS} attempts"
+    ) from last_exception
 
 
 def build_driver_telemetry(session, driver: str) -> pd.DataFrame:
@@ -161,7 +213,7 @@ def build_driver_telemetry(session, driver: str) -> pd.DataFrame:
         on="Date",
         suffixes=("", "_pos"),
         direction="nearest",
-        tolerance=pd.Timedelta(milliseconds=100),
+        tolerance=pd.Timedelta(milliseconds=MERGE_TOLERANCE_MS),
     )
 
     if "SessionTime_pos" in merged.columns and "SessionTime" in merged.columns:
@@ -230,6 +282,9 @@ def build_lap_events(session) -> pd.DataFrame:
     all_laps = session.laps
     available = [col for col in lap_columns if col in all_laps.columns]
     laps_df = all_laps[available].copy()
+
+    if "TrackStatus" in laps_df.columns:
+        laps_df["TrackStatus"] = laps_df["TrackStatus"].apply(_canonical_track_status)
 
     # filter out inaccurate laps (sc-affected, timing anomalies) to ensure clean ml features.
     # pit in/out laps are preserved regardless of accuracy because PitStopEvaluator needs
@@ -363,6 +418,7 @@ def build_track_status_events(session) -> pd.DataFrame:
         return pd.DataFrame()
 
     ts_df = track_status[["Time", "Status", "Message"]].copy()
+    ts_df["Status"] = ts_df["Status"].apply(_canonical_track_status)
 
     # convert session-relative timedelta to absolute timestamp
     # session.date is the session start datetime (timezone-aware or naive)
@@ -426,6 +482,53 @@ def enrich_with_pit_losses(replay_df: pd.DataFrame, race_name: str) -> pd.DataFr
     return replay_df
 
 
+def prune_post_race_tail(
+    replay_df: pd.DataFrame, post_race_buffer_seconds: int = POST_RACE_BUFFER_SECONDS
+) -> pd.DataFrame:
+    """
+    trim post-race tail events that occur long after the final classified lap.
+
+    cutoff strategy:
+    - find max(Date) among f1-laps events (last completed lap in race timing)
+    - keep all events with Date <= last_lap_time + buffer
+
+    this preserves long red-flag races because delays happen before the final lap,
+    while removing podium/cooldown feed tail that creates long replay sleeps.
+    """
+    if replay_df.empty or "Date" not in replay_df.columns or "event_topic" not in replay_df.columns:
+        return replay_df
+
+    lap_rows = replay_df[replay_df["event_topic"] == TOPIC_LAPS]
+    if lap_rows.empty:
+        logging.warning("Post-race pruning skipped: no lap events available for cutoff")
+        return replay_df
+
+    last_lap_time = lap_rows["Date"].max()
+    cutoff_time = last_lap_time + pd.Timedelta(seconds=max(0, post_race_buffer_seconds))
+
+    original_len = len(replay_df)
+    pruned_df = replay_df[replay_df["Date"] <= cutoff_time].copy()
+    removed = original_len - len(pruned_df)
+
+    if removed > 0:
+        removed_by_topic = replay_df[replay_df["Date"] > cutoff_time]["event_topic"].value_counts().to_dict()
+        logging.info(
+            "Post-race pruning removed %d rows after cutoff %s (buffer=%ds), by topic=%s",
+            removed,
+            cutoff_time,
+            post_race_buffer_seconds,
+            removed_by_topic,
+        )
+    else:
+        logging.info(
+            "Post-race pruning removed 0 rows (cutoff=%s, buffer=%ds)",
+            cutoff_time,
+            post_race_buffer_seconds,
+        )
+
+    return pruned_df.sort_values("Date").reset_index(drop=True)
+
+
 def parquet_filename(year: int, race: str, session: str) -> str:
     """deterministic filename for the prepared parquet file.
     ex: 2023_Italian_Grand_Prix_R_prepared.parquet"""
@@ -447,6 +550,9 @@ if __name__ == "__main__":
     )
     replay_df = build_replay_dataframe(race_session)
     replay_df = enrich_with_pit_losses(replay_df, args.race)
+    replay_df = prune_post_race_tail(
+        replay_df, post_race_buffer_seconds=args.post_race_buffer_seconds
+    )
     logging.info("Replay dataframe prepared with %d rows", len(replay_df))
     logging.info(
         "Pit losses for %s: green=%.1fs, vsc=%.1fs, sc=%.1fs",
