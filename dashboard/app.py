@@ -44,9 +44,9 @@ TRACK_STATUS_MAP = {
 
 # color map for pit suggestion labels
 SUGGESTION_LABEL_COLORS = {
-    "MONITOR": "#f0ad4e",  # amber/yellow
-    "GOOD_PIT": "#5cb85c",  # green
-    "PIT_NOW": "#d9534f",  # red
+    "MONITOR": "#2e8b57",  # green
+    "GOOD_PIT": "#f39c12",  # orange
+    "PIT_NOW": "#c0392b",  # red
     "LOST_CHANCE": "#888888",  # gray
 }
 
@@ -71,9 +71,9 @@ def create_consumer():
         TOPIC_TRACK_STATUS,
         TOPIC_ALERTS,
         bootstrap_servers=KAFKA_BROKER,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        group_id="f1-dashboard",
+        auto_offset_reset="earliest",
+        enable_auto_commit=False,
+        group_id=None,
         value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         consumer_timeout_ms=200,
     )
@@ -111,12 +111,22 @@ if "track_message" not in st.session_state:
 # per-category alert lists (bounded to MAX_ALERTS_PER_CATEGORY each)
 if "pit_strategy_alerts" not in st.session_state:
     st.session_state.pit_strategy_alerts = []
+if "pit_strategy_state" not in st.session_state:
+    st.session_state.pit_strategy_state = {}
+if "pit_strategy_driver_order" not in st.session_state:
+    st.session_state.pit_strategy_driver_order = []
 if "tire_drop_alerts" not in st.session_state:
     st.session_state.tire_drop_alerts = []
+if "tire_drop_state" not in st.session_state:
+    st.session_state.tire_drop_state = {}
 if "lift_coast_alerts" not in st.session_state:
     st.session_state.lift_coast_alerts = []
+if "lift_coast_state" not in st.session_state:
+    st.session_state.lift_coast_state = {}
 if "pit_eval_alerts" not in st.session_state:
     st.session_state.pit_eval_alerts = []
+if "pit_eval_state" not in st.session_state:
+    st.session_state.pit_eval_state = {}
 if "drop_zone_alerts" not in st.session_state:
     st.session_state.drop_zone_alerts = []
 
@@ -125,6 +135,16 @@ if "gap_history" not in st.session_state:
     st.session_state.gap_history = {}
 if "lap_race_times" not in st.session_state:
     st.session_state.lap_race_times = {}
+
+
+def leaderboard_order_map():
+    """driver -> race position map for stable table ordering."""
+    if not st.session_state.leaderboard:
+        return {}
+    return {
+        row["Driver"]: (row.get("Position") if row.get("Position") is not None else 99)
+        for row in st.session_state.leaderboard.values()
+    }
 
 # track status banner (above the columns)
 status_placeholder = st.empty()
@@ -264,24 +284,26 @@ while True:
                     tyre_life = msg.get("tyreLife", "?")
                     suggestion = msg.get("suggestion", "")
 
-                    st.session_state.pit_strategy_alerts.append(
-                        {
-                            "Driver": driver,
-                            "Lap": lap,
-                            "Label": label,
-                            "Score": (
-                                f"{score:.1f}"
-                                if isinstance(score, (int, float))
-                                else str(score)
-                            ),
-                            "Compound": compound,
-                            "Tyre": tyre_life,
-                            "Reason": suggestion,
-                        }
-                    )
-                    st.session_state.pit_strategy_alerts = bound_alerts(
-                        st.session_state.pit_strategy_alerts
-                    )
+                    numeric_score = float(score) if isinstance(score, (int, float)) else None
+                    track_status = msg.get("trackStatus", "?")
+
+                    # stateful upsert: keep only the latest pit suggestion per driver.
+                    # this turns a high-frequency alert stream into a stable pit wall monitor.
+                    st.session_state.pit_strategy_state[driver] = {
+                        "Driver": driver,
+                        "Lap": lap,
+                        "Label": label,
+                        "Score": (
+                            f"{numeric_score:.1f}"
+                            if numeric_score is not None
+                            else str(score)
+                        ),
+                        "ScoreSort": numeric_score,
+                        "Compound": compound,
+                        "Tyre": tyre_life,
+                        "Track": track_status,
+                        "Reason": suggestion,
+                    }
 
                 elif "result" in msg:
                     driver = msg.get("driver", "?")
@@ -296,20 +318,15 @@ while True:
                     if gap_delta is not None and isinstance(gap_delta, (int, float)):
                         gap_str = f"{gap_delta:.2f}%"
 
-                    st.session_state.pit_eval_alerts.append(
-                        {
-                            "Driver": driver,
-                            "Pit Lap": pit_lap,
-                            "Result": result,
-                            "Rival Ahead": rival_ahead if rival_ahead else "---",
-                            "Rival Behind": rival_behind if rival_behind else "---",
-                            "Gap Delta": gap_str,
-                            "Via": resolved_via,
-                        }
-                    )
-                    st.session_state.pit_eval_alerts = bound_alerts(
-                        st.session_state.pit_eval_alerts
-                    )
+                    st.session_state.pit_eval_state[driver] = {
+                        "Driver": driver,
+                        "Pit Lap": pit_lap,
+                        "Result": result,
+                        "Rival Ahead": rival_ahead if rival_ahead else "---",
+                        "Rival Behind": rival_behind if rival_behind else "---",
+                        "Gap Delta": gap_str,
+                        "Via": resolved_via,
+                    }
 
                 elif "brakeDate" in msg:
                     driver = msg.get("driver", "?")
@@ -322,18 +339,13 @@ while True:
                     except Exception:
                         coast_s = "?"
                         time_str = "?"
-                    st.session_state.lift_coast_alerts.append(
-                        {
-                            "Driver": driver,
-                            "Speed": msg.get("speed", "?"),
-                            "Gear": msg.get("gear", "?"),
-                            "Coast (s)": coast_s,
-                            "Time": time_str,
-                        }
-                    )
-                    st.session_state.lift_coast_alerts = bound_alerts(
-                        st.session_state.lift_coast_alerts
-                    )
+                    st.session_state.lift_coast_state[driver] = {
+                        "Driver": driver,
+                        "Speed": msg.get("speed", "?"),
+                        "Gear": msg.get("gear", "?"),
+                        "Coast (s)": coast_s,
+                        "Time": time_str,
+                    }
 
                 elif "delta" in msg:
                     driver = msg.get("driver", "?")
@@ -342,22 +354,17 @@ while True:
                     tyre_life = msg.get("tyreLife", "?")
                     delta = msg.get("delta", 0)
 
-                    st.session_state.tire_drop_alerts.append(
-                        {
-                            "Driver": driver,
-                            "Lap": lap,
-                            "Compound": compound,
-                            "Tyre Life": tyre_life,
-                            "Delta": (
-                                f"+{delta:.3f}s"
-                                if isinstance(delta, (int, float))
-                                else str(delta)
-                            ),
-                        }
-                    )
-                    st.session_state.tire_drop_alerts = bound_alerts(
-                        st.session_state.tire_drop_alerts
-                    )
+                    st.session_state.tire_drop_state[driver] = {
+                        "Driver": driver,
+                        "Lap": lap,
+                        "Compound": compound,
+                        "Tyre Life": tyre_life,
+                        "Delta": (
+                            f"+{delta:.3f}s"
+                            if isinstance(delta, (int, float))
+                            else str(delta)
+                        ),
+                    }
 
                 elif "positionsLost" in msg:
                     st.session_state.drop_zone_alerts.append(
@@ -404,23 +411,69 @@ while True:
     else:
         leaderboard_placeholder.info("Waiting for lap data...")
 
-    # render pit strategy alerts (most recent first, with color-coded labels)
-    if st.session_state.pit_strategy_alerts:
-        recent = st.session_state.pit_strategy_alerts[::-1]
-        strategy_df = pd.DataFrame(recent)
+    # render pit strategy as a live state grid (latest row per driver)
+    if st.session_state.pit_strategy_state:
+        strategy_df = pd.DataFrame(st.session_state.pit_strategy_state.values())
+        order_map = leaderboard_order_map()
+
+        # include any drivers currently on leaderboard even if no suggestion has arrived yet
+        # so the table behaves like a static pit wall monitor grid.
+        if st.session_state.leaderboard:
+            board_drivers = {d["Driver"] for d in st.session_state.leaderboard.values()}
+
+            # keep a stable roster order so rows don't jump when scores update.
+            for drv in sorted(board_drivers):
+                if drv not in st.session_state.pit_strategy_driver_order:
+                    st.session_state.pit_strategy_driver_order.append(drv)
+
+            current_drivers = set(strategy_df["Driver"].tolist())
+            missing = board_drivers - current_drivers
+            if missing:
+                filler = pd.DataFrame(
+                    [
+                        {
+                            "Driver": d,
+                            "Lap": "—",
+                            "Label": "MONITOR",
+                            "Score": "0.0",
+                            "ScoreSort": 0.0,
+                            "Compound": st.session_state.leaderboard.get(d, {}).get("Compound", "—"),
+                            "Tyre": st.session_state.leaderboard.get(d, {}).get("Tyre Life", "—"),
+                            "Track": "—",
+                            "Reason": "no pit suggestion emitted yet",
+                        }
+                        for d in sorted(missing)
+                    ]
+                )
+                strategy_df = pd.concat([strategy_df, filler], ignore_index=True)
+
+        strategy_df["Race Pos"] = strategy_df["Driver"].map(order_map).fillna(99).astype(int)
+        strategy_df = strategy_df.sort_values(["Race Pos", "Driver"], ascending=[True, True])
+
+        strategy_df = strategy_df.drop(columns=["ScoreSort"]).reset_index(drop=True)
+
         styled = strategy_df.style.applymap(style_suggestion_label, subset=["Label"])
+        table_height = 70 + len(strategy_df) * 36
         pit_strategy_placeholder.dataframe(
-            styled, use_container_width=True, hide_index=True
+            styled,
+            use_container_width=True,
+            hide_index=True,
+            height=table_height,
         )
     else:
         pit_strategy_placeholder.info("Waiting for pit strategy alerts...")
 
-    # render pit stop evaluations (most recent first)
-    if st.session_state.pit_eval_alerts:
-        recent = st.session_state.pit_eval_alerts[::-1]
-        eval_df = pd.DataFrame(recent)
+    # render pit stop evaluations (latest per driver, ordered by race position)
+    if st.session_state.pit_eval_state:
+        eval_df = pd.DataFrame(st.session_state.pit_eval_state.values())
+        order_map = leaderboard_order_map()
+        eval_df["Race Pos"] = eval_df["Driver"].map(order_map).fillna(99).astype(int)
+        eval_df = eval_df.sort_values(["Race Pos", "Driver"], ascending=[True, True]).reset_index(drop=True)
         pit_eval_placeholder.dataframe(
-            eval_df, use_container_width=True, hide_index=True
+            eval_df,
+            use_container_width=True,
+            hide_index=True,
+            height=70 + len(eval_df) * 36,
         )
     else:
         pit_eval_placeholder.info("Waiting for pit stop evaluations...")
@@ -477,22 +530,32 @@ while True:
     else:
         tire_chart_placeholder.info("Waiting for lap data...")
 
-    # render tire drop alerts (most recent first)
-    if st.session_state.tire_drop_alerts:
-        recent = st.session_state.tire_drop_alerts[::-1]
-        drop_df = pd.DataFrame(recent)
+    # render tire drop alerts (latest per driver, ordered by race position)
+    if st.session_state.tire_drop_state:
+        drop_df = pd.DataFrame(st.session_state.tire_drop_state.values())
+        order_map = leaderboard_order_map()
+        drop_df["Race Pos"] = drop_df["Driver"].map(order_map).fillna(99).astype(int)
+        drop_df = drop_df.sort_values(["Race Pos", "Driver"], ascending=[True, True]).reset_index(drop=True)
         tire_drop_placeholder.dataframe(
-            drop_df, use_container_width=True, hide_index=True
+            drop_df,
+            use_container_width=True,
+            hide_index=True,
+            height=70 + len(drop_df) * 36,
         )
     else:
         tire_drop_placeholder.info("Waiting for tire degradation alerts...")
 
-    # render lift & coast alerts (most recent first)
-    if st.session_state.lift_coast_alerts:
-        recent = st.session_state.lift_coast_alerts[::-1]
-        lc_df = pd.DataFrame(recent)
+    # render lift & coast alerts (latest per driver, ordered by race position)
+    if st.session_state.lift_coast_state:
+        lc_df = pd.DataFrame(st.session_state.lift_coast_state.values())
+        order_map = leaderboard_order_map()
+        lc_df["Race Pos"] = lc_df["Driver"].map(order_map).fillna(99).astype(int)
+        lc_df = lc_df.sort_values(["Race Pos", "Driver"], ascending=[True, True]).reset_index(drop=True)
         lift_coast_placeholder.dataframe(
-            lc_df, use_container_width=True, hide_index=True
+            lc_df,
+            use_container_width=True,
+            hide_index=True,
+            height=70 + len(lc_df) * 36,
         )
     else:
         lift_coast_placeholder.info("Waiting for lift & coast alerts...")

@@ -69,6 +69,7 @@ public class PitStopEvaluator
     // ex: 0.5% of 80s baseline = 0.4s, of 105s baseline = 0.525s
     private static final double UNDERCUT_THRESHOLD_PCT = 0.5;
     private static final double DEFEND_BAND_PCT = 0.5;
+    private static final double MAX_STRATEGIC_GAP_DELTA_PCT = 20.0;
 
     // free stop threshold: pit under sc/vsc with gap change < 1% of baseline
     private static final double FREE_STOP_THRESHOLD_PCT = 1.0;
@@ -384,7 +385,9 @@ public class PitStopEvaluator
             Double gapDeltaPct = computeGapDeltaPct(cycle.getPrePitGapToPrimary(), currentGap,
                     cycle.getBaselineLapTime());
             Result result;
-            if (gapDeltaPct != null && gapDeltaPct < -DEFEND_BAND_PCT) {
+            if (isIncidentGapDeltaPct(gapDeltaPct)) {
+                result = Result.UNRESOLVED_INSUFFICIENT_DATA;
+            } else if (gapDeltaPct != null && gapDeltaPct < -DEFEND_BAND_PCT) {
                 result = Result.OFFSET_ADVANTAGE;
             } else if (gapDeltaPct != null && gapDeltaPct > DEFEND_BAND_PCT) {
                 result = Result.OFFSET_DISADVANTAGE;
@@ -414,6 +417,9 @@ public class PitStopEvaluator
 
         Double gapDeltaPct = computeGapDeltaPct(prePitGap, postPitGap, baselineLap);
         if (gapDeltaPct == null) {
+            return Result.UNRESOLVED_INSUFFICIENT_DATA;
+        }
+        if (isIncidentGapDeltaPct(gapDeltaPct)) {
             return Result.UNRESOLVED_INSUFFICIENT_DATA;
         }
 
@@ -469,6 +475,10 @@ public class PitStopEvaluator
             return false;
         }
         return "INTERMEDIATE".equalsIgnoreCase(compound) || "WET".equalsIgnoreCase(compound);
+    }
+
+    private static boolean isIncidentGapDeltaPct(Double gapDeltaPct) {
+        return gapDeltaPct != null && Math.abs(gapDeltaPct) > MAX_STRATEGIC_GAP_DELTA_PCT;
     }
 
     // checks if the rival's stint changed between pitLap and currentLap
