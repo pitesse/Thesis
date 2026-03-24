@@ -28,6 +28,9 @@ public class PitStopEvaluationAlert {
         @JsonProperty("SUCCESS_FREE_STOP")
         SUCCESS_FREE_STOP, // pitted under sc/vsc with minimal loss
 
+        @JsonProperty("WEATHER_SURVIVAL_STOP")
+        WEATHER_SURVIVAL_STOP, // wet/intermediate stop, survival-driven not strategic undercut
+
         @JsonProperty("OFFSET_ADVANTAGE")
         OFFSET_ADVANTAGE, // on different strategy (e.g. 1-stop vs 2-stop), gap improved
 
@@ -38,7 +41,10 @@ public class PitStopEvaluationAlert {
         FAILURE_PACE_DEFICIT, // lost ground to rival due to poor pace after pit
 
         @JsonProperty("FAILURE_TRAFFIC")
-        FAILURE_TRAFFIC             // emerged into dirty air / traffic nullified position gain
+        FAILURE_TRAFFIC,            // emerged into dirty air / traffic nullified position gain
+
+        @JsonProperty("UNRESOLVED_INSUFFICIENT_DATA")
+        UNRESOLVED_INSUFFICIENT_DATA // missing rival/gap/baseline context, excluded from strategic labels
     }
 
     private String driver;

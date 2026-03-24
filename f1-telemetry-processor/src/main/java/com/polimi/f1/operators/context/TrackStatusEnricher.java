@@ -21,6 +21,9 @@ import com.polimi.f1.model.input.TrackStatusEvent;
 public class TrackStatusEnricher
         extends KeyedBroadcastProcessFunction<String, TelemetryEvent, TrackStatusEvent, TelemetryEvent> {
 
+    private static final String CURRENT_STATUS_KEY = "current";
+    private static final String DEFAULT_GREEN_STATUS = "1";
+
     // state descriptor shared between broadcast and processing sides. single key "current".
     public static final MapStateDescriptor<String, String> TRACK_STATUS_STATE
             = new MapStateDescriptor<>(
@@ -36,7 +39,9 @@ public class TrackStatusEnricher
             TrackStatusEvent statusEvent,
             KeyedBroadcastProcessFunction<String, TelemetryEvent, TrackStatusEvent, TelemetryEvent>.Context ctx,
             Collector<TelemetryEvent> out) throws Exception {
-        ctx.getBroadcastState(TRACK_STATUS_STATE).put("current", statusEvent.getStatus());
+        if (statusEvent != null && statusEvent.getStatus() != null) {
+            ctx.getBroadcastState(TRACK_STATUS_STATE).put(CURRENT_STATUS_KEY, statusEvent.getStatus());
+        }
     }
 
     // called for each telemetry event (keyed side).
@@ -47,9 +52,9 @@ public class TrackStatusEnricher
             TelemetryEvent event,
             KeyedBroadcastProcessFunction<String, TelemetryEvent, TrackStatusEvent, TelemetryEvent>.ReadOnlyContext ctx,
             Collector<TelemetryEvent> out) throws Exception {
-        String status = ctx.getBroadcastState(TRACK_STATUS_STATE).get("current");
+        String status = ctx.getBroadcastState(TRACK_STATUS_STATE).get(CURRENT_STATUS_KEY);
         if (status == null) {
-            status = "1"; // default: green flag
+            status = DEFAULT_GREEN_STATUS; // default: green flag
         }
         event.setTrackStatus(status);
         out.collect(event);

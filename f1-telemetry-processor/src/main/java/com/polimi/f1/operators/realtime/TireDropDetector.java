@@ -56,6 +56,7 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
     // single-lap spikes (traffic, mistake) are filtered, two consecutive laps
     // confirm a systematic tire performance cliff.
     private static final int CONSECUTIVE_REQUIRED = 2;
+    private static final int MIN_LAP_FOR_DETECTION = 2;
 
     // current stint number, used to detect stint changes (pit stop -> new tires)
     private transient ValueState<Integer> currentStint;
@@ -67,28 +68,32 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
     @Override
     public void open(OpenContext openContext) {
         StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Duration.ofHours(2))
-            .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
-            .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
-            .build();
+                .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+                .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+                .build();
 
-        ValueStateDescriptor<Integer> currentStintDesc =
-            new ValueStateDescriptor<>("current-stint", Types.INT);
+        ValueStateDescriptor<Integer> currentStintDesc
+                = new ValueStateDescriptor<>("current-stint", Types.INT);
         currentStintDesc.enableTimeToLive(ttlConfig);
         currentStint = getRuntimeContext().getState(currentStintDesc);
 
-        ValueStateDescriptor<Double> stintBestDesc =
-            new ValueStateDescriptor<>("stint-best-lap", Types.DOUBLE);
+        ValueStateDescriptor<Double> stintBestDesc
+                = new ValueStateDescriptor<>("stint-best-lap", Types.DOUBLE);
         stintBestDesc.enableTimeToLive(ttlConfig);
         stintBestLap = getRuntimeContext().getState(stintBestDesc);
 
-        ValueStateDescriptor<Integer> slowLapsDesc =
-            new ValueStateDescriptor<>("consecutive-slow-laps", Types.INT);
+        ValueStateDescriptor<Integer> slowLapsDesc
+                = new ValueStateDescriptor<>("consecutive-slow-laps", Types.INT);
         slowLapsDesc.enableTimeToLive(ttlConfig);
         consecutiveSlowLaps = getRuntimeContext().getState(slowLapsDesc);
     }
 
     @Override
     public void processElement(LapEvent lap, Context ctx, Collector<TireDropAlert> out) throws Exception {
+        if (lap == null || lap.getDriver() == null || lap.getLapNumber() <= 0) {
+            return;
+        }
+
         // detect stint change: reset all state for new tire set
         Integer prevStint = currentStint.value();
         if (prevStint == null || prevStint != lap.getStint()) {
@@ -98,7 +103,7 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
         }
 
         // skip opening laps, standing start and traffic make pace non-representative
-        if (lap.getLapNumber() <= 2) {
+        if (lap.getLapNumber() <= MIN_LAP_FOR_DETECTION) {
             return;
         }
 
@@ -128,7 +133,8 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
         }
 
         // update stint best
-        double best = stintBestLap.value();
+        Double bestValue = stintBestLap.value();
+        double best = bestValue != null ? bestValue : Double.MAX_VALUE;
         if (lapTimeSec < best) {
             stintBestLap.update(lapTimeSec);
             best = lapTimeSec;

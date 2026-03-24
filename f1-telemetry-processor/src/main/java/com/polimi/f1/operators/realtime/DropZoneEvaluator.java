@@ -51,27 +51,28 @@ public class DropZoneEvaluator
 
     // minimum tire age (laps) before strategic pit stop evaluation is meaningful
     private static final int MIN_TYRE_LIFE = 8;
+    private static final int RECENT_LAP_WINDOW = 3;
 
-        // latest event per driver, used as a compact physical-grid snapshot
-        private transient MapState<String, LapEvent> latestGridState;
+    // latest event per driver, used as a compact physical-grid snapshot
+    private transient MapState<String, LapEvent> latestGridState;
 
-        // max observed lap across all events, used as a stall-safe trigger
-        private transient ValueState<Integer> maxLapState;
+    // max observed lap across all events, used as a stall-safe trigger
+    private transient ValueState<Integer> maxLapState;
 
     @Override
     public void open(OpenContext openContext) {
         StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Duration.ofHours(2))
-            .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
-            .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
-            .build();
+                .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+                .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+                .build();
 
         MapStateDescriptor<String, LapEvent> gridDesc
-            = new MapStateDescriptor<>("drop-zone-latest-grid", String.class, LapEvent.class);
+                = new MapStateDescriptor<>("drop-zone-latest-grid", String.class, LapEvent.class);
         gridDesc.enableTimeToLive(ttlConfig);
         latestGridState = getRuntimeContext().getMapState(gridDesc);
 
         ValueStateDescriptor<Integer> maxLapDesc
-            = new ValueStateDescriptor<>("drop-zone-max-lap", Integer.class);
+                = new ValueStateDescriptor<>("drop-zone-max-lap", Integer.class);
         maxLapDesc.enableTimeToLive(ttlConfig);
         maxLapState = getRuntimeContext().getState(maxLapDesc);
     }
@@ -80,6 +81,10 @@ public class DropZoneEvaluator
     // when P1 finishes lap N, triggers evaluation of the previous lap's position ladder.
     @Override
     public void processElement(LapEvent event, Context ctx, Collector<DropZoneAlert> out) throws Exception {
+        if (event == null || event.getDriver() == null || event.getLapNumber() <= 0) {
+            return;
+        }
+
         int lap = event.getLapNumber();
         latestGridState.put(event.getDriver(), event);
 
@@ -94,7 +99,7 @@ public class DropZoneEvaluator
             if (lap > 1) {
                 List<LapEvent> currentGrid = new ArrayList<>();
                 for (LapEvent e : latestGridState.values()) {
-                    if (lap - e.getLapNumber() <= 3) {
+                    if (lap - e.getLapNumber() <= RECENT_LAP_WINDOW) {
                         currentGrid.add(e);
                     }
                 }
