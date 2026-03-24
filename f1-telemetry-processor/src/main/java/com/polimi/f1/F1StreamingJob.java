@@ -167,7 +167,7 @@ public class F1StreamingJob {
         // session window with 30s gap: all drivers' events for the same lap arrive within seconds.
         // SingleOutputStreamOperator (not DataStream) to access the ml features side output.
         SingleOutputStreamOperator<RivalInfoAlert> rivalResult = lapWithWatermarks
-                .keyBy(LapEvent::getLapNumber)
+                .keyBy(F1StreamingJob::raceLapKey)
                 .window(EventTimeSessionWindows.withGap(Duration.ofSeconds(30)))
                 .process(new RivalIdentificationFunction())
                 .name("Rival Identification");
@@ -183,7 +183,7 @@ public class F1StreamingJob {
         // a3: drs train detection 
         // re-window the rival info by lap number to detect contiguous groups within 1s gap
         DataStream<String> drsTrainAlerts = rivalStream
-                .keyBy(RivalInfoAlert::getLapNumber)
+                .keyBy(alert -> raceLapKey(alert.getRace(), alert.getLapNumber()))
                 .window(EventTimeSessionWindows.withGap(Duration.ofSeconds(10)))
                 .process(new DrsTrainDetector())
                 .name("DRS Train Detection");
@@ -193,7 +193,7 @@ public class F1StreamingJob {
         // by comparing the pitting driver against their net rival (car directly ahead at pit time).
         // keyed by "RACE" for global field visibility (needs to see all drivers' positions).
         DataStream<PitStopEvaluationAlert> pitEvals = lapWithWatermarks
-                .keyBy(e -> "RACE")
+                .keyBy(F1StreamingJob::raceKey)
                 .process(new PitStopEvaluator())
                 .name("Pit Stop Evaluation");
 
@@ -217,7 +217,7 @@ public class F1StreamingJob {
         // leader-driven trigger: when P1 finishes lap N, lap N-1 is guaranteed complete
         // for the entire field. no timers, no watermark dependency, just pure race physics.
         DataStream<DropZoneAlert> dropZoneAlerts = lapWithWatermarks
-                .keyBy(e -> "RACE")
+                .keyBy(F1StreamingJob::raceKey)
                 .process(new DropZoneEvaluator())
                 .name("Drop Zone Analysis");
 
@@ -232,7 +232,7 @@ public class F1StreamingJob {
                 = trackStatusWithWatermarks.broadcast(PitStrategyEvaluator.TRACK_STATUS_STATE);
 
         DataStream<PitSuggestionAlert> pitSuggestions = lapWithWatermarks
-                .keyBy(e -> "RACE")
+                .keyBy(F1StreamingJob::raceKey)
                 .connect(broadcastForStrategy)
                 .process(new PitStrategyEvaluator())
                 .name("Pit Strategy Evaluation");
@@ -436,5 +436,17 @@ public class F1StreamingJob {
                 .withMaxPartSize(MemorySize.ofMebiBytes(10))
                 .build();
     }
+
+        private static String raceKey(LapEvent lap) {
+                return lap.getRace() != null ? lap.getRace() : "UNKNOWN_RACE";
+        }
+
+        private static String raceLapKey(LapEvent lap) {
+                return raceLapKey(raceKey(lap), lap.getLapNumber());
+        }
+
+        private static String raceLapKey(String race, int lapNumber) {
+                return race + "|" + lapNumber;
+        }
 
 }

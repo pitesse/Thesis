@@ -11,6 +11,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class LapEvent {
 
+    private static final String[] TRACK_STATUS_SEVERITY_ORDER = {"5", "4", "7", "6", "2", "1"};
+    private static final String TRACK_STATUS_DEFAULT = "1";
+
     private String date;          // LapStartDate as iso-8601, used as event time
     private String driver;        // ex: "VER", "LEC"
     private int lapNumber;
@@ -191,7 +194,23 @@ public class LapEvent {
 
     @JsonProperty("TrackStatus")
     public void setTrackStatus(String trackStatus) {
-        this.trackStatus = trackStatus;
+        this.trackStatus = normalizeTrackStatus(trackStatus);
+    }
+
+    // fastf1 lap status can contain multi-code tokens, ex "126" for mixed lap phases.
+    // normalize to one code so downstream operators can use deterministic equality checks.
+    private static String normalizeTrackStatus(String rawStatus) {
+        if (rawStatus == null || rawStatus.isBlank()) {
+            return TRACK_STATUS_DEFAULT;
+        }
+
+        for (String code : TRACK_STATUS_SEVERITY_ORDER) {
+            if (rawStatus.contains(code)) {
+                return code;
+            }
+        }
+
+        return TRACK_STATUS_DEFAULT;
     }
 
     @JsonProperty("GapToCarAhead")
