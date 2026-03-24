@@ -42,8 +42,9 @@ import com.polimi.f1.state.groundtruth.RivalSnapshot;
 // offset detection: if rival hasn't pitted after 40% of remaining race laps, confirms
 // different strategy. gap trajectory at that point determines advantage/disadvantage.
 //
-// 8 labels: SUCCESS_UNDERCUT, SUCCESS_OVERCUT, SUCCESS_DEFEND, SUCCESS_FREE_STOP,
-//           OFFSET_ADVANTAGE, OFFSET_DISADVANTAGE, FAILURE_PACE_DEFICIT, FAILURE_TRAFFIC
+// labels: SUCCESS_UNDERCUT, SUCCESS_OVERCUT, SUCCESS_DEFEND, SUCCESS_FREE_STOP,
+//         OFFSET_ADVANTAGE, OFFSET_DISADVANTAGE, FAILURE_PACE_DEFICIT, FAILURE_TRAFFIC,
+//         WEATHER_SURVIVAL_STOP, UNRESOLVED_INSUFFICIENT_DATA
 public class PitStopEvaluator
         extends KeyedProcessFunction<String, LapEvent, PitStopEvaluationAlert> {
 
@@ -60,6 +61,9 @@ public class PitStopEvaluator
     private static final int GAP_SEARCH_WINDOW = 3;
     private static final int TIMER_FALLBACK_LOOKBACK = 5;
     private static final double TRAFFIC_GAP_THRESHOLD_SECONDS = 2.0;
+    private static final int MAX_PLAUSIBLE_RIVAL_POSITION_DELTA = 6;
+    private static final double MAX_PLAUSIBLE_GAP_SECONDS = 60.0;
+    private static final double MAX_PLAUSIBLE_GAP_DELTA_SECONDS = 45.0;
 
     // percentage thresholds for gap classification (as % of baseline lap time)
     // ex: 0.5% of 80s baseline = 0.4s, of 105s baseline = 0.525s
@@ -75,6 +79,7 @@ public class PitStopEvaluator
     // traffic detection: car ahead with tyreLife >= this is considered slow/passable,
     // but car ahead within this gap is considered blocking
     private static final int TRAFFIC_TYRE_LIFE_THRESHOLD = 25;
+    private static final String RESOLUTION_INSUFFICIENT_DATA = "INSUFFICIENT_DATA";
 
     // flat state: all lap events, key = "lapNumber:driver"
     private transient MapState<String, LapEvent> lapEvents;
@@ -314,7 +319,8 @@ public class PitStopEvaluator
             Collector<PitStopEvaluationAlert> out) throws Exception {
 
         if (cycle.getPrimaryRival() == null || cycle.getPrePitGapToPrimary() == null) {
-            emitResult(cycle, null, null, Result.SUCCESS_DEFEND, "RIVAL_PIT", false, out);
+            emitResult(cycle, null, null, Result.UNRESOLVED_INSUFFICIENT_DATA,
+                    RESOLUTION_INSUFFICIENT_DATA, false, out);
             return true;
         }
 
@@ -359,7 +365,7 @@ public class PitStopEvaluator
 
             Result result = classifyPitStop(cycle.getPrePitGapToPrimary(), postGap,
                     cycle.getBaselineLapTime(), cycle.isDriverPittedFirst(),
-                    cycle.getTrackStatusAtPit(), emergenceTraffic);
+                    cycle.getTrackStatusAtPit(), cycle.getCompoundAfterPit(), emergenceTraffic);
 
             Double gapDeltaPct = computeGapDeltaPct(cycle.getPrePitGapToPrimary(), postGap,
                     cycle.getBaselineLapTime());
@@ -383,8 +389,7 @@ public class PitStopEvaluator
             } else if (gapDeltaPct != null && gapDeltaPct > DEFEND_BAND_PCT) {
                 result = Result.OFFSET_DISADVANTAGE;
             } else {
-                // neutral or missing data: default to defensive success to avoid false positive bias
-                result = Result.SUCCESS_DEFEND;
+                result = Result.UNRESOLVED_INSUFFICIENT_DATA;
             }
 
             emitResult(cycle, currentGap, gapDeltaPct, result, "OFFSET_TIMEOUT", true, out);
@@ -397,15 +402,19 @@ public class PitStopEvaluator
     // 8-label classification based on gap delta percentage
     private Result classifyPitStop(Double prePitGap, Double postPitGap,
             double baselineLap, boolean driverPittedFirst,
-            String trackStatus, boolean emergenceTraffic) {
+            String trackStatus, String compoundAfterPit, boolean emergenceTraffic) {
+
+        if (isWetCompound(compoundAfterPit)) {
+            return Result.WEATHER_SURVIVAL_STOP;
+        }
 
         if (prePitGap == null || postPitGap == null || baselineLap <= 0) {
-            return Result.SUCCESS_DEFEND;
+            return Result.UNRESOLVED_INSUFFICIENT_DATA;
         }
 
         Double gapDeltaPct = computeGapDeltaPct(prePitGap, postPitGap, baselineLap);
         if (gapDeltaPct == null) {
-            return Result.SUCCESS_DEFEND;
+            return Result.UNRESOLVED_INSUFFICIENT_DATA;
         }
 
         // sc/vsc free stop: pitted under caution with minimal gap distortion
@@ -441,7 +450,25 @@ public class PitStopEvaluator
         if (prePitGap == null || postPitGap == null || baseline <= 0) {
             return null;
         }
+        if (!isPlausibleGap(prePitGap) || !isPlausibleGap(postPitGap)) {
+            return null;
+        }
+        double deltaSeconds = postPitGap - prePitGap;
+        if (Math.abs(deltaSeconds) > MAX_PLAUSIBLE_GAP_DELTA_SECONDS) {
+            return null;
+        }
         return (postPitGap - prePitGap) / baseline * 100.0;
+    }
+
+    private static boolean isPlausibleGap(Double gap) {
+        return gap != null && Math.abs(gap) <= MAX_PLAUSIBLE_GAP_SECONDS;
+    }
+
+    private static boolean isWetCompound(String compound) {
+        if (compound == null) {
+            return false;
+        }
+        return "INTERMEDIATE".equalsIgnoreCase(compound) || "WET".equalsIgnoreCase(compound);
     }
 
     // checks if the rival's stint changed between pitLap and currentLap
@@ -590,6 +617,13 @@ public class PitStopEvaluator
         int posA = eventA.getPosition();
         int posB = eventB.getPosition();
 
+        // pit-cycle evaluation compares net rivals, not the full field spread.
+        // if drivers are too far apart in position, the inferred summed gap is noisy
+        // and should not be treated as a strategic undercut/defend signal.
+        if (Math.abs(posA - posB) > MAX_PLAUSIBLE_RIVAL_POSITION_DELTA) {
+            return null;
+        }
+
         if (posA == posB) {
             return 0.0;
         }
@@ -696,7 +730,8 @@ public class PitStopEvaluator
     private void resolveFromTimer(PitCycle cycle, Collector<PitStopEvaluationAlert> out)
             throws Exception {
         if (cycle.getPrimaryRival() == null || cycle.getPrePitGapToPrimary() == null) {
-            emitResult(cycle, null, null, Result.SUCCESS_DEFEND, "SAFETY_TIMER", false, out);
+            emitResult(cycle, null, null, Result.UNRESOLVED_INSUFFICIENT_DATA,
+                    RESOLUTION_INSUFFICIENT_DATA, false, out);
             return;
         }
 
@@ -714,7 +749,8 @@ public class PitStopEvaluator
         }
 
         if (postGap == null) {
-            emitResult(cycle, null, null, Result.SUCCESS_DEFEND, "SAFETY_TIMER", false, out);
+            emitResult(cycle, null, null, Result.UNRESOLVED_INSUFFICIENT_DATA,
+                    RESOLUTION_INSUFFICIENT_DATA, false, out);
             return;
         }
 
@@ -724,7 +760,7 @@ public class PitStopEvaluator
 
         Result result = classifyPitStop(cycle.getPrePitGapToPrimary(), postGap,
                 cycle.getBaselineLapTime(), cycle.isDriverPittedFirst(),
-                cycle.getTrackStatusAtPit(), emergenceTraffic);
+            cycle.getTrackStatusAtPit(), cycle.getCompoundAfterPit(), emergenceTraffic);
 
         emitResult(cycle, postGap, gapDeltaPct, result, "SAFETY_TIMER", false, out);
     }

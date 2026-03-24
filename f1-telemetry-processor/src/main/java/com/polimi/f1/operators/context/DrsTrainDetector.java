@@ -21,14 +21,14 @@ import com.polimi.f1.model.output.RivalInfoAlert;
 // to overtake because the car ahead also has DRS from the car in front of it.
 // pit stop timing or alternative strategy becomes the only realistic overtaking tool.
 public class DrsTrainDetector
-        extends ProcessWindowFunction<RivalInfoAlert, String, Integer, TimeWindow> {
+    extends ProcessWindowFunction<RivalInfoAlert, String, String, TimeWindow> {
 
     private static final double DRS_THRESHOLD_SECONDS = 1.0;
 
     @Override
     public void process(
-            Integer lapNumber,
-            ProcessWindowFunction<RivalInfoAlert, String, Integer, TimeWindow>.Context context,
+            String raceLapKey,
+            ProcessWindowFunction<RivalInfoAlert, String, String, TimeWindow>.Context context,
             Iterable<RivalInfoAlert> elements,
             Collector<String> out) {
 
@@ -39,6 +39,8 @@ public class DrsTrainDetector
         if (rivals.size() < 2) {
             return;
         }
+
+        int lapNumber = rivals.get(0).getLapNumber();
 
         // identify contiguous groups where gap to car ahead < 1s.
         // a group of 2+ drivers with consecutive gaps < 1s forms a drs train.

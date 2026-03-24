@@ -24,7 +24,7 @@ import com.polimi.f1.model.output.RivalInfoAlert;
 // seconds of each other (python producer interleaves chronologically). 30s handles jitter
 // without merging events from consecutive laps (~80s apart at 1x speed).
 public class RivalIdentificationFunction
-        extends ProcessWindowFunction<LapEvent, RivalInfoAlert, Integer, TimeWindow> {
+    extends ProcessWindowFunction<LapEvent, RivalInfoAlert, String, TimeWindow> {
 
     // side output tag for denormalized ML feature rows, collected via getSideOutput() in the main job
     public static final OutputTag<MLFeatureRow> ML_FEATURES_TAG =
@@ -32,15 +32,20 @@ public class RivalIdentificationFunction
 
     @Override
     public void process(
-            Integer lapNumber,
-            ProcessWindowFunction<LapEvent, RivalInfoAlert, Integer, TimeWindow>.Context context,
+            String raceLapKey,
+            ProcessWindowFunction<LapEvent, RivalInfoAlert, String, TimeWindow>.Context context,
             Iterable<LapEvent> lapEvents,
             Collector<RivalInfoAlert> out) {
 
         // collect all lap events in this window and sort by position
         List<LapEvent> laps = new ArrayList<>();
         lapEvents.forEach(laps::add);
+        if (laps.isEmpty()) {
+            return;
+        }
         laps.sort(Comparator.comparingInt(LapEvent::getPosition));
+
+        int lapNumber = laps.get(0).getLapNumber();
 
         for (int i = 0; i < laps.size(); i++) {
             LapEvent current = laps.get(i);
