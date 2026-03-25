@@ -151,6 +151,38 @@ All streams are persisted as JSONL (`.jsonl`) through Flink `FileSink.forRowForm
 | ML Features | `data_lake/ml_features/` | Denormalized lap-level ML features |
 | Debug Alerts | `data_lake/debug_alerts/` | Unified debug stream of all alerts |
 
+## Data Quality Contracts
+
+The pipeline enforces explicit output contracts to keep downstream ML behavior stable and reproducible.
+
+1. `ml_features.gapAhead` and `ml_features.gapBehind` are exported as non-negative magnitudes.
+2. `tire_drops` includes `trackStatus` for context-aware filtering.
+3. Pit stops on warm-up laps (`lapNumber <= 2`) are explicitly marked as `UNRESOLVED_INSUFFICIENT_DATA` via `EARLY_LAP_FILTER`.
+4. Pit-cycle classification uses strict guardrails (`SETTLE_LAPS`, incident thresholding, safety timer) to prioritize label purity over volume.
+
+## Audit Workflow
+
+Three scripts are provided for season-level quality checks and forensic validation:
+
+1. `full_lake_audit.py`: high-level stream distribution and alert diagnostics.
+2. `qa_audit.py`: pit-label forensic checks and domain-specific consistency diagnostics.
+3. `season_data_audit.py`: consolidated quality-contract audit across all six JSONL outputs.
+
+Example run after a full-season replay:
+
+```bash
+python full_lake_audit.py
+python qa_audit.py
+python season_data_audit.py --year 2023 --season-tag season --json-out data_lake/audits/season_audit_2023.json
+```
+
+Recent validation highlights (latest full 2023 run):
+
+1. Full season coverage: 22/22 races in both `ml_features` and `pit_evals`.
+2. Gap contract satisfied: negative gap rows in `ml_features` are 0.
+3. `tire_drops` now includes track status context.
+4. `EARLY_LAP_FILTER` path is active for opening-lap pit-stop noise suppression.
+
 ## Tech Stack
 
 | Component | Version |

@@ -103,11 +103,14 @@ public class RivalIdentificationFunction
             Double gapAhead = null;
             Double gapBehind = null;
 
-            // leave null if no driver ahead (we're P1)
-            if (i > 0) {
+            // explicit contract: P1 has no car ahead, keep gapAhead null.
+            // all gaps are exported as non-negative magnitudes.
+            if (current.getPosition() > 1 && i > 0) {
                 LapEvent ahead = laps.get(i - 1);
                 driverAhead = ahead.getDriver();
-                gapAhead = current.getGapToCarAhead();
+                if (current.getGapToCarAhead() != null) {
+                    gapAhead = Math.abs(current.getGapToCarAhead());
+                }
             }
 
             // leave null if no driver behind (we're last)
@@ -115,7 +118,9 @@ public class RivalIdentificationFunction
                 LapEvent behind = laps.get(i + 1);
                 driverBehind = behind.getDriver();
                 // gap behind = the next car's gap-to-car-ahead (which is us)
-                gapBehind = behind.getGapToCarAhead();
+                if (behind.getGapToCarAhead() != null) {
+                    gapBehind = Math.abs(behind.getGapToCarAhead());
+                }
             }
 
             out.collect(buildRivalAlert(current, driverAhead, driverBehind, gapAhead, gapBehind, lapNumber));
