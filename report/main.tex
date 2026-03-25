@@ -101,7 +101,7 @@
         (track status enrichment, rival identification, DRS train detection),
         \emph{Ground Truth Generation} (pit stop outcome classification via a
         three-stage state machine with dual-rival cluster tracking, offset
-        strategy detection, and eight distinct labels normalized as
+        strategy detection, and ten outcome labels normalized as
         track-agnostic percentages), and \emph{Real-Time Alerts} (lift \&
         coast detection, tire degradation monitoring, physical race
         drop zone analysis, and continuous fuzzy-logic pit strategy scoring
@@ -148,11 +148,13 @@ strategic concerns:
     with gap deltas, and detection of DRS trains where multiple cars are
     trapped within one second of each other.
   \item \textbf{Module~B: Ground Truth Generation.} Classifies each
-    observed pit stop into one of eight labels
+    observed pit stop into ten outcome labels
     (\textsc{success\_undercut}, \textsc{success\_overcut},
     \textsc{success\_defend}, \textsc{success\_free\_stop},
     \textsc{offset\_advantage}, \textsc{offset\_disadvantage},
-    \textsc{failure\_pace\_deficit}, \textsc{failure\_traffic})
+    \textsc{failure\_pace\_deficit}, \textsc{failure\_traffic},
+    \textsc{weather\_survival\_stop},
+    \textsc{unresolved\_insufficient\_data})
     using a three-stage state machine that tracks rival clusters (car
     ahead and behind), detects offset strategies (1-stop vs.\ 2-stop via
     timeout), and normalizes gap deltas as a percentage of the driver's
@@ -228,9 +230,9 @@ The Flink job (\texttt{F1StreamingJob}) consumes all three Kafka sources
 at parallelism~1, deserializes JSON payloads via Jackson into typed POJOs
 (\texttt{TelemetryEvent}, \texttt{LapEvent}, \texttt{TrackStatusEvent}),
 assigns event-time watermarks, and routes events through the three
-processing modules. The job accepts runtime parameters via Flink's
-\texttt{ParameterTool} (e.g., \texttt{--pit-loss 22.0}) to adapt
-thresholds to different circuits.
+processing modules. Circuit-specific pit loss thresholds are embedded
+upstream by the producer ETL stage and propagated in lap events, so the
+same Flink job graph can run unchanged across races.
 
 Deserialization uses a generic \texttt{RichFlatMapFunction<String,\,T>}
 that silently drops malformed records with a warning log rather than
@@ -427,9 +429,9 @@ This enables meaningful cross-track comparison: a 2\,s gap change at
 Monaco ($\sim$78\,s lap $\approx$ 2.6\%) carries more strategic
 significance than the same 2\,s at Spa ($\sim$105\,s $\approx$ 1.9\%).
 
-\paragraph{Eight-label classification.}
+\paragraph{Ten-outcome classification.}
 Based on the normalized gap delta, pit order, track status, and
-emergence traffic, the evaluator assigns one of eight labels:
+emergence traffic, the evaluator assigns one of ten outcomes:
 \begin{itemize}
   \item \textsc{success\_undercut}: driver pitted first, gained
     $> 0.5\%$ relative to rival.
@@ -445,6 +447,10 @@ emergence traffic, the evaluator assigns one of eight labels:
   \item \textsc{failure\_pace\_deficit}: lost $> 0.5\%$ to rival.
   \item \textsc{failure\_traffic}: emerged into dirty air despite
     theoretical gap win (car ahead with tyre life $\geq 25$ laps).
+  \item \textsc{weather\_survival\_stop}: wet/intermediate stop,
+    survival-driven context rather than strategic undercut logic.
+  \item \textsc{unresolved\_insufficient\_data}: emitted when rival
+    or baseline context is incomplete for a reliable strategic label.
 \end{itemize}
 
 \paragraph{State TTL for production memory management.}
@@ -509,8 +515,12 @@ The \texttt{TireDropDetector} is a \texttt{KeyedProcessFunction} that
 maintains per-driver state: the current stint number, the best clean lap
 time in the stint, and a rolling buffer of the last three lap times. On
 each new clean lap (excluding pit in-laps and out-laps), the rolling
-3-lap average is compared to the stint best. When the delta exceeds
-1.5~seconds, a \texttt{TireDropAlert} is emitted carrying the driver,
+3-lap average is compared to the stint best through a compound-aware,
+percentage threshold model (base values: SOFT 1.2\%, MEDIUM 1.5\%,
+HARD 2.0\%), dynamically adjusted for race progress and high
+track-temperature conditions. When the lap-time degradation exceeds this
+adaptive threshold for consecutive laps, a \texttt{TireDropAlert} is
+emitted carrying the driver,
 lap number, compound, tire age, average time, best time, and delta.
 
 State is automatically reset when a stint change is detected (the
@@ -683,7 +693,8 @@ status transitions and produced:
     and emergence positions improved for front-runners.
   \item \textbf{Tire Drop:} alerts correctly identifying degradation
     across the grid in the closing laps of each stint, with compound-dependent
-    thresholds (SOFT=1.0s, MEDIUM=1.5s, HARD=2.0s) triggering at
+    percentage thresholds (SOFT=1.2\%, MEDIUM=1.5\%, HARD=2.0\%)
+    and dynamic race-condition adjustments triggering at
     appropriate severity levels.
   \item \textbf{DRS Train:} extensive train detection across the field,
     capturing the densely packed midfield characteristic of modern F1.
@@ -732,7 +743,8 @@ Two test suites were implemented:
     three-stage state machine by injecting sequences of
     \texttt{LapEvent} records with controlled positions,
     \texttt{gapToCarAhead} values, pit-in/pit-out timestamps, and stint
-    numbers. The suite covers all eight classification labels:
+    numbers. The suite covers the core strategic labels and key edge
+    cases:
     \textsc{success\_undercut} (driver pits first, gains position),
     \textsc{success\_overcut} (rival pits first, driver gains by staying
     out), \textsc{success\_defend} (gap maintained within tolerance),
@@ -775,8 +787,8 @@ The key technical contributions are:
   \item A three-stage pit stop evaluation state machine that tracks
     dual-rival clusters, detects offset strategies via configurable
     timeout, computes track-agnostic gap percentages, and produces
-    eight distinct labels covering undercuts, overcuts, free stops,
-    and traffic penalties---all suitable for downstream ML training.
+    ten outcome labels, including strategic, weather, and unresolved
+    classes---all suitable for downstream ML training.
   \item A continuous fuzzy-logic pit strategy evaluator using five
     mathematical scoring curves (power, linear interpolation, quadratic,
     linear deficit, binary) with a broadcast-state Safety Car urgency
@@ -786,13 +798,13 @@ The key technical contributions are:
     mechanism on all \texttt{MapState} descriptors (2-hour expiry,
     \texttt{OnCreateAndWrite} update), preventing unbounded state
     growth during continuous season-level data generation.
-  \item A CSV data lake via Flink's \texttt{FileSink.forRowFormat} API
+  \item A JSONL data lake via Flink's \texttt{FileSink.forRowFormat} API
     with checkpointing, persisting seven output streams (pit evaluations,
     tire drops, lift \& coast, drop zones, pit suggestions, ML features,
     debug alerts)
-    with a custom \texttt{CsvHeaderMapper} that serializes POJO fields
-    and ML context features captured at the moment of the strategic
-    decision inside the operator's state.
+    serialized through Jackson-based \texttt{JsonSerializer} functions,
+    preserving both alert payloads and contextual ML features as
+    newline-delimited JSON records.
   \item A live Streamlit dashboard consuming three Kafka topics
     (\texttt{f1-laps}, \texttt{f1-track-status}, \texttt{f1-alerts})
     and rendering a two-column pit wall interface with dedicated
@@ -808,7 +820,7 @@ ETL stage, and an automation script (\texttt{run\_simulation.sh})
 orchestrates the full pipeline from teardown to data collection in a
 single command. A season simulator (\texttt{simulate\_season.sh}) replays
 all races in a given calendar year sequentially to bulk-generate training
-data. All alert and feature streams are persisted to disk as CSV files
+data. All alert and feature streams are persisted to disk as JSONL files
 via Flink's \texttt{FileSink} with checkpointing enabled, rolling
 policies, and Docker volume mapping enabling direct host-side consumption.
 

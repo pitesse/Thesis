@@ -22,6 +22,10 @@ public class JsonDeserializer<T> extends RichFlatMapFunction<String, T> {
         this.targetClass = targetClass;
     }
 
+    private String recordType() {
+        return targetClass.getSimpleName();
+    }
+
     @Override
     public void open(Configuration parameters) {
         mapper = new ObjectMapper();
@@ -30,16 +34,16 @@ public class JsonDeserializer<T> extends RichFlatMapFunction<String, T> {
     @Override
     public void flatMap(String value, Collector<T> out) {
         if (value == null || value.isBlank()) {
-            LOG.warn("Skipping empty {} record", targetClass.getSimpleName());
+            LOG.warn("Skipping empty {} record", recordType());
             return;
         }
 
         try {
             out.collect(mapper.readValue(value, targetClass));
         } catch (JsonProcessingException e) {
-            LOG.warn("Skipping malformed {} record: {}", targetClass.getSimpleName(), value, e);
+            LOG.warn("Skipping malformed {} record: {}", recordType(), value, e);
         } catch (RuntimeException e) {
-            LOG.warn("Skipping unreadable {} record: {}", targetClass.getSimpleName(), value, e);
+            LOG.warn("Skipping unreadable {} record: {}", recordType(), value, e);
         }
     }
 }

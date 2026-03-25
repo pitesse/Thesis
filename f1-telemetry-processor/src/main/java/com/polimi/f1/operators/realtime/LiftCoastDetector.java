@@ -17,6 +17,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
+import com.polimi.f1.model.TrackStatusCodes;
 import com.polimi.f1.model.input.TelemetryEvent;
 import com.polimi.f1.model.output.LiftCoastAlert;
 
@@ -77,7 +78,7 @@ public class LiftCoastDetector {
         DataStream<TelemetryEvent> cleanTelemetry = enrichedTelemetry
                 .filter(e -> {
                     String status = e.getTrackStatus();
-                    return (status == null || "1".equals(status))
+                    return TrackStatusCodes.isGreenOrUnknown(status)
                             && e.getLapNumber() > MIN_LAP_FOR_DETECTION;
                 })
                 .name("Pre-filter: Green Flag & Post-Opening Laps");

@@ -10,15 +10,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 // ex: PitStopEvaluationAlert -> {"driver":"VER","pitLapNumber":15,"result":"SUCCESS_UNDERCUT",...}
 public class JsonSerializer<T> extends RichMapFunction<T, String> {
 
-    private transient ObjectMapper mapper;
+    private transient ObjectMapper objectMapper;
 
     @Override
     public void open(Configuration parameters) {
-        mapper = new ObjectMapper();
+        objectMapper = new ObjectMapper();
     }
 
     @Override
     public String map(T value) throws Exception {
-        return mapper.writeValueAsString(value);
+        return objectMapper.writeValueAsString(value);
     }
 }

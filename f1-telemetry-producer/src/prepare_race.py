@@ -31,34 +31,34 @@ TOPIC_TRACK_STATUS = "f1-track-status"
 # covers all circuits used in the 2022-2025 ground-effect era.
 PIT_LOSS_BY_RACE = {
     # 2022-2025 calendar (ground-effect era)
-    "Bahrain Grand Prix":        {"green": 22.0, "vsc": 13.0, "sc": 10.0},
-    "Saudi Arabian Grand Prix":  {"green": 24.0, "vsc": 14.5, "sc": 11.5},
-    "Australian Grand Prix":     {"green": 23.0, "vsc": 14.0, "sc": 11.0},
-    "Japanese Grand Prix":       {"green": 24.0, "vsc": 14.5, "sc": 11.5},
-    "Chinese Grand Prix":        {"green": 23.5, "vsc": 14.0, "sc": 11.0},
-    "Miami Grand Prix":          {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "Bahrain Grand Prix": {"green": 22.0, "vsc": 13.0, "sc": 10.0},
+    "Saudi Arabian Grand Prix": {"green": 24.0, "vsc": 14.5, "sc": 11.5},
+    "Australian Grand Prix": {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "Japanese Grand Prix": {"green": 24.0, "vsc": 14.5, "sc": 11.5},
+    "Chinese Grand Prix": {"green": 23.5, "vsc": 14.0, "sc": 11.0},
+    "Miami Grand Prix": {"green": 23.0, "vsc": 14.0, "sc": 11.0},
     "Emilia Romagna Grand Prix": {"green": 23.0, "vsc": 13.5, "sc": 10.5},
-    "Monaco Grand Prix":         {"green": 20.0, "vsc": 12.0, "sc": 9.5},
-    "Spanish Grand Prix":        {"green": 22.5, "vsc": 13.5, "sc": 10.5},
-    "Canadian Grand Prix":       {"green": 21.5, "vsc": 13.0, "sc": 10.0},
-    "Austrian Grand Prix":       {"green": 21.0, "vsc": 12.5, "sc": 9.5},
-    "British Grand Prix":        {"green": 22.5, "vsc": 13.5, "sc": 10.5},
-    "Hungarian Grand Prix":      {"green": 21.5, "vsc": 13.0, "sc": 10.0},
-    "Belgian Grand Prix":        {"green": 23.5, "vsc": 14.0, "sc": 11.0},
-    "Dutch Grand Prix":          {"green": 21.5, "vsc": 13.0, "sc": 10.0},
-    "Italian Grand Prix":        {"green": 25.0, "vsc": 15.0, "sc": 12.0},
-    "Azerbaijan Grand Prix":     {"green": 24.5, "vsc": 15.0, "sc": 12.0},
-    "Singapore Grand Prix":      {"green": 23.0, "vsc": 14.0, "sc": 11.0},
-    "United States Grand Prix":  {"green": 22.5, "vsc": 13.5, "sc": 10.5},
-    "Mexico City Grand Prix":    {"green": 22.0, "vsc": 13.0, "sc": 10.0},
-    "São Paulo Grand Prix":      {"green": 23.0, "vsc": 14.0, "sc": 11.0},
-    "Las Vegas Grand Prix":      {"green": 24.0, "vsc": 14.5, "sc": 11.5},
-    "Qatar Grand Prix":          {"green": 22.5, "vsc": 13.5, "sc": 10.5},
-    "Abu Dhabi Grand Prix":      {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "Monaco Grand Prix": {"green": 20.0, "vsc": 12.0, "sc": 9.5},
+    "Spanish Grand Prix": {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Canadian Grand Prix": {"green": 21.5, "vsc": 13.0, "sc": 10.0},
+    "Austrian Grand Prix": {"green": 21.0, "vsc": 12.5, "sc": 9.5},
+    "British Grand Prix": {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Hungarian Grand Prix": {"green": 21.5, "vsc": 13.0, "sc": 10.0},
+    "Belgian Grand Prix": {"green": 23.5, "vsc": 14.0, "sc": 11.0},
+    "Dutch Grand Prix": {"green": 21.5, "vsc": 13.0, "sc": 10.0},
+    "Italian Grand Prix": {"green": 25.0, "vsc": 15.0, "sc": 12.0},
+    "Azerbaijan Grand Prix": {"green": 24.5, "vsc": 15.0, "sc": 12.0},
+    "Singapore Grand Prix": {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "United States Grand Prix": {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Mexico City Grand Prix": {"green": 22.0, "vsc": 13.0, "sc": 10.0},
+    "São Paulo Grand Prix": {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "Las Vegas Grand Prix": {"green": 24.0, "vsc": 14.5, "sc": 11.5},
+    "Qatar Grand Prix": {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Abu Dhabi Grand Prix": {"green": 23.0, "vsc": 14.0, "sc": 11.0},
     # 2022 circuits not carried into later years
-    "French Grand Prix":         {"green": 23.0, "vsc": 14.0, "sc": 11.0},
+    "French Grand Prix": {"green": 23.0, "vsc": 14.0, "sc": 11.0},
     # 2023+ additions
-    "Portuguese Grand Prix":     {"green": 22.5, "vsc": 13.5, "sc": 10.5},
+    "Portuguese Grand Prix": {"green": 22.5, "vsc": 13.5, "sc": 10.5},
 }
 
 PIT_LOSS_DEFAULT = {"green": 22.0, "vsc": 14.0, "sc": 11.0}
@@ -69,6 +69,7 @@ FASTF1_RETRY_DELAY_SECONDS = 2
 POST_RACE_BUFFER_SECONDS = 120
 TRACK_STATUS_SEVERITY_ORDER = ("5", "4", "7", "6", "2", "1")
 TRACK_STATUS_DEFAULT = "1"
+WEATHER_COLUMNS = ("AirTemp", "TrackTemp", "Humidity", "Rainfall")
 
 
 def get_pit_losses(race_name: str) -> dict:
@@ -293,7 +294,11 @@ def build_lap_events(session) -> pd.DataFrame:
         pre_count = len(laps_df)
         is_pit_lap = laps_df["PitInTime"].notna() | laps_df["PitOutTime"].notna()
         laps_df = laps_df[is_pit_lap | (laps_df["IsAccurate"] == True)].copy()
-        logging.info("IsAccurate filter: %d -> %d laps (pit laps preserved)", pre_count, len(laps_df))
+        logging.info(
+            "IsAccurate filter: %d -> %d laps (pit laps preserved)",
+            pre_count,
+            len(laps_df),
+        )
         laps_df = laps_df.drop(columns=["IsAccurate"])
 
     # use LapStartDate as the event time (Date field for flink watermarks)
@@ -333,25 +338,26 @@ def _enrich_with_weather(session, laps_df: pd.DataFrame) -> pd.DataFrame:
     fastf1's get_weather_data() returns the closest weather sample for each lap.
     if weather data is unavailable (e.g., older sessions), columns are added as NaN.
     """
-    weather_cols = ["AirTemp", "TrackTemp", "Humidity", "Rainfall"]
     try:
         weather = session.laps.get_weather_data()
         if weather is not None and not weather.empty:
-            available_weather = [c for c in weather_cols if c in weather.columns]
+            available_weather = [c for c in WEATHER_COLUMNS if c in weather.columns]
             if available_weather:
                 # get_weather_data returns one row per lap with the same index as session.laps.
                 # align by building a (Driver, LapNumber) key on both sides.
                 weather_subset = session.laps[["Driver", "LapNumber"]].copy()
                 for col in available_weather:
                     weather_subset[col] = weather[col].values
-                laps_df = laps_df.merge(weather_subset, on=["Driver", "LapNumber"], how="left")
+                laps_df = laps_df.merge(
+                    weather_subset, on=["Driver", "LapNumber"], how="left"
+                )
                 logging.info("Weather enrichment added: %s", available_weather)
                 return laps_df
-    except Exception as e:
-        logging.warning("Weather enrichment failed: %s", e)
+    except Exception as exc:
+        logging.warning("Weather enrichment failed: %s", exc)
 
     # fallback: add empty columns
-    for col in weather_cols:
+    for col in WEATHER_COLUMNS:
         if col not in laps_df.columns:
             laps_df[col] = np.nan
     return laps_df
@@ -495,7 +501,11 @@ def prune_post_race_tail(
     this preserves long red-flag races because delays happen before the final lap,
     while removing podium/cooldown feed tail that creates long replay sleeps.
     """
-    if replay_df.empty or "Date" not in replay_df.columns or "event_topic" not in replay_df.columns:
+    if (
+        replay_df.empty
+        or "Date" not in replay_df.columns
+        or "event_topic" not in replay_df.columns
+    ):
         return replay_df
 
     lap_rows = replay_df[replay_df["event_topic"] == TOPIC_LAPS]
@@ -511,7 +521,11 @@ def prune_post_race_tail(
     removed = original_len - len(pruned_df)
 
     if removed > 0:
-        removed_by_topic = replay_df[replay_df["Date"] > cutoff_time]["event_topic"].value_counts().to_dict()
+        removed_by_topic = (
+            replay_df[replay_df["Date"] > cutoff_time]["event_topic"]
+            .value_counts()
+            .to_dict()
+        )
         logging.info(
             "Post-race pruning removed %d rows after cutoff %s (buffer=%ds), by topic=%s",
             removed,
