@@ -100,41 +100,35 @@ def bound_alerts(alert_list):
     return alert_list
 
 
+def init_session_state(defaults):
+    """initialize session state keys only when missing."""
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+
+
 # session state: persist data across streamlit reruns
-if "leaderboard" not in st.session_state:
-    st.session_state.leaderboard = {}
-if "track_status" not in st.session_state:
-    st.session_state.track_status = ("Green", "#00ff00")
-if "track_message" not in st.session_state:
-    st.session_state.track_message = "Waiting for data..."
+SESSION_STATE_DEFAULTS = {
+    "leaderboard": {},
+    "track_status": TRACK_STATUS_MAP["1"],
+    "track_message": "Waiting for data...",
+    # per-category alert lists (bounded to MAX_ALERTS_PER_CATEGORY each)
+    "pit_strategy_alerts": [],
+    "pit_strategy_state": {},
+    "pit_strategy_driver_order": [],
+    "tire_drop_alerts": [],
+    "tire_drop_state": {},
+    "lift_coast_alerts": [],
+    "lift_coast_state": {},
+    "pit_eval_alerts": [],
+    "pit_eval_state": {},
+    "drop_zone_alerts": [],
+    # gap history: {driver: {lap_number: cumulative_gap_seconds}}
+    "gap_history": {},
+    "lap_race_times": {},
+}
 
-# per-category alert lists (bounded to MAX_ALERTS_PER_CATEGORY each)
-if "pit_strategy_alerts" not in st.session_state:
-    st.session_state.pit_strategy_alerts = []
-if "pit_strategy_state" not in st.session_state:
-    st.session_state.pit_strategy_state = {}
-if "pit_strategy_driver_order" not in st.session_state:
-    st.session_state.pit_strategy_driver_order = []
-if "tire_drop_alerts" not in st.session_state:
-    st.session_state.tire_drop_alerts = []
-if "tire_drop_state" not in st.session_state:
-    st.session_state.tire_drop_state = {}
-if "lift_coast_alerts" not in st.session_state:
-    st.session_state.lift_coast_alerts = []
-if "lift_coast_state" not in st.session_state:
-    st.session_state.lift_coast_state = {}
-if "pit_eval_alerts" not in st.session_state:
-    st.session_state.pit_eval_alerts = []
-if "pit_eval_state" not in st.session_state:
-    st.session_state.pit_eval_state = {}
-if "drop_zone_alerts" not in st.session_state:
-    st.session_state.drop_zone_alerts = []
-
-# gap history: {driver: {lap_number: cumulative_gap_seconds}}
-if "gap_history" not in st.session_state:
-    st.session_state.gap_history = {}
-if "lap_race_times" not in st.session_state:
-    st.session_state.lap_race_times = {}
+init_session_state(SESSION_STATE_DEFAULTS)
 
 
 def leaderboard_order_map():
@@ -145,6 +139,7 @@ def leaderboard_order_map():
         row["Driver"]: (row.get("Position") if row.get("Position") is not None else 99)
         for row in st.session_state.leaderboard.values()
     }
+
 
 # track status banner (above the columns)
 status_placeholder = st.empty()
@@ -284,7 +279,9 @@ while True:
                     tyre_life = msg.get("tyreLife", "?")
                     suggestion = msg.get("suggestion", "")
 
-                    numeric_score = float(score) if isinstance(score, (int, float)) else None
+                    numeric_score = (
+                        float(score) if isinstance(score, (int, float)) else None
+                    )
                     track_status = msg.get("trackStatus", "?")
 
                     # stateful upsert: keep only the latest pit suggestion per driver.
@@ -437,8 +434,12 @@ while True:
                             "Label": "MONITOR",
                             "Score": "0.0",
                             "ScoreSort": 0.0,
-                            "Compound": st.session_state.leaderboard.get(d, {}).get("Compound", "—"),
-                            "Tyre": st.session_state.leaderboard.get(d, {}).get("Tyre Life", "—"),
+                            "Compound": st.session_state.leaderboard.get(d, {}).get(
+                                "Compound", "—"
+                            ),
+                            "Tyre": st.session_state.leaderboard.get(d, {}).get(
+                                "Tyre Life", "—"
+                            ),
                             "Track": "—",
                             "Reason": "no pit suggestion emitted yet",
                         }
@@ -447,8 +448,12 @@ while True:
                 )
                 strategy_df = pd.concat([strategy_df, filler], ignore_index=True)
 
-        strategy_df["Race Pos"] = strategy_df["Driver"].map(order_map).fillna(99).astype(int)
-        strategy_df = strategy_df.sort_values(["Race Pos", "Driver"], ascending=[True, True])
+        strategy_df["Race Pos"] = (
+            strategy_df["Driver"].map(order_map).fillna(99).astype(int)
+        )
+        strategy_df = strategy_df.sort_values(
+            ["Race Pos", "Driver"], ascending=[True, True]
+        )
 
         strategy_df = strategy_df.drop(columns=["ScoreSort"]).reset_index(drop=True)
 
@@ -468,7 +473,9 @@ while True:
         eval_df = pd.DataFrame(st.session_state.pit_eval_state.values())
         order_map = leaderboard_order_map()
         eval_df["Race Pos"] = eval_df["Driver"].map(order_map).fillna(99).astype(int)
-        eval_df = eval_df.sort_values(["Race Pos", "Driver"], ascending=[True, True]).reset_index(drop=True)
+        eval_df = eval_df.sort_values(
+            ["Race Pos", "Driver"], ascending=[True, True]
+        ).reset_index(drop=True)
         pit_eval_placeholder.dataframe(
             eval_df,
             use_container_width=True,
@@ -535,7 +542,9 @@ while True:
         drop_df = pd.DataFrame(st.session_state.tire_drop_state.values())
         order_map = leaderboard_order_map()
         drop_df["Race Pos"] = drop_df["Driver"].map(order_map).fillna(99).astype(int)
-        drop_df = drop_df.sort_values(["Race Pos", "Driver"], ascending=[True, True]).reset_index(drop=True)
+        drop_df = drop_df.sort_values(
+            ["Race Pos", "Driver"], ascending=[True, True]
+        ).reset_index(drop=True)
         tire_drop_placeholder.dataframe(
             drop_df,
             use_container_width=True,
@@ -550,7 +559,9 @@ while True:
         lc_df = pd.DataFrame(st.session_state.lift_coast_state.values())
         order_map = leaderboard_order_map()
         lc_df["Race Pos"] = lc_df["Driver"].map(order_map).fillna(99).astype(int)
-        lc_df = lc_df.sort_values(["Race Pos", "Driver"], ascending=[True, True]).reset_index(drop=True)
+        lc_df = lc_df.sort_values(
+            ["Race Pos", "Driver"], ascending=[True, True]
+        ).reset_index(drop=True)
         lift_coast_placeholder.dataframe(
             lc_df,
             use_container_width=True,

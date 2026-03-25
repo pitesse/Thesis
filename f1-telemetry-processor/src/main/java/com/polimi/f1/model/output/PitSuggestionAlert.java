@@ -1,5 +1,7 @@
 package com.polimi.f1.model.output;
 
+import com.polimi.f1.model.TrackStatusCodes;
+
 // emitted when the continuous fuzzy-logic pit desirability score crosses the emit threshold.
 // combines six scoring dimensions: continuous pace degradation, track status (sc/vsc opportunity),
 // continuous traffic analysis (gap-based interpolation), tire urgency (quadratic ramp),
@@ -45,6 +47,7 @@ public class PitSuggestionAlert {
     public PitSuggestionAlert() {
     }
 
+    // args grouped as race context, score components, and tactical emergence data
     public PitSuggestionAlert(String driver, int lapNumber, int position, String compound,
             int tyreLife, double totalScore, double paceScore, double trackStatusScore,
             double trafficScore, double strategyPenalty, double urgencyScore,
@@ -221,7 +224,7 @@ public class PitSuggestionAlert {
                 String.format("%.1f", strategyPenalty),
                 String.format("%.1f", urgencyScore),
                 String.format("%.1f", endOfRacePenalty),
-                trackStatus != null ? trackStatus : "",
+                TrackStatusCodes.normalizeOrGreen(trackStatus),
                 String.valueOf(emergencePosition),
                 String.format("%.3f", gapToPhysicalCar),
                 suggestionLabel != null ? suggestionLabel : "",

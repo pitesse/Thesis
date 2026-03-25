@@ -5,6 +5,7 @@ import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.streaming.api.functions.co.KeyedBroadcastProcessFunction;
 import org.apache.flink.util.Collector;
 
+import com.polimi.f1.model.TrackStatusCodes;
 import com.polimi.f1.model.input.TelemetryEvent;
 import com.polimi.f1.model.input.TrackStatusEvent;
 
@@ -22,7 +23,7 @@ public class TrackStatusEnricher
         extends KeyedBroadcastProcessFunction<String, TelemetryEvent, TrackStatusEvent, TelemetryEvent> {
 
     private static final String CURRENT_STATUS_KEY = "current";
-    private static final String DEFAULT_GREEN_STATUS = "1";
+    private static final String DEFAULT_GREEN_STATUS = TrackStatusCodes.GREEN;
 
     // state descriptor shared between broadcast and processing sides. single key "current".
     public static final MapStateDescriptor<String, String> TRACK_STATUS_STATE

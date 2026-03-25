@@ -7,6 +7,25 @@ import pandas as pd
 PIT_PATTERN = "data_lake/pit_evals_2023_season_*.jsonl"
 ML_PATTERN = "data_lake/ml_features_2023_season_*.jsonl"
 EXTREME_GAP_THRESHOLD_PCT = 20.0
+WET_COMPOUNDS = ("INTERMEDIATE", "WET")
+
+
+def _pct(numerator: int | float, denominator: int) -> float:
+    if denominator == 0:
+        return 0.0
+    return float(numerator) / denominator * 100.0
+
+
+def _nan_if_missing_mean(df: pd.DataFrame, column: str) -> float:
+    if column not in df.columns:
+        return float("nan")
+    return df[column].mean()
+
+
+def _nan_if_missing_median(df: pd.DataFrame, column: str) -> float:
+    if column not in df.columns:
+        return float("nan")
+    return df[column].median()
 
 
 def _latest_file(pattern: str) -> str | None:
@@ -47,7 +66,7 @@ def audit_season() -> None:
     result_col = _safe_col(df_pit, "result")
     defend_mask = result_col.eq("SUCCESS_DEFEND")
     defend_count = int(defend_mask.sum())
-    defend_pct = (defend_count / len(df_pit) * 100.0) if len(df_pit) else 0.0
+    defend_pct = _pct(defend_count, len(df_pit))
 
     print("\n[1] SUCCESS_DEFEND epidemic")
     print(f"SUCCESS_DEFEND count: {defend_count:,} ({defend_pct:.2f}%)")
@@ -61,7 +80,9 @@ def audit_season() -> None:
         null_summary.append((col, total_null, defend_null))
 
     for col, total_null, defend_null in null_summary:
-        print(f"  {col}: null total={total_null:,}, null in SUCCESS_DEFEND={defend_null:,}")
+        print(
+            f"  {col}: null total={total_null:,}, null in SUCCESS_DEFEND={defend_null:,}"
+        )
 
     resolved = _safe_col(df_pit, "resolvedVia")
     print("ResolvedVia distribution (all):")
@@ -99,7 +120,9 @@ def audit_season() -> None:
     print("\n[3] Mathematically impossible gaps")
     gap = _safe_col(df_pit, "gapDeltaPct")
     extreme = df_pit[gap.abs() > EXTREME_GAP_THRESHOLD_PCT].copy()
-    print(f"Rows with |gapDeltaPct| > {EXTREME_GAP_THRESHOLD_PCT:.1f}%: {len(extreme):,}")
+    print(
+        f"Rows with |gapDeltaPct| > {EXTREME_GAP_THRESHOLD_PCT:.1f}%: {len(extreme):,}"
+    )
     if not extreme.empty:
         offender_cols = [
             "race",
@@ -113,20 +136,22 @@ def audit_season() -> None:
             "resolvedVia",
         ]
         offender_cols = [c for c in offender_cols if c in extreme.columns]
-        top5 = extreme.sort_values("gapDeltaPct", key=lambda s: s.abs(), ascending=False).head(5)
+        top5 = extreme.sort_values(
+            "gapDeltaPct", key=lambda s: s.abs(), ascending=False
+        ).head(5)
         print("Top 5 offenders by |gapDeltaPct|:")
         print(top5[offender_cols].to_string(index=False))
 
     print("\n[4] Wet weather stop distortion")
     compound = _safe_col(df_pit, "compound")
-    wet_mask = compound.isin(["INTERMEDIATE", "WET"])
+    wet_mask = compound.isin(WET_COMPOUNDS)
     wet = df_pit[wet_mask]
     dry = df_pit[~wet_mask]
 
-    wet_avg = wet["gapDeltaPct"].mean() if "gapDeltaPct" in wet.columns else float("nan")
-    dry_avg = dry["gapDeltaPct"].mean() if "gapDeltaPct" in dry.columns else float("nan")
-    wet_median = wet["gapDeltaPct"].median() if "gapDeltaPct" in wet.columns else float("nan")
-    dry_median = dry["gapDeltaPct"].median() if "gapDeltaPct" in dry.columns else float("nan")
+    wet_avg = _nan_if_missing_mean(wet, "gapDeltaPct")
+    dry_avg = _nan_if_missing_mean(dry, "gapDeltaPct")
+    wet_median = _nan_if_missing_median(wet, "gapDeltaPct")
+    dry_median = _nan_if_missing_median(dry, "gapDeltaPct")
 
     print(f"Wet stops: {len(wet):,}")
     print(f"Dry stops: {len(dry):,}")
@@ -143,7 +168,9 @@ def audit_season() -> None:
 
     print(f"rivalAhead null rate: {rival_ahead.isna().mean() * 100.0:.2f}%")
     print(f"postPitGapToRival null rate: {post_gap.isna().mean() * 100.0:.2f}%")
-    print(f"baselineLapTime <= 0 or null count: {int((baseline.fillna(0) <= 0).sum()):,}")
+    print(
+        f"baselineLapTime <= 0 or null count: {int((baseline.fillna(0) <= 0).sum()):,}"
+    )
     print(f"offsetStrategy true rate: {offset.fillna(False).mean() * 100.0:.2f}%")
 
     malformed_pit_status = pit_status.dropna().astype(str).str.len().gt(1).sum()

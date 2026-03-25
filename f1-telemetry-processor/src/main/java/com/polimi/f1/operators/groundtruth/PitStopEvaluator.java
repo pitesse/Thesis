@@ -17,6 +17,7 @@ import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.polimi.f1.model.TrackStatusCodes;
 import com.polimi.f1.model.input.LapEvent;
 import com.polimi.f1.model.output.PitStopEvaluationAlert;
 import com.polimi.f1.model.output.PitStopEvaluationAlert.Result;
@@ -286,7 +287,7 @@ public class PitStopEvaluator
                 if (trigger.getDriver().equals(cycle.getDriver())
                         && trigger.getLapNumber() > cycle.getPitLap()) {
                     String status = trigger.getTrackStatus();
-                    if (status == null || status.equals("1")) {
+                    if (TrackStatusCodes.isGreenOrUnknown(status)) {
                         cycle.setGreenLapsSincePit(cycle.getGreenLapsSincePit() + 1);
                     }
 
@@ -424,8 +425,7 @@ public class PitStopEvaluator
         }
 
         // sc/vsc free stop: pitted under caution with minimal gap distortion
-        if (trackStatus != null && (trackStatus.equals("4") || trackStatus.equals("6")
-                || trackStatus.equals("7"))) {
+        if (TrackStatusCodes.isCaution(trackStatus)) {
             if (Math.abs(gapDeltaPct) < FREE_STOP_THRESHOLD_PCT) {
                 return Result.SUCCESS_FREE_STOP;
             }
@@ -542,7 +542,7 @@ public class PitStopEvaluator
         int greenLaps = 0;
         for (int l = rivalPitLap + 1; l <= currentLap; l++) {
             LapEvent e = lapEvents.get(lapKey(l, rival));
-            if (e != null && ("1".equals(e.getTrackStatus()) || e.getTrackStatus() == null)) {
+            if (e != null && TrackStatusCodes.isGreenOrUnknown(e.getTrackStatus())) {
                 greenLaps++;
                 if (greenLaps >= SETTLE_LAPS) {
                     return l;
@@ -725,7 +725,7 @@ public class PitStopEvaluator
         if (event.getPitInTime() != null || event.getPitOutTime() != null) {
             return;
         }
-        if (event.getTrackStatus() != null && !event.getTrackStatus().equals("1")) {
+        if (!TrackStatusCodes.isGreenOrUnknown(event.getTrackStatus())) {
             return;
         }
 
@@ -770,7 +770,7 @@ public class PitStopEvaluator
 
         Result result = classifyPitStop(cycle.getPrePitGapToPrimary(), postGap,
                 cycle.getBaselineLapTime(), cycle.isDriverPittedFirst(),
-            cycle.getTrackStatusAtPit(), cycle.getCompoundAfterPit(), emergenceTraffic);
+                cycle.getTrackStatusAtPit(), cycle.getCompoundAfterPit(), emergenceTraffic);
 
         emitResult(cycle, postGap, gapDeltaPct, result, "SAFETY_TIMER", false, out);
     }

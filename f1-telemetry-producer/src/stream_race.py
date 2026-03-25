@@ -26,6 +26,7 @@ from prepare_race import parquet_filename
 TOPIC_TELEMETRY = "f1-telemetry"
 TOPIC_LAPS = "f1-laps"
 TOPIC_TRACK_STATUS = "f1-track-status"
+DEFAULT_KAFKA_BROKER = "kafka:29092"
 
 # columns internal to the pipeline, not sent to kafka
 _INTERNAL_COLUMNS = {"event_topic"}
@@ -112,7 +113,7 @@ def filter_by_start_lap(replay_df: pd.DataFrame, start_lap: int) -> pd.DataFrame
 
 
 def create_producer() -> KafkaProducer:
-    broker = os.environ.get("KAFKA_BROKER", "kafka:29092")
+    broker = os.environ.get("KAFKA_BROKER", DEFAULT_KAFKA_BROKER)
     return KafkaProducer(
         bootstrap_servers=broker,
         value_serializer=lambda payload: json.dumps(payload).encode("utf-8"),
@@ -133,6 +134,15 @@ def serialize_value(value):
     if hasattr(value, "item"):
         return value.item()
     return value
+
+
+def build_payload(row, payload_columns: tuple[str, ...]) -> dict:
+    payload = {}
+    for column in payload_columns:
+        serialized = serialize_value(getattr(row, column))
+        if serialized is not None:
+            payload[column] = serialized
+    return payload
 
 
 def stream_replay(
@@ -166,11 +176,7 @@ def stream_replay(
             time.sleep(drift)
 
         # build payload dict via getattr on the namedtuple (avoids iterrows overhead)
-        payload = {}
-        for col in payload_columns:
-            val = serialize_value(getattr(row, col))
-            if val is not None:
-                payload[col] = val
+        payload = build_payload(row, payload_columns)
 
         producer.send(topic, value=payload)
         topic_counts[topic] = topic_counts.get(topic, 0) + 1

@@ -263,7 +263,7 @@ public class F1StreamingJob {
 
         FileSink<String> pitEvalSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/pit_evals"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(buildCsvRollingPolicy())
+                .withRollingPolicy(buildJsonlRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-eval")
                         .withPartSuffix(".jsonl")
@@ -272,7 +272,7 @@ public class F1StreamingJob {
 
         FileSink<String> tireDropSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/tire_drops"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(buildCsvRollingPolicy())
+                .withRollingPolicy(buildJsonlRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("tire-drop")
                         .withPartSuffix(".jsonl")
@@ -290,7 +290,7 @@ public class F1StreamingJob {
 
         FileSink<String> liftCoastSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/lift_coast"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(buildCsvRollingPolicy())
+                .withRollingPolicy(buildJsonlRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("lift-coast")
                         .withPartSuffix(".jsonl")
@@ -307,7 +307,7 @@ public class F1StreamingJob {
 
         FileSink<String> dropZoneSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/drop_zones"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(buildCsvRollingPolicy())
+                .withRollingPolicy(buildJsonlRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("drop-zone")
                         .withPartSuffix(".jsonl")
@@ -325,7 +325,7 @@ public class F1StreamingJob {
         FileSink<String> pitSuggestionsSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/pit_suggestions"),
                         new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(buildCsvRollingPolicy())
+                .withRollingPolicy(buildJsonlRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("pit-suggestion")
                         .withPartSuffix(".jsonl")
@@ -343,7 +343,7 @@ public class F1StreamingJob {
 
         FileSink<String> mlFeaturesSink = FileSink
                 .forRowFormat(new Path("/opt/flink/data_lake/ml_features"), new SimpleStringEncoder<String>("UTF-8"))
-                .withRollingPolicy(buildCsvRollingPolicy())
+                .withRollingPolicy(buildJsonlRollingPolicy())
                 .withOutputFileConfig(OutputFileConfig.builder()
                         .withPartPrefix("ml-features")
                         .withPartSuffix(".jsonl")
@@ -426,10 +426,10 @@ public class F1StreamingJob {
         env.execute("F1 Strategy Operations");
     }
 
-    // creates a standardized rolling policy for csv data lake outputs.
+    // creates a standardized rolling policy for jsonl data lake outputs.
     // rolls files every 15s, after 15s inactivity, or when reaching 10 MB.
     // consistent across all ml dataset sinks for predictable file organization.
-    private static DefaultRollingPolicy buildCsvRollingPolicy() {
+    private static DefaultRollingPolicy buildJsonlRollingPolicy() {
         return DefaultRollingPolicy.builder()
                 .withRolloverInterval(Duration.ofSeconds(15))
                 .withInactivityInterval(Duration.ofSeconds(15))
@@ -437,16 +437,16 @@ public class F1StreamingJob {
                 .build();
     }
 
-        private static String raceKey(LapEvent lap) {
-                return lap.getRace() != null ? lap.getRace() : "UNKNOWN_RACE";
-        }
+    private static String raceKey(LapEvent lap) {
+        return lap.getRace() != null ? lap.getRace() : "UNKNOWN_RACE";
+    }
 
-        private static String raceLapKey(LapEvent lap) {
-                return raceLapKey(raceKey(lap), lap.getLapNumber());
-        }
+    private static String raceLapKey(LapEvent lap) {
+        return raceLapKey(raceKey(lap), lap.getLapNumber());
+    }
 
-        private static String raceLapKey(String race, int lapNumber) {
-                return race + "|" + lapNumber;
-        }
+    private static String raceLapKey(String race, int lapNumber) {
+        return race + "|" + lapNumber;
+    }
 
 }

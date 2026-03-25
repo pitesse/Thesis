@@ -41,7 +41,7 @@ public class PitStopEvaluationAlert {
         FAILURE_PACE_DEFICIT, // lost ground to rival due to poor pace after pit
 
         @JsonProperty("FAILURE_TRAFFIC")
-        FAILURE_TRAFFIC,            // emerged into dirty air / traffic nullified position gain
+        FAILURE_TRAFFIC, // emerged into dirty air / traffic nullified position gain
 
         @JsonProperty("UNRESOLVED_INSUFFICIENT_DATA")
         UNRESOLVED_INSUFFICIENT_DATA // missing rival/gap/baseline context, excluded from strategic labels

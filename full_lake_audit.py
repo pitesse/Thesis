@@ -5,6 +5,42 @@ import pandas as pd
 
 
 YEAR = 2023
+GREEN_STATUS_CODE = "1"
+
+
+def _rounded(value: float) -> float:
+    return round(float(value), 3)
+
+
+def _stats_mean_median_min_max(series: pd.Series) -> dict:
+    return {
+        "mean": _rounded(series.mean()),
+        "median": _rounded(series.median()),
+        "min": _rounded(series.min()),
+        "max": _rounded(series.max()),
+    }
+
+
+def _stats_with_percentiles(series: pd.Series, *, p90: float, p99: float) -> dict:
+    return {
+        "mean": _rounded(series.mean()),
+        "median": _rounded(series.median()),
+        "p90": _rounded(series.quantile(p90)),
+        "p99": _rounded(series.quantile(p99)),
+        "min": _rounded(series.min()),
+        "max": _rounded(series.max()),
+    }
+
+
+def _stats_with_p95(series: pd.Series) -> dict:
+    return {
+        "mean": _rounded(series.mean()),
+        "median": _rounded(series.median()),
+        "p95": _rounded(series.quantile(0.95)),
+        "min": _rounded(series.min()),
+        "max": _rounded(series.max()),
+    }
+
 
 def latest_file(pattern: str) -> str | None:
     matches = glob.glob(pattern)
@@ -51,7 +87,9 @@ def audit_tire_drops(df: pd.DataFrame) -> None:
     print(delta_stats.to_string())
 
     early_mask = df["tyreLife"].fillna(0) <= 3
-    print(f"very-early alerts (tyreLife <= 3): {int(early_mask.sum()):,} ({early_mask.mean() * 100:.2f}%)")
+    print(
+        f"very-early alerts (tyreLife <= 3): {int(early_mask.sum()):,} ({early_mask.mean() * 100:.2f}%)"
+    )
 
 
 def audit_lift_coast(df: pd.DataFrame) -> None:
@@ -64,18 +102,9 @@ def audit_lift_coast(df: pd.DataFrame) -> None:
         lift_dt = pd.to_datetime(df["liftDate"], errors="coerce", utc=True)
         brake_dt = pd.to_datetime(df["brakeDate"], errors="coerce", utc=True)
         durations = (brake_dt - lift_dt).dt.total_seconds()
-        print(
-            "coast duration seconds stats:",
-            {
-                "mean": round(float(durations.mean()), 3),
-                "median": round(float(durations.median()), 3),
-                "p95": round(float(durations.quantile(0.95)), 3),
-                "min": round(float(durations.min()), 3),
-                "max": round(float(durations.max()), 3),
-            },
-        )
+        print("coast duration seconds stats:", _stats_with_p95(durations))
 
-    non_green = ~df["trackStatus"].astype(str).eq("1")
+    non_green = ~df["trackStatus"].astype(str).eq(GREEN_STATUS_CODE)
     print(f"non-green alerts: {int(non_green.sum()):,} ({non_green.mean() * 100:.2f}%)")
     if non_green.any():
         print("non-green breakdown:")
@@ -95,15 +124,7 @@ def audit_drop_zones(df: pd.DataFrame) -> None:
 
     for col in ["currentPosition", "emergencePosition", "positionsLost"]:
         if col in df.columns:
-            print(
-                f"{col} stats:",
-                {
-                    "mean": round(float(df[col].mean()), 3),
-                    "median": round(float(df[col].median()), 3),
-                    "min": round(float(df[col].min()), 3),
-                    "max": round(float(df[col].max()), 3),
-                },
-            )
+            print(f"{col} stats:", _stats_mean_median_min_max(df[col]))
 
     if {"currentPosition", "emergencePosition", "positionsLost"}.issubset(df.columns):
         implied = df["emergencePosition"] - df["currentPosition"]
@@ -112,16 +133,7 @@ def audit_drop_zones(df: pd.DataFrame) -> None:
 
     if "gapToPhysicalCar" in df.columns:
         gap = df["gapToPhysicalCar"]
-        print(
-            "gapToPhysicalCar stats:",
-            {
-                "mean": round(float(gap.mean()), 3),
-                "median": round(float(gap.median()), 3),
-                "p95": round(float(gap.quantile(0.95)), 3),
-                "min": round(float(gap.min()), 3),
-                "max": round(float(gap.max()), 3),
-            },
-        )
+        print("gapToPhysicalCar stats:", _stats_with_p95(gap))
         bad_gap = (gap < 0).sum()
         print(f"negative gapToPhysicalCar rows: {int(bad_gap):,}")
 
@@ -137,17 +149,7 @@ def audit_pit_suggestions(df: pd.DataFrame) -> None:
 
     if "totalScore" in df.columns:
         s = df["totalScore"]
-        print(
-            "totalScore stats:",
-            {
-                "mean": round(float(s.mean()), 3),
-                "median": round(float(s.median()), 3),
-                "p90": round(float(s.quantile(0.90)), 3),
-                "p99": round(float(s.quantile(0.99)), 3),
-                "min": round(float(s.min()), 3),
-                "max": round(float(s.max()), 3),
-            },
-        )
+        print("totalScore stats:", _stats_with_percentiles(s, p90=0.90, p99=0.99))
 
     if {"driver", "lapNumber"}.issubset(df.columns):
         per_driver_lap = df.groupby(["driver", "lapNumber"]).size()
@@ -155,11 +157,15 @@ def audit_pit_suggestions(df: pd.DataFrame) -> None:
         print(f"driver-lap duplicates (>1 alert same lap): {int(spam_rows):,}")
 
     if "trackStatus" in df.columns:
-        non_green = ~df["trackStatus"].astype(str).eq("1")
-        print(f"non-green suggestions: {int(non_green.sum()):,} ({non_green.mean() * 100:.2f}%)")
+        non_green = ~df["trackStatus"].astype(str).eq(GREEN_STATUS_CODE)
+        print(
+            f"non-green suggestions: {int(non_green.sum()):,} ({non_green.mean() * 100:.2f}%)"
+        )
         if non_green.any():
             print("non-green status breakdown:")
-            print(df.loc[non_green, "trackStatus"].value_counts(dropna=False).to_string())
+            print(
+                df.loc[non_green, "trackStatus"].value_counts(dropna=False).to_string()
+            )
 
 
 def main() -> None:
