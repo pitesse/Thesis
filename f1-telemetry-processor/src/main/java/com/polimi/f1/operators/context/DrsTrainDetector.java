@@ -21,9 +21,18 @@ import com.polimi.f1.model.output.RivalInfoAlert;
 // to overtake because the car ahead also has DRS from the car in front of it.
 // pit stop timing or alternative strategy becomes the only realistic overtaking tool.
 public class DrsTrainDetector
-    extends ProcessWindowFunction<RivalInfoAlert, String, String, TimeWindow> {
+        extends ProcessWindowFunction<RivalInfoAlert, String, String, TimeWindow> {
 
     private static final double DRS_THRESHOLD_SECONDS = 1.0;
+    private static final int MIN_TRAIN_SIZE = 3;
+
+    private static void addTrainIfEligible(
+            List<List<RivalInfoAlert>> trains,
+            List<RivalInfoAlert> currentTrain) {
+        if (currentTrain.size() >= MIN_TRAIN_SIZE) {
+            trains.add(currentTrain);
+        }
+    }
 
     @Override
     public void process(
@@ -43,7 +52,7 @@ public class DrsTrainDetector
         int lapNumber = rivals.get(0).getLapNumber();
 
         // identify contiguous groups where gap to car ahead < 1s.
-        // a group of 2+ drivers with consecutive gaps < 1s forms a drs train.
+        // this implementation only emits groups with 3+ drivers to reduce noise.
         List<List<RivalInfoAlert>> trains = new ArrayList<>();
         List<RivalInfoAlert> currentTrain = new ArrayList<>();
         currentTrain.add(rivals.get(0));
@@ -54,22 +63,20 @@ public class DrsTrainDetector
             if (gap != null && gap < DRS_THRESHOLD_SECONDS) {
                 currentTrain.add(current);
             } else {
-                if (currentTrain.size() >= 3) {
-                    trains.add(currentTrain);
-                }
+                addTrainIfEligible(trains, currentTrain);
                 currentTrain = new ArrayList<>();
                 currentTrain.add(current);
             }
         }
-        if (currentTrain.size() >= 3) {
-            trains.add(currentTrain);
-        }
+        addTrainIfEligible(trains, currentTrain);
 
         // emit alert for each driver in each detected train
         for (List<RivalInfoAlert> train : trains) {
             StringBuilder drivers = new StringBuilder();
             for (RivalInfoAlert r : train) {
-                if (drivers.length() > 0) drivers.append(", ");
+                if (drivers.length() > 0) {
+                    drivers.append(", ");
+                }
                 drivers.append(r.getDriver()).append(" (P").append(r.getPosition()).append(")");
             }
             String trainInfo = String.format("DRS TRAIN | Lap: %d | %d cars: [%s]",

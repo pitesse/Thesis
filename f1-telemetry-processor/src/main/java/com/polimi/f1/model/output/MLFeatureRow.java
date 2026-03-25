@@ -1,5 +1,7 @@
 package com.polimi.f1.model.output;
 
+import com.polimi.f1.model.TrackStatusCodes;
+
 // denormalized feature row for ml training: one row per driver per lap.
 // combines lap timing/tire data with positional gap data computed by rival identification.
 // exported to ml_features/ csv sink for offline model training.
@@ -58,58 +60,148 @@ public class MLFeatureRow {
         this.trackStatus = trackStatus;
     }
 
-    public String getRace() { return race; }
-    public void setRace(String race) { this.race = race; }
+    public String getRace() {
+        return race;
+    }
 
-    public String getDriver() { return driver; }
-    public void setDriver(String driver) { this.driver = driver; }
+    public void setRace(String race) {
+        this.race = race;
+    }
 
-    public int getLapNumber() { return lapNumber; }
-    public void setLapNumber(int lapNumber) { this.lapNumber = lapNumber; }
+    public String getDriver() {
+        return driver;
+    }
 
-    public int getPosition() { return position; }
-    public void setPosition(int position) { this.position = position; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
-    public String getCompound() { return compound; }
-    public void setCompound(String compound) { this.compound = compound; }
+    public int getLapNumber() {
+        return lapNumber;
+    }
 
-    public int getTyreLife() { return tyreLife; }
-    public void setTyreLife(int tyreLife) { this.tyreLife = tyreLife; }
+    public void setLapNumber(int lapNumber) {
+        this.lapNumber = lapNumber;
+    }
 
-    public Double getTrackTemp() { return trackTemp; }
-    public void setTrackTemp(Double trackTemp) { this.trackTemp = trackTemp; }
+    public int getPosition() {
+        return position;
+    }
 
-    public Double getAirTemp() { return airTemp; }
-    public void setAirTemp(Double airTemp) { this.airTemp = airTemp; }
+    public void setPosition(int position) {
+        this.position = position;
+    }
 
-    public Double getHumidity() { return humidity; }
-    public void setHumidity(Double humidity) { this.humidity = humidity; }
+    public String getCompound() {
+        return compound;
+    }
 
-    public Boolean getRainfall() { return rainfall; }
-    public void setRainfall(Boolean rainfall) { this.rainfall = rainfall; }
+    public void setCompound(String compound) {
+        this.compound = compound;
+    }
 
-    public Double getSpeedTrap() { return speedTrap; }
-    public void setSpeedTrap(Double speedTrap) { this.speedTrap = speedTrap; }
+    public int getTyreLife() {
+        return tyreLife;
+    }
 
-    public String getTeam() { return team; }
-    public void setTeam(String team) { this.team = team; }
+    public void setTyreLife(int tyreLife) {
+        this.tyreLife = tyreLife;
+    }
 
-    public Double getGapAhead() { return gapAhead; }
-    public void setGapAhead(Double gapAhead) { this.gapAhead = gapAhead; }
+    public Double getTrackTemp() {
+        return trackTemp;
+    }
 
-    public Double getGapBehind() { return gapBehind; }
-    public void setGapBehind(Double gapBehind) { this.gapBehind = gapBehind; }
+    public void setTrackTemp(Double trackTemp) {
+        this.trackTemp = trackTemp;
+    }
 
-    public Double getLapTime() { return lapTime; }
-    public void setLapTime(Double lapTime) { this.lapTime = lapTime; }
+    public Double getAirTemp() {
+        return airTemp;
+    }
 
-    public Double getPitLoss() { return pitLoss; }
-    public void setPitLoss(Double pitLoss) { this.pitLoss = pitLoss; }
+    public void setAirTemp(Double airTemp) {
+        this.airTemp = airTemp;
+    }
 
-    public String getTrackStatus() { return trackStatus; }
-    public void setTrackStatus(String trackStatus) { this.trackStatus = trackStatus; }
+    public Double getHumidity() {
+        return humidity;
+    }
+
+    public void setHumidity(Double humidity) {
+        this.humidity = humidity;
+    }
+
+    public Boolean getRainfall() {
+        return rainfall;
+    }
+
+    public void setRainfall(Boolean rainfall) {
+        this.rainfall = rainfall;
+    }
+
+    public Double getSpeedTrap() {
+        return speedTrap;
+    }
+
+    public void setSpeedTrap(Double speedTrap) {
+        this.speedTrap = speedTrap;
+    }
+
+    public String getTeam() {
+        return team;
+    }
+
+    public void setTeam(String team) {
+        this.team = team;
+    }
+
+    public Double getGapAhead() {
+        return gapAhead;
+    }
+
+    public void setGapAhead(Double gapAhead) {
+        this.gapAhead = gapAhead;
+    }
+
+    public Double getGapBehind() {
+        return gapBehind;
+    }
+
+    public void setGapBehind(Double gapBehind) {
+        this.gapBehind = gapBehind;
+    }
+
+    public Double getLapTime() {
+        return lapTime;
+    }
+
+    public void setLapTime(Double lapTime) {
+        this.lapTime = lapTime;
+    }
+
+    public Double getPitLoss() {
+        return pitLoss;
+    }
+
+    public void setPitLoss(Double pitLoss) {
+        this.pitLoss = pitLoss;
+    }
+
+    public String getTrackStatus() {
+        return trackStatus;
+    }
+
+    public void setTrackStatus(String trackStatus) {
+        this.trackStatus = trackStatus;
+    }
+
+    private static double valueOrZero(Double value) {
+        return value != null ? value : 0.0;
+    }
 
     // ex: Italian Grand Prix,VER,25,1,MEDIUM,15,42.3,28.1,45.0,false,342.5,Red Bull Racing,3.2,1.5,81.234,25.0,1
+    // denormalized flat row, missing numeric values stay empty to avoid synthetic defaults
     public String toCsvRow() {
         return String.join(",",
                 race != null ? race : "",
@@ -128,18 +220,22 @@ public class MLFeatureRow {
                 gapBehind != null ? String.format("%.3f", gapBehind) : "",
                 lapTime != null ? String.format("%.3f", lapTime) : "",
                 pitLoss != null ? String.format("%.1f", pitLoss) : "",
-                trackStatus != null ? trackStatus : ""
+                TrackStatusCodes.normalizeOrGreen(trackStatus)
         );
     }
 
     @Override
     public String toString() {
+        double gapAheadValue = valueOrZero(gapAhead);
+        double gapBehindValue = valueOrZero(gapBehind);
+        double lapTimeValue = valueOrZero(lapTime);
+
         return String.format("ML | %s | %s Lap %d P%d | %s L%d | Gap: +%.1fs -%.1fs | %.3fs",
                 race != null ? race : "?",
                 driver, lapNumber, position,
                 compound, tyreLife,
-                gapAhead != null ? gapAhead : 0.0,
-                gapBehind != null ? gapBehind : 0.0,
-                lapTime != null ? lapTime : 0.0);
+                gapAheadValue,
+                gapBehindValue,
+                lapTimeValue);
     }
 }

@@ -87,6 +87,7 @@ public class TireDropAlert {
     }
 
     // ml-ready csv row, ex: VER,25,SOFT,18,83.421,81.200,2.221
+    // keep 3 decimal precision for timing deltas to preserve sensitivity in ml features
     public String toCsvRow() {
         return String.join(",",
                 driver != null ? driver : "",

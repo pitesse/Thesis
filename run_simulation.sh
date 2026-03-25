@@ -22,6 +22,55 @@ RACE="Italian Grand Prix"
 SESSION="R"
 SPEED=50
 START_LAP=1
+JOBMANAGER_OVERVIEW_URL="http://localhost:8081/overview"
+JOBMANAGER_READY_TIMEOUT_SECONDS=30
+KAFKA_TOPICS=(f1-telemetry f1-laps f1-track-status f1-alerts)
+
+wait_for_jobmanager() {
+	echo "       Waiting for Flink JobManager REST API..."
+	for i in $(seq 1 "$JOBMANAGER_READY_TIMEOUT_SECONDS"); do
+		if curl -sf "$JOBMANAGER_OVERVIEW_URL" >/dev/null 2>&1; then
+			echo "       JobManager ready."
+			return
+		fi
+		if [ "$i" -eq "$JOBMANAGER_READY_TIMEOUT_SECONDS" ]; then
+			echo "ERROR: Flink JobManager did not start within ${JOBMANAGER_READY_TIMEOUT_SECONDS}s"
+			exit 1
+		fi
+		sleep 1
+	done
+}
+
+create_kafka_topics() {
+	for topic in "${KAFKA_TOPICS[@]}"; do
+		docker exec kafka kafka-topics \
+			--bootstrap-server localhost:29092 \
+			--create --topic "$topic" \
+			--partitions 1 --replication-factor 1 \
+			--if-not-exists 2>/dev/null || true
+	done
+}
+
+consolidate_sink_outputs() {
+	local sink_dir="$1"
+	local year="$2"
+	local race_slug="$3"
+	local session="$4"
+	local timestamp="$5"
+	local target_dir="$PROJECT_DIR/data_lake/$sink_dir"
+
+	if [ ! -d "$target_dir" ]; then
+		return
+	fi
+
+	local merged_file="$PROJECT_DIR/data_lake/${sink_dir}_${year}_${race_slug}_${session}_${timestamp}.jsonl"
+	find "$target_dir" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) -exec cat {} + >"$merged_file"
+	if [ -s "$merged_file" ]; then
+		echo "       Merged: $merged_file"
+	else
+		rm -f "$merged_file"
+	fi
+}
 
 # ===========================
 # parse arguments
@@ -102,30 +151,13 @@ chmod -R 777 "$PROJECT_DIR/data_lake" 2>/dev/null || true
 docker compose -f "$COMPOSE_FILE" up -d
 
 # wait for flink jobmanager rest api to be ready
-echo "       Waiting for Flink JobManager REST API..."
-for i in $(seq 1 30); do
-	if curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
-		echo "       JobManager ready."
-		break
-	fi
-	if [ "$i" -eq 30 ]; then
-		echo "ERROR: Flink JobManager did not start within 30s"
-		exit 1
-	fi
-	sleep 1
-done
+wait_for_jobmanager
 
 # ===========================
 # 4. pre-create kafka topics
 # ===========================
 echo "[4/7] Creating Kafka topics..."
-for topic in f1-telemetry f1-laps f1-track-status f1-alerts; do
-	docker exec kafka kafka-topics \
-		--bootstrap-server localhost:29092 \
-		--create --topic "$topic" \
-		--partitions 1 --replication-factor 1 \
-		--if-not-exists 2>/dev/null || true
-done
+create_kafka_topics
 
 # ===========================
 # 5. submit flink job (jar is baked into the image)
@@ -184,16 +216,7 @@ echo "[8/8] Consolidating race outputs (jsonl + inprogress)..."
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 for SINK_DIR in pit_evals tire_drops lift_coast drop_zones ml_features pit_suggestions; do
-	TARGET_DIR="$PROJECT_DIR/data_lake/$SINK_DIR"
-	if [ -d "$TARGET_DIR" ]; then
-		MERGED_FILE="$PROJECT_DIR/data_lake/${SINK_DIR}_${YEAR}_${SAFE_RACE}_${SESSION}_${TIMESTAMP}.jsonl"
-		find "$TARGET_DIR" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) -exec cat {} + > "$MERGED_FILE"
-		if [ -s "$MERGED_FILE" ]; then
-			echo "       Merged: $MERGED_FILE"
-		else
-			rm -f "$MERGED_FILE"
-		fi
-	fi
+	consolidate_sink_outputs "$SINK_DIR" "$YEAR" "$SAFE_RACE" "$SESSION" "$TIMESTAMP"
 done
 
 echo ""

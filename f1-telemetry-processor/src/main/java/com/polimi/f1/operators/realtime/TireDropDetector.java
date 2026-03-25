@@ -10,6 +10,7 @@ import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
+import com.polimi.f1.model.TrackStatusCodes;
 import com.polimi.f1.model.input.LapEvent;
 import com.polimi.f1.model.output.TireDropAlert;
 
@@ -113,7 +114,7 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
         }
 
         // keep only green-flag racing laps, ex trackStatus=1
-        if (lap.getTrackStatus() != null && !lap.getTrackStatus().equals("1")) {
+        if (!TrackStatusCodes.isGreenOrUnknown(lap.getTrackStatus())) {
             return;
         }
 

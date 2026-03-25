@@ -11,6 +11,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class LapEvent {
 
+    // priority for mixed status tokens, ex "126" resolves to "6" before "2" or "1"
     private static final String[] TRACK_STATUS_SEVERITY_ORDER = {"5", "4", "7", "6", "2", "1"};
     private static final String TRACK_STATUS_DEFAULT = "1";
 
@@ -204,6 +205,7 @@ public class LapEvent {
             return TRACK_STATUS_DEFAULT;
         }
 
+        // severity order, red, sc, vsc ending, vsc, yellow, green
         for (String code : TRACK_STATUS_SEVERITY_ORDER) {
             if (rawStatus.contains(code)) {
                 return code;

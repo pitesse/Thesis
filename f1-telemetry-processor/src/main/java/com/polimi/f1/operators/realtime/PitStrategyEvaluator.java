@@ -18,6 +18,7 @@ import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.polimi.f1.model.TrackStatusCodes;
 import com.polimi.f1.model.input.LapEvent;
 import com.polimi.f1.model.input.TrackStatusEvent;
 import com.polimi.f1.model.output.PitSuggestionAlert;
@@ -80,7 +81,6 @@ public class PitStrategyEvaluator
     private static final int RECENT_LAP_WINDOW = 3;
     private static final String CURRENT_STATUS_KEY = "current";
     private static final String LATEST_LAP_KEY = "latest";
-    private static final String DEFAULT_GREEN_STATUS = "1";
     private static final double PACE_CURVE_POWER = 1.5;
 
     // track status score: +60 for sc/vsc (crisp, binary event)
@@ -261,7 +261,7 @@ public class PitStrategyEvaluator
         ctx.getBroadcastState(TRACK_STATUS_STATE).put(CURRENT_STATUS_KEY, statusEvent.getStatus());
 
         String status = statusEvent.getStatus();
-        if (!"4".equals(status) && !"6".equals(status) && !"7".equals(status)) {
+        if (!TrackStatusCodes.isCaution(status)) {
             return; // only trigger urgency on SC/VSC/VSCEnding
         }
 
@@ -284,7 +284,7 @@ public class PitStrategyEvaluator
             KeyedBroadcastProcessFunction<String, LapEvent, TrackStatusEvent, PitSuggestionAlert>.ReadOnlyContext ctx)
             throws Exception {
         String status = ctx.getBroadcastState(TRACK_STATUS_STATE).get(CURRENT_STATUS_KEY);
-        return status != null ? status : DEFAULT_GREEN_STATUS;
+        return TrackStatusCodes.normalizeOrGreen(status);
     }
 
     // updates max observed tyre life per compound in real time, each lap
@@ -325,7 +325,7 @@ public class PitStrategyEvaluator
         Double lapTime = event.getLapTime();
         if (lapTime != null && lapTime > 0
                 && event.getPitInTime() == null && event.getPitOutTime() == null
-                && ("1".equals(event.getTrackStatus()) || event.getTrackStatus() == null)) {
+                && TrackStatusCodes.isGreenOrUnknown(event.getTrackStatus())) {
             if (lapTime < state.getStintBestLap()) {
                 state.setStintBestLap(lapTime);
             }
@@ -551,7 +551,7 @@ public class PitStrategyEvaluator
             return 0;
         }
         return switch (trackStatus) {
-            case "4", "6", "7" ->
+            case TrackStatusCodes.SAFETY_CAR, TrackStatusCodes.VIRTUAL_SAFETY_CAR, TrackStatusCodes.VSC_ENDING ->
                 TRACK_STATUS_SCORE;
             default ->
                 0;
@@ -713,13 +713,13 @@ public class PitStrategyEvaluator
 
     // selects pit loss based on track status (green, sc, vsc)
     private static Double selectPitLoss(LapEvent lap, String currentTrackStatus) {
-        String status = currentTrackStatus != null ? currentTrackStatus : "1";
+        String status = TrackStatusCodes.normalizeOrGreen(currentTrackStatus);
         return switch (status) {
-            case "1" ->
+            case TrackStatusCodes.GREEN ->
                 lap.getPitLoss();
-            case "6", "7" ->
+            case TrackStatusCodes.VIRTUAL_SAFETY_CAR, TrackStatusCodes.VSC_ENDING ->
                 lap.getVscPitLoss();
-            case "4" ->
+            case TrackStatusCodes.SAFETY_CAR ->
                 lap.getScPitLoss();
             default ->
                 null;
