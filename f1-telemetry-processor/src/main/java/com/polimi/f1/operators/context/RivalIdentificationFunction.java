@@ -24,11 +24,60 @@ import com.polimi.f1.model.output.RivalInfoAlert;
 // seconds of each other (python producer interleaves chronologically). 30s handles jitter
 // without merging events from consecutive laps (~80s apart at 1x speed).
 public class RivalIdentificationFunction
-    extends ProcessWindowFunction<LapEvent, RivalInfoAlert, String, TimeWindow> {
+        extends ProcessWindowFunction<LapEvent, RivalInfoAlert, String, TimeWindow> {
 
     // side output tag for denormalized ML feature rows, collected via getSideOutput() in the main job
-    public static final OutputTag<MLFeatureRow> ML_FEATURES_TAG =
-            new OutputTag<MLFeatureRow>("ml-features") {};
+    public static final OutputTag<MLFeatureRow> ML_FEATURES_TAG
+            = new OutputTag<MLFeatureRow>("ml-features") {
+    };
+
+    private static RivalInfoAlert buildRivalAlert(
+            LapEvent current,
+            String driverAhead,
+            String driverBehind,
+            Double gapAhead,
+            Double gapBehind,
+            int lapNumber) {
+        return new RivalInfoAlert(
+                current.getDriver(),
+                driverAhead,
+                driverBehind,
+                gapAhead,
+                gapBehind,
+                lapNumber,
+                current.getPosition(),
+                current.getRace(),
+                current.getPitLoss(),
+                current.getVscPitLoss(),
+                current.getScPitLoss(),
+                current.getTyreLife(),
+                current.getCompound());
+    }
+
+    private static MLFeatureRow buildMlFeatureRow(
+            LapEvent current,
+            int lapNumber,
+            Double gapAhead,
+            Double gapBehind) {
+        return new MLFeatureRow(
+                current.getRace(),
+                current.getDriver(),
+                lapNumber,
+                current.getPosition(),
+                current.getCompound(),
+                current.getTyreLife(),
+                current.getTrackTemp(),
+                current.getAirTemp(),
+                current.getHumidity(),
+                current.getRainfall(),
+                current.getSpeedTrap(),
+                current.getTeam(),
+                gapAhead,
+                gapBehind,
+                current.getLapTime(),
+                current.getPitLoss(),
+                current.getTrackStatus());
+    }
 
     @Override
     public void process(
@@ -69,45 +118,12 @@ public class RivalIdentificationFunction
                 gapBehind = behind.getGapToCarAhead();
             }
 
-            out.collect(
-                    new RivalInfoAlert(
-                            current.getDriver(),
-                            driverAhead,
-                            driverBehind,
-                            gapAhead,
-                            gapBehind,
-                            lapNumber,
-                            current.getPosition(),
-                            current.getRace(),
-                            current.getPitLoss(),
-                            current.getVscPitLoss(),
-                            current.getScPitLoss(),
-                            current.getTyreLife(),
-                            current.getCompound()
-                    ));
+            out.collect(buildRivalAlert(current, driverAhead, driverBehind, gapAhead, gapBehind, lapNumber));
 
             // ml side output: denormalized feature row combining lap data with gap context.
             // only emit for laps with valid timing (null lapTime = pit in/out laps).
             if (current.getLapTime() != null) {
-                context.output(ML_FEATURES_TAG, new MLFeatureRow(
-                        current.getRace(),
-                        current.getDriver(),
-                        lapNumber,
-                        current.getPosition(),
-                        current.getCompound(),
-                        current.getTyreLife(),
-                        current.getTrackTemp(),
-                        current.getAirTemp(),
-                        current.getHumidity(),
-                        current.getRainfall(),
-                        current.getSpeedTrap(),
-                        current.getTeam(),
-                        gapAhead,
-                        gapBehind,
-                        current.getLapTime(),
-                        current.getPitLoss(),
-                        current.getTrackStatus()
-                ));
+                context.output(ML_FEATURES_TAG, buildMlFeatureRow(current, lapNumber, gapAhead, gapBehind));
             }
         }
     }

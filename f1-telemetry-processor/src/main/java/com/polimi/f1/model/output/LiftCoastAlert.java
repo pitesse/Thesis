@@ -1,5 +1,7 @@
 package com.polimi.f1.model.output;
 
+import com.polimi.f1.model.TrackStatusCodes;
+
 // emitted when cep detects a lift & coast maneuver: the driver releases full throttle,
 // coasts briefly with no pedal input, then applies brakes later than a normal braking point.
 // the brakeDate serves as the dedup key, multiple cep matches from consecutive throttle=100
@@ -90,13 +92,14 @@ public class LiftCoastAlert {
     }
 
     // ex: VER,2023-09-03T13:05:12.003,2023-09-03T13:05:13.003,2023-09-03T13:05:14.003,1,342,8
+    // timestamp and driver fields are null safe, speed and gear are primitive values
     public String toCsvRow() {
         return String.join(",",
                 driver != null ? driver : "",
                 fullThrottleDate != null ? fullThrottleDate : "",
                 liftDate != null ? liftDate : "",
                 brakeDate != null ? brakeDate : "",
-                trackStatus != null ? trackStatus : "",
+                TrackStatusCodes.normalizeOrGreen(trackStatus),
                 String.valueOf(speed),
                 String.valueOf(gear)
         );

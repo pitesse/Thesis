@@ -1,5 +1,7 @@
 package com.polimi.f1.model.output;
 
+import com.polimi.f1.model.TrackStatusCodes;
+
 // drop zone analysis: bridges the net race (positional rivals) and physical race
 // (cars physically surrounding a driver after a pit stop).
 //
@@ -57,56 +59,121 @@ public class DropZoneAlert {
         this.pitLoss = pitLoss;
     }
 
-    public String getDriver() { return driver; }
-    public void setDriver(String driver) { this.driver = driver; }
+    public String getDriver() {
+        return driver;
+    }
 
-    public int getLapNumber() { return lapNumber; }
-    public void setLapNumber(int lapNumber) { this.lapNumber = lapNumber; }
+    public void setDriver(String driver) {
+        this.driver = driver;
+    }
 
-    public int getCurrentPosition() { return currentPosition; }
-    public void setCurrentPosition(int currentPosition) { this.currentPosition = currentPosition; }
+    public int getLapNumber() {
+        return lapNumber;
+    }
 
-    public int getEmergencePosition() { return emergencePosition; }
-    public void setEmergencePosition(int emergencePosition) { this.emergencePosition = emergencePosition; }
+    public void setLapNumber(int lapNumber) {
+        this.lapNumber = lapNumber;
+    }
 
-    public int getPositionsLost() { return positionsLost; }
-    public void setPositionsLost(int positionsLost) { this.positionsLost = positionsLost; }
+    public int getCurrentPosition() {
+        return currentPosition;
+    }
 
-    public String getNetRival() { return netRival; }
-    public void setNetRival(String netRival) { this.netRival = netRival; }
+    public void setCurrentPosition(int currentPosition) {
+        this.currentPosition = currentPosition;
+    }
 
-    public String getPhysicalCarAhead() { return physicalCarAhead; }
-    public void setPhysicalCarAhead(String physicalCarAhead) { this.physicalCarAhead = physicalCarAhead; }
+    public int getEmergencePosition() {
+        return emergencePosition;
+    }
 
-    public double getGapToPhysicalCar() { return gapToPhysicalCar; }
-    public void setGapToPhysicalCar(double gapToPhysicalCar) { this.gapToPhysicalCar = gapToPhysicalCar; }
+    public void setEmergencePosition(int emergencePosition) {
+        this.emergencePosition = emergencePosition;
+    }
 
-    public String getPhysicalCarCompound() { return physicalCarCompound; }
-    public void setPhysicalCarCompound(String physicalCarCompound) { this.physicalCarCompound = physicalCarCompound; }
+    public int getPositionsLost() {
+        return positionsLost;
+    }
 
-    public int getPhysicalCarTyreLife() { return physicalCarTyreLife; }
-    public void setPhysicalCarTyreLife(int physicalCarTyreLife) { this.physicalCarTyreLife = physicalCarTyreLife; }
+    public void setPositionsLost(int positionsLost) {
+        this.positionsLost = positionsLost;
+    }
 
-    public String getTrackStatus() { return trackStatus; }
-    public void setTrackStatus(String trackStatus) { this.trackStatus = trackStatus; }
+    public String getNetRival() {
+        return netRival;
+    }
 
-    public double getPitLoss() { return pitLoss; }
-    public void setPitLoss(double pitLoss) { this.pitLoss = pitLoss; }
+    public void setNetRival(String netRival) {
+        this.netRival = netRival;
+    }
+
+    public String getPhysicalCarAhead() {
+        return physicalCarAhead;
+    }
+
+    public void setPhysicalCarAhead(String physicalCarAhead) {
+        this.physicalCarAhead = physicalCarAhead;
+    }
+
+    public double getGapToPhysicalCar() {
+        return gapToPhysicalCar;
+    }
+
+    public void setGapToPhysicalCar(double gapToPhysicalCar) {
+        this.gapToPhysicalCar = gapToPhysicalCar;
+    }
+
+    public String getPhysicalCarCompound() {
+        return physicalCarCompound;
+    }
+
+    public void setPhysicalCarCompound(String physicalCarCompound) {
+        this.physicalCarCompound = physicalCarCompound;
+    }
+
+    public int getPhysicalCarTyreLife() {
+        return physicalCarTyreLife;
+    }
+
+    public void setPhysicalCarTyreLife(int physicalCarTyreLife) {
+        this.physicalCarTyreLife = physicalCarTyreLife;
+    }
+
+    public String getTrackStatus() {
+        return trackStatus;
+    }
+
+    public void setTrackStatus(String trackStatus) {
+        this.trackStatus = trackStatus;
+    }
+
+    public double getPitLoss() {
+        return pitLoss;
+    }
+
+    public void setPitLoss(double pitLoss) {
+        this.pitLoss = pitLoss;
+    }
+
+    private static String safe(String value) {
+        return value != null ? value : "";
+    }
 
     // ex: VER,25,2,7,5,HAM,STR,6.5,HARD,25,1,22.0
+    // null string fields are emitted as empty cells to keep csv column alignment stable
     public String toCsvRow() {
         return String.join(",",
-                driver != null ? driver : "",
+                safe(driver),
                 String.valueOf(lapNumber),
                 String.valueOf(currentPosition),
                 String.valueOf(emergencePosition),
                 String.valueOf(positionsLost),
-                netRival != null ? netRival : "",
-                physicalCarAhead != null ? physicalCarAhead : "",
+                safe(netRival),
+                safe(physicalCarAhead),
                 String.format("%.3f", gapToPhysicalCar),
-                physicalCarCompound != null ? physicalCarCompound : "",
+                safe(physicalCarCompound),
                 String.valueOf(physicalCarTyreLife),
-                trackStatus != null ? trackStatus : "",
+                TrackStatusCodes.normalizeOrGreen(trackStatus),
                 String.format("%.1f", pitLoss)
         );
     }
@@ -115,7 +182,7 @@ public class DropZoneAlert {
     public String toString() {
         return String.format(
                 "DROP ZONE | %s P%d -> P%d (-%d) | Net rival: %s | "
-                        + "Emerges behind: %s (%s L%d) gap=%.1fs | PitLoss=%.1fs (status: %s)",
+                + "Emerges behind: %s (%s L%d) gap=%.1fs | PitLoss=%.1fs (status: %s)",
                 driver, currentPosition, emergencePosition, positionsLost,
                 netRival != null ? netRival : "P1",
                 physicalCarAhead != null ? physicalCarAhead : "?",

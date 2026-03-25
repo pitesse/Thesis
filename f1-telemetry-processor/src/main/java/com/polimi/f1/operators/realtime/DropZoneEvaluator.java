@@ -14,6 +14,7 @@ import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
+import com.polimi.f1.model.TrackStatusCodes;
 import com.polimi.f1.model.input.LapEvent;
 import com.polimi.f1.model.output.DropZoneAlert;
 
@@ -175,7 +176,7 @@ public class DropZoneEvaluator
                 // net rival: car immediately ahead in the classification (the undercut target)
                 String netRival = (i > 0) ? laps.get(i - 1).getDriver() : null;
 
-                String status = current.getTrackStatus() != null ? current.getTrackStatus() : "1";
+                String status = TrackStatusCodes.normalizeOrGreen(current.getTrackStatus());
 
                 out.collect(new DropZoneAlert(
                         current.getDriver(),
@@ -200,16 +201,14 @@ public class DropZoneEvaluator
     // returns null for yellow/red flags to suppress evaluation (pit lane may be closed).
     private static Double selectPitLoss(LapEvent lap) {
         String status = lap.getTrackStatus();
-        if (status == null) {
-            status = "1";
-        }
+        status = TrackStatusCodes.normalizeOrGreen(status);
 
         return switch (status) {
-            case "1" ->
+            case TrackStatusCodes.GREEN ->
                 lap.getPitLoss();
-            case "6", "7" ->
+            case TrackStatusCodes.VIRTUAL_SAFETY_CAR, TrackStatusCodes.VSC_ENDING ->
                 lap.getVscPitLoss();
-            case "4" ->
+            case TrackStatusCodes.SAFETY_CAR ->
                 lap.getScPitLoss();
             // yellow ("2"), red ("5"): suppress, pit lane may be closed
             default ->
