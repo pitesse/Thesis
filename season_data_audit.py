@@ -25,6 +25,75 @@ DEFAULT_SEASON_TAG = "season"
 DEFAULT_EXPECTED_RACES = 22
 
 
+def _is_scalar(value: Any) -> bool:
+    return not isinstance(value, (dict, list, tuple))
+
+
+def _fmt_scalar(value: Any) -> str:
+    if value is None:
+        return "N/A"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, float):
+        return f"{value:.3f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def _label(name: str) -> str:
+    return name.replace("_", " ")
+
+
+def _print_list(items: list[Any], indent: int = 0, max_items: int = 6) -> None:
+    pad = " " * indent
+    if not items:
+        print(f"{pad}(none)")
+        return
+
+    if all(_is_scalar(item) for item in items):
+        preview = ", ".join(_fmt_scalar(item) for item in items[:max_items])
+        if len(items) > max_items:
+            preview += f", ... (+{len(items) - max_items} more)"
+        print(f"{pad}{preview}")
+        return
+
+    for idx, item in enumerate(items[:max_items], start=1):
+        print(f"{pad}{idx}:")
+        if isinstance(item, dict):
+            _print_mapping(item, indent=indent + 2)
+        elif isinstance(item, list):
+            _print_list(item, indent=indent + 2)
+        else:
+            print(f"{' ' * (indent + 2)}{_fmt_scalar(item)}")
+
+    if len(items) > max_items:
+        print(f"{pad}... (+{len(items) - max_items} more)")
+
+
+def _print_mapping(data: dict[str, Any], indent: int = 0) -> None:
+    if not data:
+        print(f"{' ' * indent}(none)")
+        return
+
+    scalars = {k: v for k, v in data.items() if _is_scalar(v)}
+    nested = {k: v for k, v in data.items() if not _is_scalar(v)}
+
+    if scalars:
+        width = max(len(_label(str(key))) for key in scalars)
+        for key, value in scalars.items():
+            print(
+                f"{' ' * indent}{_label(str(key)):<{width}} : {_fmt_scalar(value)}"
+            )
+
+    for key, value in nested.items():
+        print(f"{' ' * indent}{_label(str(key))}:")
+        if isinstance(value, dict):
+            _print_mapping(value, indent=indent + 2)
+        elif isinstance(value, list):
+            _print_list(value, indent=indent + 2)
+        else:
+            print(f"{' ' * (indent + 2)}{_fmt_scalar(value)}")
+
+
 def _pct(numerator: int, denominator: int) -> float:
     if denominator == 0:
         return 0.0
@@ -495,29 +564,28 @@ def run_audit(
 
 def _print_report(report: dict) -> None:
     print("=== SEASON DATA AUDIT ===")
-    print(json.dumps(report["inputs"], indent=2))
-    print()
+    print("inputs:")
+    _print_mapping(report["inputs"], indent=2)
 
     for stream in STREAMS:
         stream_report = report["streams"].get(stream, {})
-        print(f"--- {stream} ---")
+        print(f"\n--- {stream} ---")
         if stream_report.get("status") != "ok":
-            print(json.dumps(stream_report, indent=2))
+            _print_mapping(stream_report, indent=2)
             continue
 
         print(f"file: {stream_report['file']}")
         print("generic:")
-        print(json.dumps(stream_report["generic"], indent=2))
+        _print_mapping(stream_report["generic"], indent=2)
         print("metrics:")
-        print(json.dumps(stream_report["metrics"], indent=2))
-        print()
+        _print_mapping(stream_report["metrics"], indent=2)
 
-    print("--- representativeness ---")
-    print(json.dumps(report["representativeness"], indent=2))
+    print("\n--- representativeness ---")
+    _print_mapping(report["representativeness"], indent=2)
 
     if "forensics" in report:
         print("\n--- forensics ---")
-        print(json.dumps(report["forensics"], indent=2))
+        _print_mapping(report["forensics"], indent=2)
 
 
 def _print_summary(report: dict) -> None:
