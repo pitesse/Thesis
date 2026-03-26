@@ -53,6 +53,7 @@ public class PitStopEvaluator
 
     // required number of completed green laps after pit before evaluation
     private static final int SETTLE_LAPS = 4;
+    private static final int WARMUP_LAPS = 2;
 
     // safety timeout: 15 minutes event time to clear stale records
     private static final long TIMER_TIMEOUT_MS = 900_000;
@@ -82,6 +83,7 @@ public class PitStopEvaluator
     // but car ahead within this gap is considered blocking
     private static final int TRAFFIC_TYRE_LIFE_THRESHOLD = 25;
     private static final String RESOLUTION_INSUFFICIENT_DATA = "INSUFFICIENT_DATA";
+    private static final String RESOLUTION_EARLY_LAP_FILTER = "EARLY_LAP_FILTER";
 
     // flat state: all lap events, key = "lapNumber:driver"
     private transient MapState<String, LapEvent> lapEvents;
@@ -162,7 +164,11 @@ public class PitStopEvaluator
 
         // detect pit entry: pitInTime != null means this driver entered the pits this lap
         if (event.getPitInTime() != null && !pendingCycles.contains(driver)) {
-            registerPitCycle(event, ctx);
+            if (lap <= WARMUP_LAPS) {
+                emitWarmupUnresolved(event, out);
+            } else {
+                registerPitCycle(event, ctx);
+            }
         }
 
         // try to advance any pending cycles on every incoming event
@@ -803,5 +809,25 @@ public class PitStopEvaluator
                 cycle.getPrimaryRival(),
                 gapDeltaPct != null ? String.format("%.2f", gapDeltaPct) : "N/A",
                 resolvedVia);
+    }
+
+    private void emitWarmupUnresolved(LapEvent event, Collector<PitStopEvaluationAlert> out) {
+        PitCycle cycle = new PitCycle();
+        cycle.setDriver(event.getDriver());
+        cycle.setPitLap(event.getLapNumber());
+        cycle.setTrackStatusAtPit(event.getTrackStatus());
+        cycle.setTyreAgeAtPit(event.getTyreLife());
+        cycle.setGapToCarAheadAtPit(event.getGapToCarAhead());
+        cycle.setRace(event.getRace());
+        cycle.setBaselineLapTime(0.0);
+
+        emitResult(
+                cycle,
+                null,
+                null,
+                Result.UNRESOLVED_INSUFFICIENT_DATA,
+                RESOLUTION_EARLY_LAP_FILTER,
+                false,
+                out);
     }
 }

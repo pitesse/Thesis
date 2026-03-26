@@ -164,7 +164,8 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
                         lap.getTyreLife(),
                         lapTimeSec,
                         best,
-                        delta
+                    delta,
+                    lap.getTrackStatus()
                 ));
                 // reset after emission so we don't fire every subsequent lap
                 consecutiveSlowLaps.update(0);
