@@ -57,7 +57,7 @@ PIT_LOSS_BY_RACE = {
     "Abu Dhabi Grand Prix": {"green": 23.0, "vsc": 14.0, "sc": 11.0},
     # 2022 circuits not carried into later years
     "French Grand Prix": {"green": 23.0, "vsc": 14.0, "sc": 11.0},
-    # 2023+ additions
+    # fallback/testing coverage, not part of the official 2023 calendar
     "Portuguese Grand Prix": {"green": 22.5, "vsc": 13.5, "sc": 10.5},
 }
 

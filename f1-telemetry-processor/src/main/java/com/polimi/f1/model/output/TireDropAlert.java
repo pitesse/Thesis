@@ -6,7 +6,7 @@ package com.polimi.f1.model.output;
 public class TireDropAlert {
 
     public static final String CSV_HEADER
-            = "driver,lapNumber,compound,tyreLife,rollingAvg,stintBest,delta";
+            = "driver,lapNumber,compound,tyreLife,rollingAvg,stintBest,delta,trackStatus";
 
     private String driver;
     private int lapNumber;
@@ -15,12 +15,14 @@ public class TireDropAlert {
     private double rollingAvg;    // rolling average of last 3 laps (seconds)
     private double stintBest;     // best lap time in current stint (seconds)
     private double delta;         // rollingAvg - stintBest (seconds)
+    private String trackStatus;
 
     public TireDropAlert() {
     }
 
     public TireDropAlert(String driver, int lapNumber, String compound,
-            int tyreLife, double rollingAvg, double stintBest, double delta) {
+            int tyreLife, double rollingAvg, double stintBest, double delta,
+            String trackStatus) {
         this.driver = driver;
         this.lapNumber = lapNumber;
         this.compound = compound;
@@ -28,6 +30,7 @@ public class TireDropAlert {
         this.rollingAvg = rollingAvg;
         this.stintBest = stintBest;
         this.delta = delta;
+        this.trackStatus = trackStatus;
     }
 
     public String getDriver() {
@@ -86,6 +89,14 @@ public class TireDropAlert {
         this.delta = delta;
     }
 
+    public String getTrackStatus() {
+        return trackStatus;
+    }
+
+    public void setTrackStatus(String trackStatus) {
+        this.trackStatus = trackStatus;
+    }
+
     // ml-ready csv row, ex: VER,25,SOFT,18,83.421,81.200,2.221
     // keep 3 decimal precision for timing deltas to preserve sensitivity in ml features
     public String toCsvRow() {
@@ -96,7 +107,8 @@ public class TireDropAlert {
                 String.valueOf(tyreLife),
                 String.format("%.3f", rollingAvg),
                 String.format("%.3f", stintBest),
-                String.format("%.3f", delta)
+                String.format("%.3f", delta),
+                trackStatus != null ? trackStatus : ""
         );
     }
 
