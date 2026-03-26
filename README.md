@@ -162,18 +162,16 @@ The pipeline enforces explicit output contracts to keep downstream ML behavior s
 
 ## Audit Workflow
 
-Three scripts are provided for season-level quality checks and forensic validation:
+The canonical season audit entrypoint is:
 
-1. `full_lake_audit.py`: high-level stream distribution and alert diagnostics.
-2. `qa_audit.py`: pit-label forensic checks and domain-specific consistency diagnostics.
-3. `season_data_audit.py`: consolidated quality-contract audit across all six JSONL outputs.
+1. `season_data_audit.py`: unified quality-contract + stream-health + forensic diagnostics across all six JSONL outputs.
 
 Example run after a full-season replay:
 
 ```bash
-python full_lake_audit.py
-python qa_audit.py
-python season_data_audit.py --year 2023 --season-tag season --json-out data_lake/audits/season_audit_2023.json
+python season_data_audit.py
+python season_data_audit.py --summary-only
+python season_data_audit.py --json-out data_lake/audits/season_audit_2023.json
 ```
 
 Recent validation highlights (latest full 2023 run):
