@@ -155,7 +155,10 @@ if [ -z "$RACES_JSON" ] || [ "$RACES_JSON" = "[]" ]; then
 fi
 
 # parse json array into bash array using stdin, avoids shell quoting issues
-mapfile -t RACES < <(
+RACES=()
+while IFS= read -r race; do
+	[ -n "$race" ] && RACES+=("$race")
+done < <(
 	printf '%s\n' "$RACES_JSON" | docker compose -f "$COMPOSE_FILE" run --rm -T producer \
 		python -c "import json, sys; [print(r) for r in json.load(sys.stdin)]"
 )
