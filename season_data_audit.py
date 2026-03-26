@@ -2,6 +2,7 @@ import argparse
 import glob
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -14,6 +15,14 @@ STREAMS = (
     "lift_coast",
     "tire_drops",
 )
+
+GREEN_STATUS_CODE = "1"
+EXTREME_GAP_THRESHOLD_PCT = 20.0
+WET_COMPOUNDS = ("INTERMEDIATE", "WET")
+DEFAULT_DATA_LAKE = "data_lake"
+DEFAULT_YEAR = 2023
+DEFAULT_SEASON_TAG = "season"
+DEFAULT_EXPECTED_RACES = 22
 
 
 def _pct(numerator: int, denominator: int) -> float:
@@ -39,6 +48,29 @@ def _value_counts_as_dict(series: pd.Series) -> dict[str, int]:
 
 def _safe_to_datetime(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, errors="coerce", utc=True)
+
+
+def _series_stats(series: pd.Series) -> dict[str, float | None]:
+    clean = pd.to_numeric(series, errors="coerce").dropna()
+    if clean.empty:
+        return {
+            "mean": None,
+            "median": None,
+            "min": None,
+            "max": None,
+        }
+    return {
+        "mean": round(float(clean.mean()), 3),
+        "median": round(float(clean.median()), 3),
+        "min": round(float(clean.min()), 3),
+        "max": round(float(clean.max()), 3),
+    }
+
+
+def _safe_col(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series([pd.NA] * len(df), index=df.index)
+    return df[col]
 
 
 def _numeric_stats(series: pd.Series) -> dict[str, float | None]:
@@ -155,9 +187,21 @@ def _audit_pit_suggestions(df: pd.DataFrame) -> dict:
         metrics["driver_lap_duplicate_excess_rows"] = duplicate_excess
 
     if "trackStatus" in df.columns:
-        metrics["track_status_distribution"] = _value_counts_as_dict(
-            df["trackStatus"].astype(str)
-        )
+        status = df["trackStatus"].astype(str)
+        metrics["track_status_distribution"] = _value_counts_as_dict(status)
+        non_green = int((~status.eq(GREEN_STATUS_CODE)).sum())
+        metrics["non_green_rows"] = non_green
+        metrics["non_green_rate_pct"] = round(_pct(non_green, len(df)), 2)
+
+    if "totalScore" in df.columns:
+        metrics["total_score"] = {
+            "mean": round(float(df["totalScore"].mean()), 3),
+            "median": round(float(df["totalScore"].median()), 3),
+            "p90": round(float(df["totalScore"].quantile(0.90)), 3),
+            "p99": round(float(df["totalScore"].quantile(0.99)), 3),
+            "min": round(float(df["totalScore"].min()), 3),
+            "max": round(float(df["totalScore"].max()), 3),
+        }
 
     return metrics
 
@@ -177,10 +221,27 @@ def _audit_drop_zones(df: pd.DataFrame) -> dict:
         metrics["negative_positions_lost_rows"] = negative_positions_lost
 
     if "gapToPhysicalCar" in df.columns:
+        metrics["gap_to_physical_car"] = _numeric_stats(df["gapToPhysicalCar"])
         negative_gap = int(
             (pd.to_numeric(df["gapToPhysicalCar"], errors="coerce") < 0).sum()
         )
         metrics["negative_gap_to_physical_car_rows"] = negative_gap
+
+    if "currentPosition" in df.columns:
+        metrics["current_position"] = _series_stats(df["currentPosition"])
+
+    if "emergencePosition" in df.columns:
+        metrics["emergence_position"] = _series_stats(df["emergencePosition"])
+
+    if "positionsLost" in df.columns:
+        metrics["positions_lost"] = _series_stats(df["positionsLost"])
+
+    if {"currentPosition", "emergencePosition", "positionsLost"}.issubset(df.columns):
+        implied = pd.to_numeric(df["emergencePosition"], errors="coerce") - pd.to_numeric(
+            df["currentPosition"], errors="coerce"
+        )
+        given = pd.to_numeric(df["positionsLost"], errors="coerce")
+        metrics["positions_lost_mismatch_rows"] = int((implied != given).sum())
 
     return metrics
 
@@ -189,9 +250,17 @@ def _audit_lift_coast(df: pd.DataFrame) -> dict:
     metrics: dict[str, object] = {}
 
     if "trackStatus" in df.columns:
-        metrics["track_status_distribution"] = _value_counts_as_dict(
-            df["trackStatus"].astype(str)
-        )
+        status = df["trackStatus"].astype(str)
+        metrics["track_status_distribution"] = _value_counts_as_dict(status)
+        non_green = int((~status.eq(GREEN_STATUS_CODE)).sum())
+        metrics["non_green_rows"] = non_green
+        metrics["non_green_rate_pct"] = round(_pct(non_green, len(df)), 2)
+
+    if "driver" in df.columns:
+        metrics["top_drivers"] = {
+            str(driver): int(count)
+            for driver, count in df["driver"].astype(str).value_counts().head(10).items()
+        }
 
     required = {"fullThrottleDate", "liftDate", "brakeDate"}
     if required.issubset(df.columns):
@@ -222,11 +291,133 @@ def _audit_tire_drops(df: pd.DataFrame) -> dict:
         delta = pd.to_numeric(df["delta"], errors="coerce")
         metrics["negative_delta_rows"] = int((delta < 0).sum())
         metrics["delta_seconds"] = _numeric_stats(delta)
+
+    if "compound" in df.columns:
+        metrics["alerts_by_compound"] = _value_counts_as_dict(df["compound"].astype(str))
+
+    if {"compound", "tyreLife"}.issubset(df.columns):
+        tyre_stats = (
+            df.groupby("compound", dropna=False)["tyreLife"]
+            .agg(["count", "mean", "median", "min", "max"])
+            .sort_values("count", ascending=False)
+        )
+        metrics["tyre_life_by_compound"] = {
+            str(idx): {
+                "count": int(row["count"]),
+                "mean": round(float(row["mean"]), 3),
+                "median": round(float(row["median"]), 3),
+                "min": int(row["min"]),
+                "max": int(row["max"]),
+            }
+            for idx, row in tyre_stats.iterrows()
+        }
+
+    if "tyreLife" in df.columns:
+        early = int((pd.to_numeric(df["tyreLife"], errors="coerce").fillna(0) <= 3).sum())
+        metrics["very_early_alert_rows"] = early
+        metrics["very_early_alert_rate_pct"] = round(_pct(early, len(df)), 2)
+
     metrics["has_track_status_column"] = bool("trackStatus" in df.columns)
     return metrics
 
 
-def _representativeness_summary(report: dict, expected_races: int) -> dict:
+def _audit_forensics(df_pit: pd.DataFrame, df_ml: pd.DataFrame) -> dict:
+    result_col = _safe_col(df_pit, "result")
+    defend_mask = result_col.eq("SUCCESS_DEFEND")
+
+    pre_pit = _safe_col(df_pit, "prePitGapAhead")
+    post_pit = _safe_col(df_pit, "postPitGapToRival")
+    baseline = _safe_col(df_pit, "baselineLapTime")
+    resolved = _safe_col(df_pit, "resolvedVia")
+
+    gap = pd.to_numeric(_safe_col(df_pit, "gapDeltaPct"), errors="coerce")
+    extreme = df_pit[gap.abs() > EXTREME_GAP_THRESHOLD_PCT].copy()
+
+    compound = _safe_col(df_pit, "compound")
+    wet_mask = compound.isin(WET_COMPOUNDS)
+    wet = df_pit[wet_mask]
+    dry = df_pit[~wet_mask]
+
+    wet_gap = pd.to_numeric(_safe_col(wet, "gapDeltaPct"), errors="coerce")
+    dry_gap = pd.to_numeric(_safe_col(dry, "gapDeltaPct"), errors="coerce")
+
+    pit_status = _safe_col(df_pit, "trackStatusAtPit")
+    ml_status = _safe_col(df_ml, "trackStatus")
+
+    top_extreme_rows = []
+    if not extreme.empty:
+        cols = [
+            "race",
+            "driver",
+            "pitLapNumber",
+            "rivalAhead",
+            "prePitGapAhead",
+            "postPitGapToRival",
+            "gapDeltaPct",
+            "result",
+            "resolvedVia",
+        ]
+        cols = [c for c in cols if c in extreme.columns]
+        for _, row in extreme.reindex(
+            gap.abs().sort_values(ascending=False).index
+        ).head(5).iterrows():
+            entry = {}
+            for col in cols:
+                value = row[col]
+                if pd.isna(value):
+                    entry[col] = None
+                elif isinstance(value, float):
+                    entry[col] = round(float(value), 3)
+                else:
+                    entry[col] = value
+            top_extreme_rows.append(entry)
+
+    return {
+        "success_defend_count": int(defend_mask.sum()),
+        "success_defend_rate_pct": round(_pct(int(defend_mask.sum()), len(df_pit)), 2),
+        "nulls_in_success_defend": {
+            "prePitGapAhead": int(pre_pit[defend_mask].isna().sum()),
+            "postPitGapToRival": int(post_pit[defend_mask].isna().sum()),
+            "baselineLapTime": int(baseline[defend_mask].isna().sum()),
+        },
+        "resolved_via_all": _value_counts_as_dict(resolved.astype(str)),
+        "resolved_via_success_defend": _value_counts_as_dict(
+            resolved[defend_mask].astype(str)
+        ),
+        "extreme_gap_rows_abs_gt_20pct": int(len(extreme)),
+        "extreme_gap_top5": top_extreme_rows,
+        "wet_vs_dry": {
+            "wet_rows": int(len(wet)),
+            "dry_rows": int(len(dry)),
+            "wet_gapDeltaPct_mean": round(float(wet_gap.mean()), 3)
+            if wet_gap.dropna().size
+            else None,
+            "dry_gapDeltaPct_mean": round(float(dry_gap.mean()), 3)
+            if dry_gap.dropna().size
+            else None,
+            "wet_gapDeltaPct_median": round(float(wet_gap.median()), 3)
+            if wet_gap.dropna().size
+            else None,
+            "dry_gapDeltaPct_median": round(float(dry_gap.median()), 3)
+            if dry_gap.dropna().size
+            else None,
+        },
+        "status_propagation": {
+            "pit_status_unique": sorted(pit_status.dropna().astype(str).unique().tolist()),
+            "ml_status_unique": sorted(ml_status.dropna().astype(str).unique().tolist()),
+            "pit_status_null_count": int(pit_status.isna().sum()),
+            "ml_status_null_count": int(ml_status.isna().sum()),
+        },
+        "additional_checks": {
+            "rivalAhead_null_rate_pct": round(float(_safe_col(df_pit, "rivalAhead").isna().mean() * 100.0), 2),
+            "postPitGapToRival_null_rate_pct": round(float(post_pit.isna().mean() * 100.0), 2),
+            "baselineLapTime_le_zero_or_null": int((pd.to_numeric(baseline, errors="coerce").fillna(0) <= 0).sum()),
+            "offsetStrategy_true_rate_pct": round(float(_safe_col(df_pit, "offsetStrategy").fillna(False).mean() * 100.0), 2),
+        },
+    }
+
+
+def _representativeness_summary(report: dict[str, Any], expected_races: int) -> dict:
     ml = report.get("streams", {}).get("ml_features", {}).get("metrics", {})
     pe = report.get("streams", {}).get("pit_evals", {}).get("metrics", {})
 
@@ -242,8 +433,13 @@ def _representativeness_summary(report: dict, expected_races: int) -> dict:
     }
 
 
-def run_audit(data_lake: str, year: int, season_tag: str, expected_races: int) -> dict:
-    report: dict[str, object] = {
+def run_audit(
+    data_lake: str = DEFAULT_DATA_LAKE,
+    year: int = DEFAULT_YEAR,
+    season_tag: str = DEFAULT_SEASON_TAG,
+    expected_races: int = DEFAULT_EXPECTED_RACES,
+) -> dict:
+    report: dict[str, Any] = {
         "inputs": {
             "data_lake": data_lake,
             "year": year,
@@ -286,6 +482,14 @@ def run_audit(data_lake: str, year: int, season_tag: str, expected_races: int) -
         report["streams"][stream] = stream_report
 
     report["representativeness"] = _representativeness_summary(report, expected_races)
+
+    pit_stream = report["streams"].get("pit_evals", {})
+    ml_stream = report["streams"].get("ml_features", {})
+    if pit_stream.get("status") == "ok" and ml_stream.get("status") == "ok":
+        pit_df = pd.read_json(pit_stream["file"], lines=True)
+        ml_df = pd.read_json(ml_stream["file"], lines=True)
+        report["forensics"] = _audit_forensics(pit_df, ml_df)
+
     return report
 
 
@@ -311,25 +515,85 @@ def _print_report(report: dict) -> None:
     print("--- representativeness ---")
     print(json.dumps(report["representativeness"], indent=2))
 
+    if "forensics" in report:
+        print("\n--- forensics ---")
+        print(json.dumps(report["forensics"], indent=2))
+
+
+def _print_summary(report: dict) -> None:
+    print("=== SEASON DATA AUDIT SUMMARY ===")
+
+    rep = report.get("representativeness", {})
+    print(
+        "coverage: "
+        f"{rep.get('calendar_coverage_pct', 'N/A')}% "
+        f"({rep.get('ml_features_unique_races', 0)}/{rep.get('expected_races', 0)} races in ml_features, "
+        f"{rep.get('pit_evals_unique_races', 0)}/{rep.get('expected_races', 0)} in pit_evals)"
+    )
+
+    for stream in STREAMS:
+        stream_report = report.get("streams", {}).get(stream, {})
+        if stream_report.get("status") != "ok":
+            print(f"{stream}: missing")
+            continue
+
+        generic = stream_report.get("generic", {})
+        print(
+            f"{stream}: rows={generic.get('rows', 0)}, "
+            f"dups={generic.get('exact_duplicate_rows', 0)}"
+        )
+
+    ml = report.get("streams", {}).get("ml_features", {}).get("metrics", {})
+    pe = report.get("streams", {}).get("pit_evals", {}).get("metrics", {})
+    ps = report.get("streams", {}).get("pit_suggestions", {}).get("metrics", {})
+    td = report.get("streams", {}).get("tire_drops", {}).get("metrics", {})
+    lc = report.get("streams", {}).get("lift_coast", {}).get("metrics", {})
+
+    print("--- key checks ---")
+    print(
+        "ml gaps: "
+        f"negative={ml.get('negative_gap_rows', 'N/A')}, "
+        f"null_any={ml.get('rows_with_any_null_gap', 'N/A')}"
+    )
+    print(
+        "pit evals: "
+        f"unresolved={pe.get('unresolved_rows', 'N/A')} "
+        f"({pe.get('unresolved_rate_pct', 'N/A')}%), "
+        f"null_post_gap={pe.get('null_post_pit_gap_rows', 'N/A')}"
+    )
+    print(
+        "pit suggestions: "
+        f"driver_lap_duplicate_excess={ps.get('driver_lap_duplicate_excess_rows', 'N/A')}"
+    )
+    print(
+        "tire drops: "
+        f"negative_delta={td.get('negative_delta_rows', 'N/A')}, "
+        f"has_track_status={td.get('has_track_status_column', 'N/A')}"
+    )
+    print(
+        "lift/coast: "
+        f"bad_time_order={lc.get('bad_time_order_rows', 'N/A')}, "
+        f"parse_failures={lc.get('timestamp_parse_failures', 'N/A')}"
+    )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Audit season-level JSONL outputs for quality and representativeness."
+        description="Unified season audit for quality, representativeness, and forensics."
     )
-    parser.add_argument("--data-lake", default="data_lake")
-    parser.add_argument("--year", type=int, default=2023)
-    parser.add_argument("--season-tag", default="season")
-    parser.add_argument("--expected-races", type=int, default=22)
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="print only a compact summary instead of the full report",
+    )
     parser.add_argument("--json-out", default=None)
     args = parser.parse_args()
 
-    report = run_audit(
-        data_lake=args.data_lake,
-        year=args.year,
-        season_tag=args.season_tag,
-        expected_races=args.expected_races,
-    )
-    _print_report(report)
+    report = run_audit()
+    if args.summary_only:
+        _print_summary(report)
+    else:
+        _print_report(report)
 
     if args.json_out:
         output_path = Path(args.json_out)
