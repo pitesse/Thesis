@@ -453,8 +453,10 @@ public class PitStrategyEvaluator
                 traffic.score, strategyPenalty, urgencyScore, endOfRacePenalty);
 
         out.collect(new PitSuggestionAlert(
+                current.getRace(),
                 current.getDriver(),
                 current.getLapNumber(),
+                current.getDate(),
                 current.getPosition(),
                 current.getCompound(),
                 current.getTyreLife(),

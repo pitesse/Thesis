@@ -10,11 +10,11 @@ import com.polimi.f1.model.TrackStatusCodes;
 // all scores are doubles for continuous distributions (no more int clumping).
 // suggestionLabel provides discrete classification: MONITOR, GOOD_PIT, PIT_NOW, LOST_CHANCE.
 //
-// ex csv: VER,25,2,MEDIUM,18,75.3,22.1,0,18.7,-4.2,8.7,-2.5,1,5,4.200,GOOD_PIT,"pace drop + clean air"
+// ex csv: Italian Grand Prix,VER,25,2023-09-03T13:05:12.003,2,MEDIUM,18,75.3,22.1,0,18.7,-4.2,8.7,-2.5,1,5,4.200,GOOD_PIT,"pace drop + clean air"
 public class PitSuggestionAlert {
 
     public static final String CSV_HEADER
-            = "driver,lapNumber,position,compound,tyreLife,totalScore,"
+            = "race,driver,lapNumber,eventDate,position,compound,tyreLife,totalScore,"
             + "paceScore,trackStatusScore,trafficScore,strategyPenalty,urgencyScore,"
             + "endOfRacePenalty,trackStatus,emergencePosition,gapToPhysicalCar,suggestionLabel,suggestion";
 
@@ -26,8 +26,10 @@ public class PitSuggestionAlert {
         LOST_CHANCE          // special: peak score was >= 70 but dropped below 40
     }
 
+    private String race;
     private String driver;
     private int lapNumber;
+    private String eventDate;
     private int position;
     private String compound;
     private int tyreLife;
@@ -48,14 +50,17 @@ public class PitSuggestionAlert {
     }
 
     // args grouped as race context, score components, and tactical emergence data
-    public PitSuggestionAlert(String driver, int lapNumber, int position, String compound,
+    public PitSuggestionAlert(String race, String driver, int lapNumber, String eventDate,
+            int position, String compound,
             int tyreLife, double totalScore, double paceScore, double trackStatusScore,
             double trafficScore, double strategyPenalty, double urgencyScore,
             double endOfRacePenalty, String trackStatus,
             int emergencePosition, double gapToPhysicalCar,
             String suggestionLabel, String suggestion) {
+        this.race = race;
         this.driver = driver;
         this.lapNumber = lapNumber;
+        this.eventDate = eventDate;
         this.position = position;
         this.compound = compound;
         this.tyreLife = tyreLife;
@@ -73,6 +78,14 @@ public class PitSuggestionAlert {
         this.suggestion = suggestion;
     }
 
+    public String getRace() {
+        return race;
+    }
+
+    public void setRace(String race) {
+        this.race = race;
+    }
+
     public String getDriver() {
         return driver;
     }
@@ -87,6 +100,14 @@ public class PitSuggestionAlert {
 
     public void setLapNumber(int lapNumber) {
         this.lapNumber = lapNumber;
+    }
+
+    public String getEventDate() {
+        return eventDate;
+    }
+
+    public void setEventDate(String eventDate) {
+        this.eventDate = eventDate;
     }
 
     public int getPosition() {
@@ -209,11 +230,13 @@ public class PitSuggestionAlert {
         this.suggestion = suggestion;
     }
 
-    // ex: VER,25,2,MEDIUM,18,75.300,22.1,0,18.7,-4.2,8.7,-2.5,1,5,4.200,GOOD_PIT,pace drop + clean air
+    // ex: Italian Grand Prix,VER,25,2023-09-03T13:05:12.003,2,MEDIUM,18,75.300,22.1,0,18.7,-4.2,8.7,-2.5,1,5,4.200,GOOD_PIT,pace drop + clean air
     public String toCsvRow() {
         return String.join(",",
+                race != null ? race : "",
                 driver != null ? driver : "",
                 String.valueOf(lapNumber),
+                eventDate != null ? eventDate : "",
                 String.valueOf(position),
                 compound != null ? compound : "",
                 String.valueOf(tyreLife),
@@ -235,9 +258,10 @@ public class PitSuggestionAlert {
     @Override
     public String toString() {
         return String.format(
-                "PIT SUGGESTION | %s Lap %d P%d | %s L%d | Score: %.1f/100 [%s] "
+                "PIT SUGGESTION | %s | %s Lap %d P%d | %s L%d | Score: %.1f/100 [%s] "
                 + "[Pace:%.1f Status:%.1f Traffic:%.1f Penalty:%.1f Urgency:%.1f EoR:%.1f] "
                 + "| Emerge P%d (gap=%.1fs) | %s",
+                race != null ? race : "?",
                 driver, lapNumber, position, compound, tyreLife, totalScore,
                 suggestionLabel != null ? suggestionLabel : "?",
                 paceScore, trackStatusScore, trafficScore, strategyPenalty,

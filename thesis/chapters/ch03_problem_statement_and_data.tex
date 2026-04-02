@@ -1,0 +1,92 @@
+\chapter{Problem Statement and Data}
+\label{ch:problem_statement_and_data}
+
+\section{Formula 1 Pit Stop Decision Problem}
+
+\textbf{Template intent.} Define the prediction task unambiguously.
+
+\begin{itemize}
+	\item Inference unit: driver-lap decision point.
+	\item Target: binary label, pit in next $K$ laps (state your fixed $K$ and rationale).
+	\item Operational interpretation: decision support signal, not autonomous control.
+\end{itemize}
+
+Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, carrasco2023optimization, thomas2025xrlf1}.
+
+\section{Data Sources and Acquisition}
+\subsection{FastF1 Data Interface}
+
+\textbf{Template intent.} Explain source provenance and reproducibility constraints.
+
+\begin{itemize}
+	\item Seasons/races included, extraction process, and versioning policy.
+	\item Data quality caveats (missing telemetry, weather noise, incidents).
+\end{itemize}
+
+Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop}.
+
+\subsection{Streaming Inputs and Event Types}
+
+\textbf{Template intent.} Define each stream as a contract.
+
+\begin{itemize}
+	\item Telemetry stream, lap stream, and track-status stream.
+	\item Event-time semantics, ordering assumptions, and replay settings.
+\end{itemize}
+
+Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka}.
+
+\section{Dataset Description}
+\subsection{Telemetry Stream}
+
+\textbf{Template intent.} List fields and their modeling role in few words.
+
+\begin{itemize}
+	\item Mention sampling rate, key signals, and normalization choices.
+	\item State known limitations and filtering rules.
+\end{itemize}
+
+\subsection{Lap Stream}
+
+\textbf{Template intent.} Describe lap-level context and pace variables.
+
+\begin{itemize}
+	\item Timing, stint, compound, tire age, and gap-derived features.
+	\item Explain why lap-level aggregation is aligned with pit decision timing.
+\end{itemize}
+
+\subsection{Track Status Stream}
+
+\textbf{Template intent.} Describe race-neutralization context.
+
+\begin{itemize}
+	\item Encoding of green/yellow/VSC/SC and time availability constraints.
+	\item How this stream is used for filtering, labeling, and stress tests.
+\end{itemize}
+
+\section{Target Definition and Labeling Strategy}
+
+\textbf{Template intent.} Make labeling auditable and leakage-safe.
+
+\begin{itemize}
+	\item Exact positive/negative label rule and boundary conditions.
+	\item Inclusion/exclusion policy (for example wet phases, early laps, unresolved events).
+	\item Explicit anti-leakage policy: no derived heuristic outputs as ML inputs.
+\end{itemize}
+
+\paragraph{Implemented fallback guardrail for missing post-pit gaps.}
+The ground-truth operator now uses a conservative salvage rule only for same-rival cycles where direct post-pit gap reconstruction is unavailable. The fallback compares pre-pit and post-pit relative pace against the same rival using local green, non-pit lap windows with minimum sample constraints. If this evidence is not available, the cycle remains unresolved as \texttt{UNRESOLVED\_MISSING\_POST\_GAP}. This preserves auditable uncertainty instead of forcing a strategic label from incomplete context, while staying aligned with lap-time decomposition and race-time optimization reasoning from motorsport strategy literature \citep{heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
+
+Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, hettmann2024datatopodium, sasikumar2025pitstop, heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
+
+\section{Evaluation Metrics}
+
+\textbf{Template intent.} Define metrics before results to avoid metric shopping.
+
+\begin{itemize}
+	\item Primary discrimination metrics for imbalance: precision, recall, F1, AUC-PR.
+	\item Calibration metrics: Brier score and reliability analysis.
+	\item Statistical comparison protocol: paired significance tests with corrected interpretation.
+\end{itemize}
+
+Suggested references: \citep{saito2015prroc, davis2006relationship, brier1950verification, guo2017calibration, platt1999probabilistic, kull2017beta, dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing}.

@@ -11,8 +11,9 @@ import com.polimi.f1.model.TrackStatusCodes;
 public class LiftCoastAlert {
 
     public static final String CSV_HEADER
-            = "driver,fullThrottleDate,liftDate,brakeDate,trackStatus,speed,gear";
+            = "race,driver,fullThrottleDate,liftDate,brakeDate,trackStatus,speed,gear";
 
+    private String race;
     private String driver;
     private String fullThrottleDate;   // iso timestamp of the last full-throttle sample
     private String liftDate;           // iso timestamp of the throttle=0 coast sample
@@ -24,8 +25,9 @@ public class LiftCoastAlert {
     public LiftCoastAlert() {
     }
 
-    public LiftCoastAlert(String driver, String fullThrottleDate, String liftDate,
+    public LiftCoastAlert(String race, String driver, String fullThrottleDate, String liftDate,
             String brakeDate, String trackStatus, int speed, int gear) {
+        this.race = race;
         this.driver = driver;
         this.fullThrottleDate = fullThrottleDate;
         this.liftDate = liftDate;
@@ -33,6 +35,14 @@ public class LiftCoastAlert {
         this.trackStatus = trackStatus;
         this.speed = speed;
         this.gear = gear;
+    }
+
+    public String getRace() {
+        return race;
+    }
+
+    public void setRace(String race) {
+        this.race = race;
     }
 
     public String getDriver() {
@@ -91,10 +101,11 @@ public class LiftCoastAlert {
         this.gear = gear;
     }
 
-    // ex: VER,2023-09-03T13:05:12.003,2023-09-03T13:05:13.003,2023-09-03T13:05:14.003,1,342,8
+    // ex: Italian Grand Prix,VER,2023-09-03T13:05:12.003,2023-09-03T13:05:13.003,2023-09-03T13:05:14.003,1,342,8
     // timestamp and driver fields are null safe, speed and gear are primitive values
     public String toCsvRow() {
         return String.join(",",
+                race != null ? race : "",
                 driver != null ? driver : "",
                 fullThrottleDate != null ? fullThrottleDate : "",
                 liftDate != null ? liftDate : "",
@@ -108,7 +119,8 @@ public class LiftCoastAlert {
     @Override
     public String toString() {
         return String.format(
-                "LIFT & COAST | Driver: %s | Throttle@%s -> Lift@%s -> Brake@%s | Status: %s | %dkm/h G%d",
+                "LIFT & COAST | %s | Driver: %s | Throttle@%s -> Lift@%s -> Brake@%s | Status: %s | %dkm/h G%d",
+                race != null ? race : "?",
                 driver, fullThrottleDate, liftDate, brakeDate,
                 trackStatus != null ? trackStatus : "unknown",
                 speed, gear);

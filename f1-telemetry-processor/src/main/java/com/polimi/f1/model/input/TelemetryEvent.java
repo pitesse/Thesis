@@ -31,6 +31,7 @@ public class TelemetryEvent {
     private double y;
     private double z;
 
+    private String race;         // grand prix name, ex: "Italian Grand Prix"
     private String driver;       // three-letter abbreviation, ex: "VER", "LEC"
     private int lapNumber;       // assigned by python producer via asof join with lap start dates
     private String trackStatus;  // enriched by broadcast state, fia code: "1"=green, "4"=sc, "6"=vsc
@@ -152,6 +153,16 @@ public class TelemetryEvent {
         this.z = z;
     }
 
+    @JsonProperty("Race")
+    public String getRace() {
+        return race;
+    }
+
+    @JsonProperty("Race")
+    public void setRace(String race) {
+        this.race = race;
+    }
+
     @JsonProperty("Driver")
     public String getDriver() {
         return driver;
@@ -216,7 +227,8 @@ public class TelemetryEvent {
     @Override
     public String toString() {
         return "TelemetryEvent{"
-                + "driver='" + driver + '\''
+                + "race='" + race + '\''
+                + ", driver='" + driver + '\''
                 + ", date='" + date + '\''
                 + ", speed=" + speed
                 + ", throttle=" + throttle

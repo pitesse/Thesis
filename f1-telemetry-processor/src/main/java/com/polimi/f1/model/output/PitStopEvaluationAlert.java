@@ -43,8 +43,23 @@ public class PitStopEvaluationAlert {
         @JsonProperty("FAILURE_TRAFFIC")
         FAILURE_TRAFFIC, // emerged into dirty air / traffic nullified position gain
 
+        @JsonProperty("UNRESOLVED_MISSING_RIVAL")
+        UNRESOLVED_MISSING_RIVAL, // no comparable rival context available at pit entry/settle
+
+        @JsonProperty("UNRESOLVED_MISSING_PRE_GAP")
+        UNRESOLVED_MISSING_PRE_GAP, // rival exists but pre-pit gap context is missing
+
+        @JsonProperty("UNRESOLVED_MISSING_POST_GAP")
+        UNRESOLVED_MISSING_POST_GAP, // post-settle comparison gap is missing
+
+        @JsonProperty("UNRESOLVED_INVALID_BASELINE")
+        UNRESOLVED_INVALID_BASELINE, // baseline lap time is invalid after all fallbacks
+
+        @JsonProperty("UNRESOLVED_INCIDENT_FILTER")
+        UNRESOLVED_INCIDENT_FILTER, // incident-like extreme gap movement excluded from strategy labels
+
         @JsonProperty("UNRESOLVED_INSUFFICIENT_DATA")
-        UNRESOLVED_INSUFFICIENT_DATA // missing rival/gap/baseline context, excluded from strategic labels
+        UNRESOLVED_INSUFFICIENT_DATA // legacy unresolved bucket kept for backward compatibility
     }
 
     private String driver;
