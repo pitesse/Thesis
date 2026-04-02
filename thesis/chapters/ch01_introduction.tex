@@ -1,0 +1,53 @@
+\chapter{Introduction}
+\label{ch:introduction}
+
+\section{Context and Motivation}
+
+\textbf{Template intent.} Explain why Formula 1 pit-wall decision support is a strong case for streaming analytics plus machine learning.
+
+\begin{itemize}
+	\item Start from the operational problem: decisions are sequential, time-critical, and made under uncertainty.
+	\item Explain why batch-only analysis is insufficient for race-time decisions.
+	\item Position event-time processing and low-latency architecture as enabling conditions.
+\end{itemize}
+
+Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka, widanage2019indy500}.
+
+\section{Research Scope and Objectives}
+
+\textbf{Template intent.} Define exactly what the thesis will and will not do.
+
+\begin{itemize}
+	\item Scope: pit-stop recommendation as a supervised lap-level decision task in a streaming architecture.
+	\item Comparison target: deterministic heuristic strategy engine vs learned model on the same replay stream.
+	\item Explicit non-goals: full race-winning simulation, proprietary telemetry replication, and team-specific private strategy rules.
+	\item Add 2--4 research questions, each measurable in Chapter 6.
+\end{itemize}
+
+Suggested references: \citep{sasikumar2025pitstop, hettmann2024datatopodium, dinh2025gradient, thomas2025xrlf1}.
+
+\section{Contributions}
+
+\textbf{Template intent.} List the contribution claims in a thesis-safe and testable format.
+
+\begin{itemize}
+	\item A reproducible event-time data engineering pipeline for F1 replay analytics.
+	\item A leakage-aware ML protocol for pit-stop recommendation.
+	\item A fair comparison protocol between heuristic and ML decisions in identical operating conditions.
+	\item A reproducibility package (data contracts, scripts, environment, and experiment documentation).
+\end{itemize}
+
+Suggested references: \citep{carrasco2023optimization, quiroga2024optimization, piccinotti2020openloop}.
+
+\section{Thesis Organization}
+
+\textbf{Template intent.} Provide a concise chapter roadmap.
+
+\begin{itemize}
+	\item Chapter 2: state of the art and research gap.
+	\item Chapter 3: problem definition, data, labels, and evaluation metrics.
+	\item Chapter 4: solution design and comparison protocol.
+	\item Chapter 5: implementation choices and reproducibility.
+	\item Chapter 6: evaluation campaign and discussion.
+	\item Chapter 7: conclusions, limitations, and future work.
+\end{itemize}

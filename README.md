@@ -128,6 +128,11 @@ Labels include:
 - `FAILURE_PACE_DEFICIT`
 - `FAILURE_TRAFFIC`
 - `WEATHER_SURVIVAL_STOP`
+- `UNRESOLVED_MISSING_RIVAL`
+- `UNRESOLVED_MISSING_PRE_GAP`
+- `UNRESOLVED_MISSING_POST_GAP`
+- `UNRESOLVED_INVALID_BASELINE`
+- `UNRESOLVED_INCIDENT_FILTER`
 - `UNRESOLVED_INSUFFICIENT_DATA`
 
 ### Module C: Real-Time Alerts
@@ -157,8 +162,9 @@ The pipeline enforces explicit output contracts to keep downstream ML behavior s
 
 1. `ml_features.gapAhead` and `ml_features.gapBehind` are exported as non-negative magnitudes.
 2. `tire_drops` includes `trackStatus` for context-aware filtering.
-3. Pit stops on warm-up laps (`lapNumber <= 2`) are explicitly marked as `UNRESOLVED_INSUFFICIENT_DATA` via `EARLY_LAP_FILTER`.
-4. Pit-cycle classification uses strict guardrails (`SETTLE_LAPS`, incident thresholding, safety timer) to prioritize label purity over volume.
+3. Pit stops on warm-up laps (`lapNumber <= 2`) are explicitly marked as `UNRESOLVED_MISSING_PRE_GAP` via `EARLY_LAP_FILTER`.
+4. Pit-cycle classification uses strict guardrails (`SETTLE_LAPS`, incident thresholding, safety timer) and a conservative pace-shift recovery path (`RIVAL_PIT_PACE_SHIFT`, `SAFETY_TIMER_PACE_SHIFT`) when post-gap is missing; if pace evidence is insufficient, the cycle remains unresolved.
+5. Lift/coast timestamp audits use mixed-format ISO-8601 parsing with normalization fallback (`Z`, fractional seconds, and explicit timezone offsets).
 
 ## Audit Workflow
 

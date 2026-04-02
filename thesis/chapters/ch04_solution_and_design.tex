@@ -1,0 +1,81 @@
+\chapter{Solution and Design}
+\label{ch:solution_and_design}
+
+\section{System Architecture Overview}
+
+\textbf{Template intent.} Describe your end-to-end architecture in one page.
+
+\begin{itemize}
+	\item Producer, broker, stream processor, data lake, and dashboard roles.
+	\item Explain how architecture choices support reproducibility and fair comparisons.
+\end{itemize}
+
+Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka}.
+
+\section{Dataflow and Processing Topology}
+
+\textbf{Template intent.} Specify operator order and data dependencies.
+
+\begin{itemize}
+	\item Event-time path from ingestion to features/alerts/labels.
+	\item Stateful operators and where context enters the pipeline.
+	\item Contracts for sinks used by audit and ML.
+\end{itemize}
+
+Suggested references: \citep{widanage2019indy500, carbone2015flink}.
+
+\section{Heuristic Strategy Engine Design}
+
+\textbf{Template intent.} Explain the handcrafted strategy logic at a conceptual level.
+
+\begin{itemize}
+	\item Inputs, decision factors, and prioritization logic.
+	\item Expected strengths and known failure modes.
+	\item Clarify this module as baseline and operational comparator.
+\end{itemize}
+
+\subsection{Implemented Pit-Cycle Fallback Hierarchy}
+
+For \texttt{PitStopEvaluator}, the implemented design is a strict resolution hierarchy:
+
+\begin{enumerate}
+	\item direct rival-gap evaluation after both cars complete settle laps,
+	\item bounded near-lap gap recovery around the comparison lap,
+	\item pace-shift fallback when post-gap remains unavailable,
+	\item explicit unresolved emission with reason code if evidence is still insufficient.
+\end{enumerate}
+
+The pace-shift fallback is computed as a relative pre/post pace change against the same rival:
+
+$$
+\Delta_{\text{pace}\%} =
+\frac{(\bar{t}^{post}_{d} - \bar{t}^{post}_{r}) - (\bar{t}^{pre}_{d} - \bar{t}^{pre}_{r})}{t_{baseline}} \cdot 100,
+$$
+
+where $\bar{t}$ are local green, non-pit moving averages and $t_{baseline}$ is the pre-pit baseline lap time with conservative fallback. This keeps the decision grounded in lap-time component reasoning and race-time minimization logic \citep{heilmeier2020race, carrasco2023optimization}, while remaining compatible with online, partial-information updates \citep{quiroga2024optimization}. Incident-like extremes are still filtered into unresolved labels, so the fallback increases yield without relaxing label-purity guardrails.
+
+Suggested references: \citep{carrasco2023optimization, quiroga2024optimization}.
+
+\section{Machine Learning Formulation}
+
+\textbf{Template intent.} Specify model-family choices and data protocol without reporting outcomes yet.
+
+\begin{itemize}
+	\item Candidate baselines (for example logistic/XGBoost and optional sequence model).
+	\item Feature groups, leakage controls, and temporal/grouped split strategy.
+	\item Calibration and thresholding plan for decision outputs.
+\end{itemize}
+
+Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, brookshire2024leakage, roberts2017cvstructured, platt1999probabilistic, guo2017calibration, kull2017beta}.
+
+\section{Comparison Protocol, Heuristic vs ML}
+
+\textbf{Template intent.} Define a fairness protocol before experiments.
+
+\begin{itemize}
+	\item Same replay windows, same data availability assumptions, same excluded contexts.
+	\item Report both predictive quality and operational behavior.
+	\item Predefine significance testing and uncertainty reporting.
+\end{itemize}
+
+Suggested references: \citep{dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing}.

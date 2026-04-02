@@ -2,6 +2,7 @@ package com.polimi.f1.operators.groundtruth;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,7 @@ import com.polimi.f1.state.groundtruth.RivalSnapshot;
 //
 // labels: SUCCESS_UNDERCUT, SUCCESS_OVERCUT, SUCCESS_DEFEND, SUCCESS_FREE_STOP,
 //         OFFSET_ADVANTAGE, OFFSET_DISADVANTAGE, FAILURE_PACE_DEFICIT, FAILURE_TRAFFIC,
-//         WEATHER_SURVIVAL_STOP, UNRESOLVED_INSUFFICIENT_DATA
+//         WEATHER_SURVIVAL_STOP, and granular unresolved reason codes
 public class PitStopEvaluator
         extends KeyedProcessFunction<String, LapEvent, PitStopEvaluationAlert> {
 
@@ -62,10 +63,15 @@ public class PitStopEvaluator
     private static final int RIVAL_LOOKBACK_EXTRA_LAPS = 2;
     private static final int GAP_SEARCH_WINDOW = 3;
     private static final int TIMER_FALLBACK_LOOKBACK = 5;
+    private static final int LEADER_REFERENCE_SEARCH_WINDOW = 2;
+    private static final int MIN_PACE_FALLBACK_SAMPLES = 2;
+    private static final int PACE_FALLBACK_LAP_SPAN = 4;
+    private static final double MIN_POSITIONAL_PRE_GAP_SECONDS = 0.3;
     private static final double TRAFFIC_GAP_THRESHOLD_SECONDS = 2.0;
     private static final int MAX_PLAUSIBLE_RIVAL_POSITION_DELTA = 6;
     private static final double MAX_PLAUSIBLE_GAP_SECONDS = 60.0;
     private static final double MAX_PLAUSIBLE_GAP_DELTA_SECONDS = 45.0;
+    private static final double SAFE_BASELINE_LAP_TIME_SECONDS = 95.0;
 
     // percentage thresholds for gap classification (as % of baseline lap time)
     // ex: 0.5% of 80s baseline = 0.4s, of 105s baseline = 0.525s
@@ -84,6 +90,10 @@ public class PitStopEvaluator
     private static final int TRAFFIC_TYRE_LIFE_THRESHOLD = 25;
     private static final String RESOLUTION_INSUFFICIENT_DATA = "INSUFFICIENT_DATA";
     private static final String RESOLUTION_EARLY_LAP_FILTER = "EARLY_LAP_FILTER";
+    private static final String RESOLUTION_REFERENCE_FALLBACK = "REFERENCE_FALLBACK";
+    private static final String RESOLUTION_RIVAL_PIT_PACE_SHIFT = "RIVAL_PIT_PACE_SHIFT";
+    private static final String RESOLUTION_SAFETY_TIMER_PACE_SHIFT = "SAFETY_TIMER_PACE_SHIFT";
+    private static final String RESOLUTION_POSITIONAL_FALLBACK = "POSITIONAL_FALLBACK";
 
     // flat state: all lap events, key = "lapNumber:driver"
     private transient MapState<String, LapEvent> lapEvents;
@@ -211,10 +221,8 @@ public class PitStopEvaluator
         cycle.setGreenLapsSincePit(0);
         cycle.setState(CycleState.PENDING_SETTLE);
 
-        // capture baseline: stint best from the pre-pit stint
-        String sKey = stintKey(driver, event.getStint());
-        Double best = stintBests.get(sKey);
-        cycle.setBaselineLapTime((best != null) ? best : 0.0);
+        // capture baseline from pre-pit stint, with field-level and safe fallbacks.
+        cycle.setBaselineLapTime(resolveBaselineLapTime(driver, event.getStint(), lap));
 
         // rival cluster: car ahead and car behind.
         // findDriverAtPosition falls back to lap-1 when sequential arrival
@@ -326,9 +334,14 @@ public class PitStopEvaluator
     private boolean tryResolveRival(PitCycle cycle, int currentLap,
             Collector<PitStopEvaluationAlert> out) throws Exception {
 
-        if (cycle.getPrimaryRival() == null || cycle.getPrePitGapToPrimary() == null) {
-            emitResult(cycle, null, null, Result.UNRESOLVED_INSUFFICIENT_DATA,
-                    RESOLUTION_INSUFFICIENT_DATA, false, out);
+        if (!ensurePrimaryRivalContext(cycle)) {
+            return tryResolveWithReferenceFallback(cycle, currentLap, out);
+        }
+
+        double baselineLap = ensureValidBaseline(cycle, cycle.getPitLap());
+        if (baselineLap <= 0) {
+            emitResult(cycle, null, null, Result.UNRESOLVED_INVALID_BASELINE,
+                RESOLUTION_INSUFFICIENT_DATA, false, out);
             return true;
         }
 
@@ -368,15 +381,27 @@ public class PitStopEvaluator
             if (postGap == null && currentLap < comparisonLap + GAP_SEARCH_WINDOW) {
                 return false; // wait for more data
             }
+            if (postGap == null) {
+                if (tryResolveWithPaceShiftFallback(cycle, comparisonLap,
+                        baselineLap, RESOLUTION_RIVAL_PIT_PACE_SHIFT, out)) {
+                    return true;
+                }
+                if (tryResolveWithPositionalFallback(cycle, comparisonLap, false, out)) {
+                    return true;
+                }
+                emitResult(cycle, null, null, Result.UNRESOLVED_MISSING_POST_GAP,
+                    RESOLUTION_INSUFFICIENT_DATA, false, out);
+                return true;
+            }
 
             boolean emergenceTraffic = checkEmergenceTraffic(cycle.getDriver(), cycle.getSettleLap());
 
             Result result = classifyPitStop(cycle.getPrePitGapToPrimary(), postGap,
-                    cycle.getBaselineLapTime(), cycle.isDriverPittedFirst(),
+                    baselineLap, cycle.isDriverPittedFirst(),
                     cycle.getTrackStatusAtPit(), cycle.getCompoundAfterPit(), emergenceTraffic);
 
             Double gapDeltaPct = computeGapDeltaPct(cycle.getPrePitGapToPrimary(), postGap,
-                    cycle.getBaselineLapTime());
+                    baselineLap);
 
             emitResult(cycle, postGap, gapDeltaPct, result, "RIVAL_PIT", false, out);
             return true;
@@ -390,16 +415,18 @@ public class PitStopEvaluator
             }
 
             Double gapDeltaPct = computeGapDeltaPct(cycle.getPrePitGapToPrimary(), currentGap,
-                    cycle.getBaselineLapTime());
+                    baselineLap);
             Result result;
-            if (isIncidentGapDeltaPct(gapDeltaPct)) {
-                result = Result.UNRESOLVED_INSUFFICIENT_DATA;
-            } else if (gapDeltaPct != null && gapDeltaPct < -DEFEND_BAND_PCT) {
+            if (gapDeltaPct == null) {
+                result = Result.UNRESOLVED_MISSING_POST_GAP;
+            } else if (isIncidentGapDeltaPct(gapDeltaPct)) {
+                result = Result.UNRESOLVED_INCIDENT_FILTER;
+            } else if (gapDeltaPct < -DEFEND_BAND_PCT) {
                 result = Result.OFFSET_ADVANTAGE;
-            } else if (gapDeltaPct != null && gapDeltaPct > DEFEND_BAND_PCT) {
+            } else if (gapDeltaPct > DEFEND_BAND_PCT) {
                 result = Result.OFFSET_DISADVANTAGE;
             } else {
-                result = Result.UNRESOLVED_INSUFFICIENT_DATA;
+                result = Result.SUCCESS_DEFEND;
             }
 
             emitResult(cycle, currentGap, gapDeltaPct, result, "OFFSET_TIMEOUT", true, out);
@@ -409,7 +436,7 @@ public class PitStopEvaluator
         return false;
     }
 
-    // 8-label classification based on gap delta percentage
+    // same-strategy classification based on gap delta percentage
     private Result classifyPitStop(Double prePitGap, Double postPitGap,
             double baselineLap, boolean driverPittedFirst,
             String trackStatus, String compoundAfterPit, boolean emergenceTraffic) {
@@ -418,16 +445,22 @@ public class PitStopEvaluator
             return Result.WEATHER_SURVIVAL_STOP;
         }
 
-        if (prePitGap == null || postPitGap == null || baselineLap <= 0) {
-            return Result.UNRESOLVED_INSUFFICIENT_DATA;
+        if (prePitGap == null) {
+            return Result.UNRESOLVED_MISSING_PRE_GAP;
+        }
+        if (postPitGap == null) {
+            return Result.UNRESOLVED_MISSING_POST_GAP;
+        }
+        if (baselineLap <= 0) {
+            return Result.UNRESOLVED_INVALID_BASELINE;
         }
 
         Double gapDeltaPct = computeGapDeltaPct(prePitGap, postPitGap, baselineLap);
         if (gapDeltaPct == null) {
-            return Result.UNRESOLVED_INSUFFICIENT_DATA;
+            return Result.UNRESOLVED_MISSING_POST_GAP;
         }
         if (isIncidentGapDeltaPct(gapDeltaPct)) {
-            return Result.UNRESOLVED_INSUFFICIENT_DATA;
+            return Result.UNRESOLVED_INCIDENT_FILTER;
         }
 
         // sc/vsc free stop: pitted under caution with minimal gap distortion
@@ -454,6 +487,528 @@ public class PitStopEvaluator
             return Result.FAILURE_TRAFFIC;
         }
         return Result.FAILURE_PACE_DEFICIT;
+    }
+
+    private Result classifyReferenceFallback(String trackStatus, String compoundAfterPit, Double gapDeltaPct) {
+        if (isWetCompound(compoundAfterPit)) {
+            return Result.WEATHER_SURVIVAL_STOP;
+        }
+        if (gapDeltaPct == null) {
+            return Result.UNRESOLVED_MISSING_POST_GAP;
+        }
+        if (isIncidentGapDeltaPct(gapDeltaPct)) {
+            return Result.UNRESOLVED_INCIDENT_FILTER;
+        }
+        if (TrackStatusCodes.isCaution(trackStatus) && Math.abs(gapDeltaPct) < FREE_STOP_THRESHOLD_PCT) {
+            return Result.SUCCESS_FREE_STOP;
+        }
+        if (gapDeltaPct <= DEFEND_BAND_PCT) {
+            return Result.SUCCESS_DEFEND;
+        }
+        return Result.FAILURE_PACE_DEFICIT;
+    }
+
+    // ensures the cycle has a comparable rival and a valid pre-pit directed gap.
+    // if the original primary rival is unusable, retry with ahead/behind candidates.
+    private boolean ensurePrimaryRivalContext(PitCycle cycle) throws Exception {
+        if (cycle.getPrimaryRival() != null) {
+            Double preGap = cycle.getPrePitGapToPrimary();
+            if (preGap == null) {
+                preGap = findGapNearLap(cycle.getDriver(), cycle.getPrimaryRival(), cycle.getPitLap());
+                cycle.setPrePitGapToPrimary(preGap);
+            }
+            if (preGap != null) {
+                return true;
+            }
+        }
+
+        if (tryAssignPrimaryRival(cycle, cycle.getRivalAhead(),
+                cycle.getPrePitGapAhead(), cycle.getRivalAheadStintAtPit())) {
+            return true;
+        }
+
+        return tryAssignPrimaryRival(cycle, cycle.getRivalBehind(),
+                cycle.getPrePitGapBehind(), cycle.getRivalBehindStintAtPit());
+    }
+
+    private boolean tryAssignPrimaryRival(PitCycle cycle, String candidateRival,
+            Double candidateGap, int candidateStintAtPit) throws Exception {
+        if (candidateRival == null) {
+            return false;
+        }
+
+        Double preGap = candidateGap;
+        if (preGap == null) {
+            preGap = findGapNearLap(cycle.getDriver(), candidateRival, cycle.getPitLap());
+        }
+        if (preGap == null) {
+            return false;
+        }
+
+        cycle.setPrimaryRival(candidateRival);
+        cycle.setPrimaryRivalStintAtPit(candidateStintAtPit);
+        cycle.setPrePitGapToPrimary(preGap);
+        return true;
+    }
+
+    // fallback path when both direct rival resolution and directed gaps are unavailable.
+    // computes pre/post pace-relative gap against race leader lap time, and if unavailable,
+    // against the driver's own recent moving average.
+    private boolean tryResolveWithReferenceFallback(PitCycle cycle, int currentLap,
+            Collector<PitStopEvaluationAlert> out) throws Exception {
+        int comparisonLap = cycle.getSettleLap() > 0
+                ? cycle.getSettleLap()
+                : cycle.getPitLap() + SETTLE_LAPS;
+
+        if (currentLap < comparisonLap) {
+            return false;
+        }
+
+        double baselineLap = ensureValidBaseline(cycle, cycle.getPitLap());
+        if (baselineLap <= 0) {
+            emitResult(cycle, null, null, Result.UNRESOLVED_INVALID_BASELINE,
+                    RESOLUTION_INSUFFICIENT_DATA, false, out);
+            return true;
+        }
+
+        int preAnchorLap = Math.max(1, cycle.getPitLap() - 1);
+        Double preReferenceGap = computeReferencePaceGap(cycle.getDriver(), preAnchorLap);
+        if (preReferenceGap == null) {
+            boolean hasRivalIdentity = cycle.getPrimaryRival() != null
+                || cycle.getRivalAhead() != null
+                || cycle.getRivalBehind() != null;
+            Result unresolved = hasRivalIdentity
+                ? Result.UNRESOLVED_MISSING_PRE_GAP
+                : Result.UNRESOLVED_MISSING_RIVAL;
+            emitResult(cycle, null, null, unresolved, RESOLUTION_INSUFFICIENT_DATA, false, out);
+            return true;
+        }
+
+        Double postReferenceGap = computeReferencePaceGap(cycle.getDriver(), comparisonLap);
+        if (postReferenceGap == null && currentLap < comparisonLap + GAP_SEARCH_WINDOW) {
+            return false;
+        }
+        if (postReferenceGap == null) {
+            emitResult(cycle, null, null, Result.UNRESOLVED_MISSING_POST_GAP,
+                    RESOLUTION_INSUFFICIENT_DATA, false, out);
+            return true;
+        }
+
+        Double gapDeltaPct = computeGapDeltaPct(preReferenceGap, postReferenceGap, baselineLap);
+        Result result = classifyReferenceFallback(
+                cycle.getTrackStatusAtPit(), cycle.getCompoundAfterPit(), gapDeltaPct);
+
+        emitResult(cycle, postReferenceGap, gapDeltaPct, result,
+                RESOLUTION_REFERENCE_FALLBACK, false, out);
+        return true;
+    }
+
+    private Double computeReferencePaceGap(String driver, int anchorLap) throws Exception {
+        if (anchorLap <= 0) {
+            return null;
+        }
+
+        Double driverPace = computeDriverMovingAverageLapTime(driver, anchorLap, RECENT_LAP_WINDOW);
+        if (driverPace == null) {
+            return null;
+        }
+
+        Double referencePace = findReferenceLapTime(driver, anchorLap);
+        if (referencePace == null || referencePace <= 0) {
+            return null;
+        }
+
+        return driverPace - referencePace;
+    }
+
+    // conservative fallback for missing post-gap after rival pit.
+    // uses relative lap-time shift (driver minus rival) before vs after pit cycle.
+    // only used when direct positional gap reconstruction is unavailable.
+    private boolean tryResolveWithPaceShiftFallback(PitCycle cycle, int comparisonLap,
+            double baselineLap, String resolvedVia,
+            Collector<PitStopEvaluationAlert> out) throws Exception {
+        if (cycle.getPrimaryRival() == null) {
+            return false;
+        }
+
+        int preAnchorLap = Math.max(1, cycle.getPitLap() - 1);
+        Double prePaceGap = findRelativePaceGapNearLap(
+                cycle.getDriver(), cycle.getPrimaryRival(), preAnchorLap, MIN_PACE_FALLBACK_SAMPLES);
+        if (prePaceGap == null) {
+            return false;
+        }
+
+        Double postPaceGap = findRelativePaceGapNearLap(
+                cycle.getDriver(), cycle.getPrimaryRival(), comparisonLap, MIN_PACE_FALLBACK_SAMPLES);
+        if (postPaceGap == null) {
+            return false;
+        }
+
+        Double gapDeltaPct = computeGapDeltaPct(prePaceGap, postPaceGap, baselineLap);
+        if (gapDeltaPct == null) {
+            return false;
+        }
+
+        int settleLap = cycle.getSettleLap() > 0 ? cycle.getSettleLap() : comparisonLap;
+        boolean emergenceTraffic = checkEmergenceTraffic(cycle.getDriver(), settleLap);
+
+        Result result = classifyPitStop(prePaceGap, postPaceGap,
+                baselineLap, cycle.isDriverPittedFirst(),
+                cycle.getTrackStatusAtPit(), cycle.getCompoundAfterPit(), emergenceTraffic);
+
+        emitResult(cycle, postPaceGap, gapDeltaPct, result, resolvedVia, false, out);
+        return true;
+    }
+
+    // ordinal fallback for cases where directed gap reconstruction and pace-shift are unavailable.
+    // resolves only clear order flips against the primary rival, ambiguous order is kept unresolved.
+    private boolean tryResolveWithPositionalFallback(PitCycle cycle, int comparisonLap,
+            boolean requireRivalPitEvidence,
+            Collector<PitStopEvaluationAlert> out) throws Exception {
+        if (cycle.getPrimaryRival() == null || cycle.getPrePitGapToPrimary() == null) {
+            return false;
+        }
+        if (Math.abs(cycle.getPrePitGapToPrimary()) < MIN_POSITIONAL_PRE_GAP_SECONDS) {
+            return false;
+        }
+        if (requireRivalPitEvidence && !hasRivalPitEvidence(cycle, comparisonLap)) {
+            return false;
+        }
+
+        LapEvent driverLap = findDriverEventNearLap(cycle.getDriver(), comparisonLap);
+        LapEvent rivalLap = findDriverEventNearLap(cycle.getPrimaryRival(), comparisonLap);
+        if (driverLap == null || rivalLap == null) {
+            return false;
+        }
+        if (!TrackStatusCodes.isGreenOrUnknown(driverLap.getTrackStatus())
+                || !TrackStatusCodes.isGreenOrUnknown(rivalLap.getTrackStatus())) {
+            return false;
+        }
+        if (Math.abs(driverLap.getLapNumber() - rivalLap.getLapNumber()) > 1) {
+            return false;
+        }
+
+        int driverPos = driverLap.getPosition();
+        int rivalPos = rivalLap.getPosition();
+        if (driverPos <= 0 || rivalPos <= 0) {
+            return false;
+        }
+        if (Math.abs(driverPos - rivalPos) > MAX_PLAUSIBLE_RIVAL_POSITION_DELTA) {
+            return false;
+        }
+
+        boolean driverAheadPrePit = cycle.getPrePitGapToPrimary() < 0;
+        boolean driverAheadPostPit = driverPos < rivalPos;
+        if (driverAheadPrePit == driverAheadPostPit) {
+            return false;
+        }
+
+        Result result;
+        if (!driverAheadPrePit && driverAheadPostPit) {
+            result = cycle.isDriverPittedFirst() ? Result.SUCCESS_UNDERCUT : Result.SUCCESS_OVERCUT;
+        } else {
+            int settleLap = cycle.getSettleLap() > 0 ? cycle.getSettleLap() : comparisonLap;
+            boolean emergenceTraffic = checkEmergenceTraffic(cycle.getDriver(), settleLap);
+            result = emergenceTraffic ? Result.FAILURE_TRAFFIC : Result.FAILURE_PACE_DEFICIT;
+        }
+
+        emitResult(cycle, null, null, result, RESOLUTION_POSITIONAL_FALLBACK, false, out);
+        return true;
+    }
+
+    private boolean hasRivalPitEvidence(PitCycle cycle, int comparisonLap) throws Exception {
+        if (cycle.getPrimaryRival() == null) {
+            return false;
+        }
+
+        int toLap = Math.max(cycle.getPitLap(), comparisonLap + GAP_SEARCH_WINDOW);
+        if (hasRivalPitted(cycle.getPrimaryRival(), cycle.getPrimaryRivalStintAtPit(),
+                cycle.getPitLap(), toLap)) {
+            return true;
+        }
+
+        int lookbackStart = Math.max(1, cycle.getPitLap() - SETTLE_LAPS - RIVAL_LOOKBACK_EXTRA_LAPS);
+        return hasRivalPittedInRange(cycle.getPrimaryRival(), lookbackStart, cycle.getPitLap());
+    }
+
+    private LapEvent findDriverEventNearLap(String driver, int targetLap) throws Exception {
+        if (targetLap <= 0) {
+            return null;
+        }
+
+        LapEvent event = lapEvents.get(lapKey(targetLap, driver));
+        if (event != null) {
+            return event;
+        }
+
+        for (int offset = 1; offset <= GAP_SEARCH_WINDOW; offset++) {
+            int beforeLap = targetLap - offset;
+            if (beforeLap > 0) {
+                event = lapEvents.get(lapKey(beforeLap, driver));
+                if (event != null) {
+                    return event;
+                }
+            }
+
+            event = lapEvents.get(lapKey(targetLap + offset, driver));
+            if (event != null) {
+                return event;
+            }
+        }
+
+        return null;
+    }
+
+    private Double findRelativePaceGapNearLap(String driver, String rival,
+            int targetLap, int minSamples) throws Exception {
+        Double paceGap = computeRelativePaceGap(driver, rival, targetLap, minSamples);
+        if (paceGap != null) {
+            return paceGap;
+        }
+
+        for (int offset = 1; offset <= GAP_SEARCH_WINDOW; offset++) {
+            paceGap = computeRelativePaceGap(driver, rival, targetLap - offset, minSamples);
+            if (paceGap != null) {
+                return paceGap;
+            }
+
+            paceGap = computeRelativePaceGap(driver, rival, targetLap + offset, minSamples);
+            if (paceGap != null) {
+                return paceGap;
+            }
+        }
+
+        return null;
+    }
+
+    private Double computeRelativePaceGap(String driver, String rival,
+            int anchorLap, int minSamples) throws Exception {
+        if (anchorLap <= 0) {
+            return null;
+        }
+
+        Double driverPace = computeDriverLocalAverageLapTime(
+                driver, anchorLap, PACE_FALLBACK_LAP_SPAN, minSamples);
+        if (driverPace == null) {
+            return null;
+        }
+
+        Double rivalPace = computeDriverLocalAverageLapTime(
+                rival, anchorLap, PACE_FALLBACK_LAP_SPAN, minSamples);
+        if (rivalPace == null) {
+            return null;
+        }
+
+        return driverPace - rivalPace;
+    }
+
+    private Double computeDriverLocalAverageLapTime(String driver, int endLap,
+            int lapSpan, int minSamples) throws Exception {
+        if (endLap <= 0 || lapSpan <= 0 || minSamples <= 0) {
+            return null;
+        }
+
+        int used = 0;
+        double sum = 0.0;
+        int startLap = Math.max(1, endLap - lapSpan + 1);
+        for (int lap = endLap; lap >= startLap; lap--) {
+            LapEvent event = lapEvents.get(lapKey(lap, driver));
+            if (event == null) {
+                continue;
+            }
+            if (event.getLapTime() == null || event.getLapTime() <= 0) {
+                continue;
+            }
+            if (event.getPitInTime() != null || event.getPitOutTime() != null) {
+                continue;
+            }
+            if (!TrackStatusCodes.isGreenOrUnknown(event.getTrackStatus())) {
+                continue;
+            }
+
+            sum += event.getLapTime();
+            used++;
+        }
+
+        if (used < minSamples) {
+            return null;
+        }
+        return sum / used;
+    }
+
+    private Double findReferenceLapTime(String driver, int lap) throws Exception {
+        for (int offset = 0; offset <= LEADER_REFERENCE_SEARCH_WINDOW; offset++) {
+            int candidateLap = lap - offset;
+            if (candidateLap <= 0) {
+                break;
+            }
+            Double leaderLap = findLeaderLapTime(candidateLap);
+            if (leaderLap != null && leaderLap > 0) {
+                return leaderLap;
+            }
+        }
+
+        return computeDriverMovingAverageLapTime(driver, lap - 1, RECENT_LAP_WINDOW);
+    }
+
+    private Double findLeaderLapTime(int lap) throws Exception {
+        Integer maxLap = globalMaxLap.value();
+        if (maxLap == null) {
+            maxLap = lap;
+        }
+
+        List<String> staleDrivers = new ArrayList<>();
+        for (String d : driverLatestLap.keys()) {
+            Integer latestLap = driverLatestLap.get(d);
+            if (latestLap == null || maxLap - latestLap > RECENT_LAP_WINDOW) {
+                staleDrivers.add(d);
+                continue;
+            }
+
+            LapEvent e = lapEvents.get(lapKey(lap, d));
+            if (e == null || e.getPosition() != 1) {
+                continue;
+            }
+            if (e.getLapTime() == null || e.getLapTime() <= 0) {
+                continue;
+            }
+            if (e.getPitInTime() != null || e.getPitOutTime() != null) {
+                continue;
+            }
+            if (!TrackStatusCodes.isGreenOrUnknown(e.getTrackStatus())) {
+                continue;
+            }
+
+            for (String stale : staleDrivers) {
+                driverLatestLap.remove(stale);
+            }
+            return e.getLapTime();
+        }
+
+        for (String stale : staleDrivers) {
+            driverLatestLap.remove(stale);
+        }
+        return null;
+    }
+
+    private Double computeDriverMovingAverageLapTime(String driver, int endLap, int window)
+            throws Exception {
+        return computeDriverMovingAverageLapTime(driver, endLap, window, 1);
+    }
+
+    private Double computeDriverMovingAverageLapTime(String driver, int endLap,
+            int window, int minSamples) throws Exception {
+        if (endLap <= 0) {
+            return null;
+        }
+
+        int used = 0;
+        double sum = 0.0;
+        for (int lap = endLap; lap >= 1 && used < window; lap--) {
+            LapEvent event = lapEvents.get(lapKey(lap, driver));
+            if (event == null) {
+                continue;
+            }
+            if (event.getLapTime() == null || event.getLapTime() <= 0) {
+                continue;
+            }
+            if (event.getPitInTime() != null || event.getPitOutTime() != null) {
+                continue;
+            }
+            if (!TrackStatusCodes.isGreenOrUnknown(event.getTrackStatus())) {
+                continue;
+            }
+
+            sum += event.getLapTime();
+            used++;
+        }
+
+        if (used < minSamples) {
+            return null;
+        }
+        return sum / used;
+    }
+
+    private double ensureValidBaseline(PitCycle cycle, int referenceLap) throws Exception {
+        if (cycle.getBaselineLapTime() > 0) {
+            return cycle.getBaselineLapTime();
+        }
+
+        Double fieldMedian = computeFieldMedianLapTime(referenceLap);
+        if (fieldMedian != null && fieldMedian > 0) {
+            cycle.setBaselineLapTime(fieldMedian);
+            return fieldMedian;
+        }
+
+        if (SAFE_BASELINE_LAP_TIME_SECONDS > 0) {
+            cycle.setBaselineLapTime(SAFE_BASELINE_LAP_TIME_SECONDS);
+            return SAFE_BASELINE_LAP_TIME_SECONDS;
+        }
+
+        return 0.0;
+    }
+
+    private double resolveBaselineLapTime(String driver, int stintBeforePit, int pitLap) throws Exception {
+        String sKey = stintKey(driver, stintBeforePit);
+        Double best = stintBests.get(sKey);
+        if (best != null && best > 0) {
+            return best;
+        }
+
+        Double fieldMedian = computeFieldMedianLapTime(pitLap);
+        if (fieldMedian != null && fieldMedian > 0) {
+            return fieldMedian;
+        }
+
+        return SAFE_BASELINE_LAP_TIME_SECONDS;
+    }
+
+    private Double computeFieldMedianLapTime(int lap) throws Exception {
+        Integer maxLap = globalMaxLap.value();
+        if (maxLap == null) {
+            maxLap = lap;
+        }
+
+        List<String> staleDrivers = new ArrayList<>();
+        List<Double> values = new ArrayList<>();
+        for (String d : driverLatestLap.keys()) {
+            Integer latestLap = driverLatestLap.get(d);
+            if (latestLap == null || maxLap - latestLap > RECENT_LAP_WINDOW) {
+                staleDrivers.add(d);
+                continue;
+            }
+
+            LapEvent event = lapEvents.get(lapKey(lap, d));
+            if (event == null) {
+                continue;
+            }
+            if (event.getLapTime() == null || event.getLapTime() <= 0) {
+                continue;
+            }
+            if (event.getPitInTime() != null || event.getPitOutTime() != null) {
+                continue;
+            }
+            if (!TrackStatusCodes.isGreenOrUnknown(event.getTrackStatus())) {
+                continue;
+            }
+
+            values.add(event.getLapTime());
+        }
+
+        for (String stale : staleDrivers) {
+            driverLatestLap.remove(stale);
+        }
+
+        if (values.isEmpty()) {
+            return null;
+        }
+
+        Collections.sort(values);
+        int n = values.size();
+        if ((n % 2) == 1) {
+            return values.get(n / 2);
+        }
+        return (values.get((n / 2) - 1) + values.get(n / 2)) / 2.0;
     }
 
     // computes gap change as % of baseline lap time.
@@ -745,8 +1300,21 @@ public class PitStopEvaluator
     // fallback resolution when safety timer fires
     private void resolveFromTimer(PitCycle cycle, Collector<PitStopEvaluationAlert> out)
             throws Exception {
-        if (cycle.getPrimaryRival() == null || cycle.getPrePitGapToPrimary() == null) {
-            emitResult(cycle, null, null, Result.UNRESOLVED_INSUFFICIENT_DATA,
+        if (!ensurePrimaryRivalContext(cycle)) {
+            int settleOrDefault = cycle.getSettleLap() > 0
+                ? cycle.getSettleLap()
+                : cycle.getPitLap() + SETTLE_LAPS;
+            int forcedCurrentLap = settleOrDefault + GAP_SEARCH_WINDOW;
+            if (!tryResolveWithReferenceFallback(cycle, forcedCurrentLap, out)) {
+                emitResult(cycle, null, null, Result.UNRESOLVED_MISSING_RIVAL,
+                        RESOLUTION_INSUFFICIENT_DATA, false, out);
+            }
+            return;
+        }
+
+        double baselineLap = ensureValidBaseline(cycle, cycle.getPitLap());
+        if (baselineLap <= 0) {
+            emitResult(cycle, null, null, Result.UNRESOLVED_INVALID_BASELINE,
                     RESOLUTION_INSUFFICIENT_DATA, false, out);
             return;
         }
@@ -765,17 +1333,25 @@ public class PitStopEvaluator
         }
 
         if (postGap == null) {
-            emitResult(cycle, null, null, Result.UNRESOLVED_INSUFFICIENT_DATA,
+            if (tryResolveWithPaceShiftFallback(cycle, settleLap,
+                    baselineLap, RESOLUTION_SAFETY_TIMER_PACE_SHIFT, out)) {
+                return;
+            }
+            if (tryResolveWithPositionalFallback(cycle, settleLap, true, out)) {
+                return;
+            }
+
+            emitResult(cycle, null, null, Result.UNRESOLVED_MISSING_POST_GAP,
                     RESOLUTION_INSUFFICIENT_DATA, false, out);
             return;
         }
 
         Double gapDeltaPct = computeGapDeltaPct(cycle.getPrePitGapToPrimary(), postGap,
-                cycle.getBaselineLapTime());
+        baselineLap);
         boolean emergenceTraffic = checkEmergenceTraffic(cycle.getDriver(), settleLap);
 
         Result result = classifyPitStop(cycle.getPrePitGapToPrimary(), postGap,
-                cycle.getBaselineLapTime(), cycle.isDriverPittedFirst(),
+        baselineLap, cycle.isDriverPittedFirst(),
                 cycle.getTrackStatusAtPit(), cycle.getCompoundAfterPit(), emergenceTraffic);
 
         emitResult(cycle, postGap, gapDeltaPct, result, "SAFETY_TIMER", false, out);
@@ -825,7 +1401,7 @@ public class PitStopEvaluator
                 cycle,
                 null,
                 null,
-                Result.UNRESOLVED_INSUFFICIENT_DATA,
+            Result.UNRESOLVED_MISSING_PRE_GAP,
                 RESOLUTION_EARLY_LAP_FILTER,
                 false,
                 out);

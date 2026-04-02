@@ -1,0 +1,65 @@
+\chapter{Implementation Experience}
+\label{ch:implementation_experience}
+
+\section{Engineering Stack and Environment}
+
+\textbf{Template intent.} Keep this section factual and reproducible.
+
+\begin{itemize}
+	\item Report runtime stack, versions, infrastructure, and packaging.
+	\item Document environment constraints and reproducibility notes.
+	\item Describe what is deterministic vs what can vary between runs.
+\end{itemize}
+
+\section{Pipeline Implementation}
+\subsection{Ingestion and Replay Components}
+
+\textbf{Template intent.} Describe implementation decisions that affect data fidelity.
+
+\begin{itemize}
+	\item Replay timing policy, topic schema, and serialization choices.
+	\item Error handling and idempotency notes.
+\end{itemize}
+
+\subsection{Flink Operators and Real-time Alerts}
+
+\textbf{Template intent.} Summarize operator responsibilities and state management.
+
+\begin{itemize}
+	\item Per-operator responsibilities and key state variables.
+	\item Watermarks/checkpointing and practical trade-offs encountered.
+\end{itemize}
+
+\paragraph{Implemented change in \texttt{PitStopEvaluator}.}
+The operator now includes two explicit pace-based recovery paths, \texttt{RIVAL\_PIT\_PACE\_SHIFT} and \texttt{SAFETY\_TIMER\_PACE\_SHIFT}, used only when direct post-pit rival gap reconstruction fails. Both paths require local green-lap evidence for driver and rival; otherwise, the output remains unresolved. This implementation keeps the streaming state machine deterministic and auditable while incorporating a lap-time-consistent fallback aligned with the race-time decomposition and optimization literature \citep{heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
+
+\subsection{Data Lake and Audit Layer}
+
+\textbf{Template intent.} Explain output contracts and quality checks.
+
+\begin{itemize}
+	\item Sink layout, partitioning logic, and schema consistency policy.
+	\item Audit scripts and contract-validation process.
+\end{itemize}
+
+\section{Model Training Pipeline}
+
+\textbf{Template intent.} Keep this broad until final experiments stabilize.
+
+\begin{itemize}
+	\item Training data extraction path and feature assembly overview.
+	\item Split strategy implementation and anti-leakage safeguards.
+	\item Hyperparameter search, calibration step, and model artifact versioning.
+\end{itemize}
+
+Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, platt1999probabilistic, guo2017calibration, kull2017beta}.
+
+\section{Real-time Inference Integration}
+
+\textbf{Template intent.} Describe integration options and chosen approach without overcommitting to one architecture in early drafts.
+
+\begin{itemize}
+	\item Integration pattern selected (in-engine, service, or decoupled consumer).
+	\item Input contract, output topic/schema, and latency budget assumptions.
+	\item Fallback and observability strategy for inference failures.
+\end{itemize}
