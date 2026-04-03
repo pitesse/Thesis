@@ -29,9 +29,20 @@
 	\item Drift-aware adaptation and online recalibration.
 	\item Richer decision spaces (for example compound recommendation jointly with timing).
 	\item Tighter integration patterns and broader season-level validation.
+	\item Training-serving skew mitigation when telemetry is streamed in parallel to Flink and ML inference.
 \end{itemize}
 
 Suggested references: \citep{gama2014drift, arora2024driftreview, bifet2007adwin, gomes2017arf, baenagarcia2006eddm}.
+
+\subsection{Deployment Consistency Placeholder (Flink + ML)}
+
+\textbf{Template intent.} Keep this subsection as a future-work marker until deployment experiments are run.
+
+\begin{itemize}
+	\item Define how online features should be generated at serving time to match training assumptions.
+	\item Specify consistency checks between offline Flink-derived training features and live serving features.
+	\item Reserve latency and fallback requirements for the final system design chapter pass.
+\end{itemize}
 
 \section{Overall Discussion}
 

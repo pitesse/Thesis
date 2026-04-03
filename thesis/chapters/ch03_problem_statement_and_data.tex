@@ -77,6 +77,14 @@ Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafk
 \paragraph{Implemented fallback guardrail for missing post-pit gaps.}
 The ground-truth operator now uses a conservative salvage rule only for same-rival cycles where direct post-pit gap reconstruction is unavailable. The fallback compares pre-pit and post-pit relative pace against the same rival using local green, non-pit lap windows with minimum sample constraints. If this evidence is not available, the cycle remains unresolved as \texttt{UNRESOLVED\_MISSING\_POST\_GAP}. This preserves auditable uncertainty instead of forcing a strategic label from incomplete context, while staying aligned with lap-time decomposition and race-time optimization reasoning from motorsport strategy literature \citep{heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
 
+\subsection{Construct Validity and Label Scope}
+
+No official open Formula 1 pit-strategy ground-truth dataset was identified in the surveyed literature used in this thesis. As a result, labels are defined operationally from telemetry and lap context using explicit decision rules, not imported from an external authoritative source. This is consistent with recent motorsport studies that also operationalize pit outcomes from observable timing and position context \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, carrasco2023optimization, quiroga2024optimization}.
+
+The construct represented by the label is strategic pit outcome under observable race conditions, not total team performance. Therefore, the labeling scope intentionally excludes unobservable or weakly observable factors such as pit crew execution quality, hidden car damage, and team-internal strategy constraints. The unresolved policy is conservative by design: when rival context or post-pit comparability is insufficient, the event is retained in data lake artifacts but excluded from resolved binary supervision. This abstention policy limits label noise and leakage from ambiguous contexts \citep{brookshire2024leakage, roberts2017cvstructured}.
+
+External validity is bounded to the seasons, regulations, and telemetry quality covered by the replayed dataset. Claims are therefore framed as construct-valid for this operational setting, with qualitative triangulation in Chapter~\ref{ch:evaluation_campaign} used to assess plausibility against known race narratives.
+
 Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, hettmann2024datatopodium, sasikumar2025pitstop, heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
 
 \section{Evaluation Metrics}

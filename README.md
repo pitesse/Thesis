@@ -92,6 +92,9 @@ Persist all outputs as JSON Lines for reproducible ML workflows:
                           ▼               ▼               ▼
                     FileSink JSONL    KafkaSink      Streamlit Dashboard
                      (data_lake/)     (f1-alerts)     (localhost:8501)
+
+                    Additional ML live path (Phase 3.1):
+                    f1-ml-features (Kafka) -> ml consumer -> f1-ml-predictions (Kafka)
 ```
 
 ### Two-Stage Python Producer
@@ -156,6 +159,15 @@ All streams are persisted as JSONL (`.jsonl`) through Flink `FileSink.forRowForm
 | ML Features | `data_lake/ml_features/` | Denormalized lap-level ML features |
 | Debug Alerts | `data_lake/debug_alerts/` | Unified debug stream of all alerts |
 
+## Live ML Topics (Phase 3.1)
+
+The pipeline now exposes a dedicated feature topic for online ML serving.
+
+| Topic | Producer | Consumer | Purpose |
+|---|---|---|---|
+| `f1-ml-features` | Flink (`RivalIdentificationFunction` side output) | Python ML consumer | Feature payload parity between offline training and live serving |
+| `f1-ml-predictions` | Python ML consumer | Dashboard/analysis tools | Real-time prediction stream for heuristic vs ML comparison |
+
 ## Data Quality Contracts
 
 The pipeline enforces explicit output contracts to keep downstream ML behavior stable and reproducible.
@@ -212,6 +224,26 @@ Recent validation highlights (latest full 2023 run):
 ```bash
 ./simulate_season.sh --year 2023 --speed 100
 ```
+
+### Build ML Serving Bundle
+
+```bash
+python ml_pipeline/prepare_ml_dataset.py --horizon 2
+python ml_pipeline/build_serving_bundle.py --dataset data_lake/ml_training_dataset.parquet
+```
+
+### Run Live ML Consumer
+
+```bash
+python ml_pipeline/serve_ml_predictions.py \
+   --bootstrap localhost:9092 \
+   --model-bundle data_lake/models/pit_strategy_serving_bundle.joblib
+```
+
+Notes:
+1. Keep the Flink job running so `f1-ml-features` is continuously populated.
+2. The consumer publishes one prediction per incoming feature row to `f1-ml-predictions`.
+3. This first serving path intentionally reuses Flink-generated features to minimize training-serving skew.
 
 ### Manual Steps
 
