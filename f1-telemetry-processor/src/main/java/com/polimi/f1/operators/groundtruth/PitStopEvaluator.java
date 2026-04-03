@@ -386,6 +386,7 @@ public class PitStopEvaluator
                         baselineLap, RESOLUTION_RIVAL_PIT_PACE_SHIFT, out)) {
                     return true;
                 }
+                // this reasoning is from garcia tejada 2023, use ordinal rival order when gap chain is missing.
                 if (tryResolveWithPositionalFallback(cycle, comparisonLap, false, out)) {
                     return true;
                 }
@@ -631,6 +632,7 @@ public class PitStopEvaluator
             return false;
         }
 
+        // this reasoning is from heilmeier 2020, compare relative pace shift pre pit vs post pit.
         int preAnchorLap = Math.max(1, cycle.getPitLap() - 1);
         Double prePaceGap = findRelativePaceGapNearLap(
                 cycle.getDriver(), cycle.getPrimaryRival(), preAnchorLap, MIN_PACE_FALLBACK_SAMPLES);
@@ -665,6 +667,7 @@ public class PitStopEvaluator
     private boolean tryResolveWithPositionalFallback(PitCycle cycle, int comparisonLap,
             boolean requireRivalPitEvidence,
             Collector<PitStopEvaluationAlert> out) throws Exception {
+        // this reasoning is from garcia tejada 2023, position maintained or improved is a valid fallback target.
         if (cycle.getPrimaryRival() == null || cycle.getPrePitGapToPrimary() == null) {
             return false;
         }
@@ -721,6 +724,7 @@ public class PitStopEvaluator
             return false;
         }
 
+        // this reasoning is from carrasco heine and thraves 2023, compare rivals only when both completed pit sequence.
         int toLap = Math.max(cycle.getPitLap(), comparisonLap + GAP_SEARCH_WINDOW);
         if (hasRivalPitted(cycle.getPrimaryRival(), cycle.getPrimaryRivalStintAtPit(),
                 cycle.getPitLap(), toLap)) {
@@ -1337,6 +1341,7 @@ public class PitStopEvaluator
                     baselineLap, RESOLUTION_SAFETY_TIMER_PACE_SHIFT, out)) {
                 return;
             }
+            // this reasoning is from garcia tejada 2023, final rescue via ordinal rival order before unresolved.
             if (tryResolveWithPositionalFallback(cycle, settleLap, true, out)) {
                 return;
             }
