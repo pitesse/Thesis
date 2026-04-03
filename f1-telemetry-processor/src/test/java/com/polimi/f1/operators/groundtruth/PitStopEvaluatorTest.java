@@ -225,6 +225,31 @@ class PitStopEvaluatorTest {
         assertEquals("OFFSET_TIMEOUT", verEval.getResolvedVia());
     }
 
+    // when offset timeout has no directed gap reconstruction, relative pace shift can still resolve.
+    @Test
+    void offsetTimeoutPaceShiftFallback_whenCurrentGapMissing_emitsOffsetAdvantage() throws Exception {
+        int totalLaps = 50;
+        feedGreenLapsTotal("VER", "LEC", 5, 9, 82.0, 81.5, totalLaps);
+
+        process(makeLap("LEC", 10, 1, "HARD", 10, null, null, null, "1", totalLaps, 1), tsFast(10));
+        process(makeLapWithPit("VER", 10, 2, "SOFT", 9, 100.0, null, 3.0, "1", totalLaps, 1), tsFast(10));
+
+        // keep rivals far apart after the pit, directed gap reconstruction is unavailable.
+        for (int l = 11; l <= 26; l++) {
+            process(makeGreenLap("LEC", l, 1, "HARD", l, 82.6, null, totalLaps, 1), tsFast(l));
+            process(makeGreenLap("VER", l, 10, "HARD", l - 10, 81.1, 1.2, totalLaps, 2), tsFast(l));
+        }
+
+        List<PitStopEvaluationAlert> results = extractResults();
+        PitStopEvaluationAlert verEval = findByDriver(results, "VER");
+        assertNotNull(verEval, "VER evaluation should exist after offset timeout fallback");
+        assertEquals(Result.OFFSET_ADVANTAGE, verEval.getResult());
+        assertEquals("OFFSET_TIMEOUT_PACE_SHIFT", verEval.getResolvedVia());
+        assertTrue(verEval.isOffsetStrategy());
+        assertNotNull(verEval.getGapDeltaPct());
+        assertTrue(verEval.getGapDeltaPct() < -0.5, "offset pace-shift should show strategic gain");
+    }
+
     // no pit entry events -> no evaluations emitted
     @Test
     void noPitEntry_noOutput() throws Exception {

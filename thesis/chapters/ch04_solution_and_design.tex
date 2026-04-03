@@ -3,7 +3,7 @@
 
 \section{System Architecture Overview}
 
-\textbf{Template intent.} Describe your end-to-end architecture in one page.
+\textbf{Template intent.} Describe end-to-end architecture in one page.
 
 \begin{itemize}
 	\item Producer, broker, stream processor, data lake, and dashboard roles.
@@ -22,7 +22,18 @@ Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafk
 	\item Contracts for sinks used by audit and ML.
 \end{itemize}
 
-Suggested references: \citep{widanage2019indy500, carbone2015flink}.
+\subsection{Dual-Consumer Streaming Contract (Flink + ML Placeholder)}
+
+\textbf{Template intent.} Reserve this subsection for deployment-consistency design notes.
+
+\begin{itemize}
+	\item State contract: Flink computes stateful lap-context features once and emits the same feature payload to offline sink and online topic (\texttt{f1-ml-features}).
+	\item Document event-time ordering and watermark assumptions used to keep feature timestamps point-in-time consistent across replay and live serving.
+	\item Describe Kafka decoupling between heuristic processing and ML inference consumer to preserve independent runtime behavior under the same telemetry stream.
+	\item Keep raw-telemetry serving as a deferred ablation track after consistency and fairness gates are validated.
+\end{itemize}
+
+Suggested references: \citep{carbone2015flink, akidau2015dataflow, kreps2011kafka, widanage2019indy500}.
 
 \section{Heuristic Strategy Engine Design}
 
@@ -34,27 +45,30 @@ Suggested references: \citep{widanage2019indy500, carbone2015flink}.
 	\item Clarify this module as baseline and operational comparator.
 \end{itemize}
 
-\subsection{Implemented Pit-Cycle Fallback Hierarchy}
+\subsection{Pit-Cycle Label Resolution (Skeleton Notes)}
 
-For \texttt{PitStopEvaluator}, the implemented design is a strict resolution hierarchy:
+\textbf{Template intent.} Keep this subsection structural and implementation-neutral in early drafts.
 
-\begin{enumerate}
-	\item direct rival-gap evaluation after both cars complete settle laps,
-	\item bounded near-lap gap recovery around the comparison lap,
-	\item pace-shift fallback when post-gap remains unavailable,
-	\item explicit unresolved emission with reason code if evidence is still insufficient.
-\end{enumerate}
+\begin{itemize}
+	\item Document fallback hierarchy order: direct rival-gap path, near-lap recovery, pace-shift fallback, unresolved abstention.
+	\item Explain why conservative unresolved outcomes are preserved when evidence remains incomplete.
+	\item Link rationale to lap-time decomposition and online optimization framing.
+\end{itemize}
 
-The pace-shift fallback is computed as a relative pre/post pace change against the same rival:
+Suggested references: \citep{heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
 
-$$
-\Delta_{\text{pace}\%} =
-\frac{(\bar{t}^{post}_{d} - \bar{t}^{post}_{r}) - (\bar{t}^{pre}_{d} - \bar{t}^{pre}_{r})}{t_{baseline}} \cdot 100,
-$$
+\subsection{Timing-Pressure Actionability Alignment (Skeleton Notes)}
 
-where $\bar{t}$ are local green, non-pit moving averages and $t_{baseline}$ is the pre-pit baseline lap time with conservative fallback. This keeps the decision grounded in lap-time component reasoning and race-time minimization logic \citep{heilmeier2020race, carrasco2023optimization}, while remaining compatible with online, partial-information updates \citep{quiroga2024optimization}. Incident-like extremes are still filtered into unresolved labels, so the fallback increases yield without relaxing label-purity guardrails.
+\textbf{Template intent.} Record purpose and guardrails of timing-aware suggestion logic without locking final numeric detail.
 
-Suggested references: \citep{carrasco2023optimization, quiroga2024optimization}.
+\begin{itemize}
+	\item Summarize timing-pressure signals (pace trend, gap trend, strategy deficit, rival reaction, traffic context).
+	\item Note green-condition actionability gating that downgrades weak early actionable alerts to monitoring.
+	\item Capture near-window re-emission intent when timing pressure materially increases.
+	\item Emphasize deterministic bounded behavior to keep the SDE baseline stable and auditable.
+\end{itemize}
+
+Suggested references: \citep{widanage2019indy500, heilmeier2020race, carrasco2023optimization, quiroga2024optimization, cappello2025statespace}.
 
 \section{Machine Learning Formulation}
 
@@ -74,6 +88,7 @@ Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikum
 
 \begin{itemize}
 	\item Same replay windows, same data availability assumptions, same excluded contexts.
+	\item Use one shared feature contract for training and first live serving comparison to reduce training-serving skew.
 	\item Report both predictive quality and operational behavior.
 	\item Predefine significance testing and uncertainty reporting.
 \end{itemize}

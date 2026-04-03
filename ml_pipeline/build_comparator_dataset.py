@@ -171,10 +171,24 @@ def _build_comparator_dataset(
         candidates_df = grouped_evals.get((race, driver))
 
         matched_pit_lap: int | None = None
+        nearest_future_pit_lap: int | None = None
+        nearest_future_pit_distance: int | None = None
+        pit_in_window_before_consumption = False
         outcome_class = "EXCLUDED"
         exclusion_reason = "NO_MATCH_WITHIN_HORIZON"
 
         if candidates_df is not None and not candidates_df.empty:
+            future = candidates_df[candidates_df["pit_lap_num"] >= lap]
+            if not future.empty:
+                nearest_future_pit_lap = int(future.iloc[0]["pit_lap_num"])
+                nearest_future_pit_distance = nearest_future_pit_lap - lap
+
+            window_all = candidates_df[
+                (candidates_df["pit_lap_num"] >= lap)
+                & (candidates_df["pit_lap_num"] <= (lap + horizon))
+            ]
+            pit_in_window_before_consumption = not window_all.empty
+
             window = candidates_df[
                 (candidates_df["pit_lap_num"] >= lap)
                 & (candidates_df["pit_lap_num"] <= (lap + horizon))
@@ -197,6 +211,10 @@ def _build_comparator_dataset(
                 if decision["score_num"] != float("-inf")
                 else None,
                 "matched_pit_lap": matched_pit_lap,
+                "match_distance": (matched_pit_lap - lap) if matched_pit_lap is not None else None,
+                "nearest_future_pit_lap": nearest_future_pit_lap,
+                "nearest_future_pit_distance": nearest_future_pit_distance,
+                "pit_in_window_before_consumption": pit_in_window_before_consumption,
                 "outcome_class": outcome_class,
                 "exclusion_reason": exclusion_reason,
             }
@@ -248,6 +266,41 @@ def _print_summary(dataset: pd.DataFrame, suggestions: pd.DataFrame, horizon: in
         print("\nexcluded reason distribution")
         for reason, count in reason_counts.items():
             print(f"{reason}: {int(count)}")
+
+        no_match = excluded[excluded["exclusion_reason"] == "NO_MATCH_WITHIN_HORIZON"].copy()
+        if not no_match.empty and "nearest_future_pit_distance" in no_match.columns:
+            lead = pd.to_numeric(no_match["nearest_future_pit_distance"], errors="coerce")
+            no_future = int(lead.isna().sum())
+            valid_lead = lead.dropna().astype(int)
+
+            print("\nno-match timing diagnostics")
+            print(f"no-match rows                  : {len(no_match)}")
+            print(f"no future pit after suggestion : {no_future}")
+            if not valid_lead.empty:
+                print(
+                    "exactly one lap beyond horizon: "
+                    f"{int((valid_lead == (horizon + 1)).sum())}"
+                )
+                print(
+                    "two to three laps beyond      : "
+                    f"{int(((valid_lead >= (horizon + 2)) & (valid_lead <= (horizon + 3))).sum())}"
+                )
+                print(
+                    "four or more laps beyond      : "
+                    f"{int((valid_lead >= (horizon + 4)).sum())}"
+                )
+
+            if "pit_in_window_before_consumption" in no_match.columns:
+                consumed = int(no_match["pit_in_window_before_consumption"].fillna(False).sum())
+                print(f"pit in window but already used : {consumed}")
+
+        matched_but_excluded = excluded[excluded["matched_pit_lap"].notna()].copy()
+        if not matched_but_excluded.empty:
+            print("\nmatched-but-excluded diagnostics")
+            print(f"rows with matched pit lap       : {len(matched_but_excluded)}")
+            matched_reason = matched_but_excluded["exclusion_reason"].fillna("MISSING_REASON").value_counts()
+            for reason, count in matched_reason.items():
+                print(f"{reason}: {int(count)}")
 
 
 def parse_args() -> argparse.Namespace:

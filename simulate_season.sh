@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-YEAR=2023
+YEAR_ARG=""
 SPEED=100
 SESSION="R"
 RACES_FILTER=""
@@ -75,7 +75,7 @@ consolidate_sink_outputs() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--year)
-		YEAR="$2"
+		YEAR_ARG="$2"
 		shift 2
 		;;
 	--speed)
@@ -101,12 +101,24 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+YEAR_EXPLICIT=0
+if [ -n "$YEAR_ARG" ]; then
+	YEAR_EXPLICIT=1
+	YEARS=("$YEAR_ARG")
+else
+	YEARS=(2022 2023 2024)
+fi
+
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 
 echo "=========================================="
 echo " F1 Season Simulator"
-echo " Year:   $YEAR"
+if [ "$YEAR_EXPLICIT" -eq 1 ]; then
+	echo " Year:   ${YEARS[0]}"
+else
+	echo " Years:  ${YEARS[*]}"
+fi
 echo " Speed:  ${SPEED}x"
 echo " Buffer: ${POST_RACE_BUFFER_SECONDS}s"
 echo "=========================================="
@@ -137,128 +149,142 @@ echo "[5/10] Submitting Flink job..."
 docker exec flink-jobmanager flink run \
 	-d /opt/flink/usrlib/f1-stream-processor.jar
 
-# dynamically fetch the full race calendar for the given year from fastf1.
+# dynamically fetch the full race calendar for each selected year from fastf1.
 # filters to actual race weekends (excludes pre-season testing).
 # -T disables pseudo-tty so stdout capture works correctly.
-echo "[6/10] Fetching $YEAR race calendar from fastf1..."
-RACES_JSON=$(docker compose -f "$COMPOSE_FILE" run --rm -T producer \
-	python -c "
+
+TOTAL_RACES=0
+TOTAL_FAILED=0
+
+for YEAR in "${YEARS[@]}"; do
+	echo "[6/10] Fetching $YEAR race calendar from fastf1..."
+	RACES_JSON=$(docker compose -f "$COMPOSE_FILE" run --rm -T producer \
+		python -c "
 import fastf1, json
 schedule = fastf1.get_event_schedule($YEAR, include_testing=False)
 races = schedule[schedule['EventFormat'].isin(['conventional', 'sprint_shootout', 'sprint_qualifying', 'sprint'])]['EventName'].tolist()
 print(json.dumps(races))
 ")
 
-if [ -z "$RACES_JSON" ] || [ "$RACES_JSON" = "[]" ]; then
-	echo "ERROR: no races found for $YEAR"
-	exit 1
-fi
-
-# parse json array into bash array using stdin, avoids shell quoting issues
-RACES=()
-while IFS= read -r race; do
-	[ -n "$race" ] && RACES+=("$race")
-done < <(
-	printf '%s\n' "$RACES_JSON" | docker compose -f "$COMPOSE_FILE" run --rm -T producer \
-		python -c "import json, sys; [print(r) for r in json.load(sys.stdin)]"
-)
-
-# if --races filter is set, only keep races that match the comma-separated list
-if [ -n "$RACES_FILTER" ]; then
-	IFS=',' read -ra FILTER_LIST <<<"$RACES_FILTER"
-	FILTERED=()
-	for RACE in "${RACES[@]}"; do
-		for F in "${FILTER_LIST[@]}"; do
-			# trim leading/trailing whitespace from filter entry
-			F="${F#${F%%[![:space:]]*}}"
-			F="${F%${F##*[![:space:]]}}"
-			if [ "$RACE" = "$F" ]; then
-				FILTERED+=("$RACE")
-				break
-			fi
-		done
-	done
-	RACES=("${FILTERED[@]}")
-fi
-
-TOTAL=${#RACES[@]}
-
-echo "=========================================="
-echo " F1 Season Simulator"
-echo " Year:   $YEAR"
-echo " Speed:  ${SPEED}x"
-echo " Races:  $TOTAL"
-echo "=========================================="
-
-echo "[7/10] Running full-season replay..."
-
-FAILED=0
-for i in "${!RACES[@]}"; do
-	RACE="${RACES[$i]}"
-	NUM=$((i + 1))
-	echo ""
-	echo "[$NUM/$TOTAL] $RACE"
-	echo "------------------------------------------"
-
-	echo "       Stage 1/2, prepare parquet"
-	docker compose -f "$COMPOSE_FILE" run --rm producer \
-		python f1-telemetry-producer/src/prepare_race.py \
-		--year "$YEAR" \
-		--race "$RACE" \
-		--session "$SESSION" \
-		--post-race-buffer-seconds "$POST_RACE_BUFFER_SECONDS" || {
-		echo "WARNING: prepare failed for $RACE, skipping..."
-		FAILED=$((FAILED + 1))
+	if [ -z "$RACES_JSON" ] || [ "$RACES_JSON" = "[]" ]; then
+		if [ "$YEAR_EXPLICIT" -eq 1 ]; then
+			echo "ERROR: no races found for $YEAR"
+			exit 1
+		fi
+		echo "WARNING: no races found for $YEAR, skipping year"
 		continue
-	}
-
-	echo "       Stage 2/2, stream to kafka"
-	docker compose -f "$COMPOSE_FILE" run --rm producer \
-		python f1-telemetry-producer/src/stream_race.py \
-		--year "$YEAR" \
-		--race "$RACE" \
-		--session "$SESSION" \
-		--speed "$SPEED" || {
-		echo "WARNING: stream failed for $RACE, skipping..."
-		FAILED=$((FAILED + 1))
-		continue
-	}
-
-	# brief pause between races so flink can drain pending events and
-	# advance watermarks past any state timers from the completed race.
-	# race timestamps are weeks apart, so watermarks jump forward cleanly.
-	if [ "$NUM" -lt "$TOTAL" ]; then
-		echo "       Draining (15s)..."
-		sleep 15
 	fi
-done
 
-# flink's FileSink produces files like "pit-eval-0-0.jsonl" plus transient
-# .inprogress parts while the stream is active.
-# under date-partitioned directories (e.g., 2026-03-06--14/). consolidate
-# all part-files into a single jsonl per sink type with a clear name.
-echo "[8/10] Consolidating sink outputs..."
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+	RACES=()
+	while IFS= read -r race; do
+		[ -n "$race" ] && RACES+=("$race")
+	done < <(
+		printf '%s\n' "$RACES_JSON" | docker compose -f "$COMPOSE_FILE" run --rm -T producer \
+			python -c "import json, sys; [print(r) for r in json.load(sys.stdin)]"
+	)
 
-for SINK_DIR in pit_evals pit_suggestions tire_drops lift_coast drop_zones ml_features; do
-	consolidate_sink_outputs "$SINK_DIR" "$YEAR" "$TIMESTAMP"
+	if [ -n "$RACES_FILTER" ]; then
+		IFS=',' read -ra FILTER_LIST <<<"$RACES_FILTER"
+		FILTERED=()
+		for RACE in "${RACES[@]}"; do
+			for F in "${FILTER_LIST[@]}"; do
+				F="${F#${F%%[![:space:]]*}}"
+				F="${F%${F##*[![:space:]]}}"
+				if [ "$RACE" = "$F" ]; then
+					FILTERED+=("$RACE")
+					break
+				fi
+			done
+		done
+		RACES=("${FILTERED[@]}")
+	fi
+
+	TOTAL=${#RACES[@]}
+	if [ "$TOTAL" -eq 0 ]; then
+		echo "WARNING: no races selected for $YEAR after filtering, skipping year"
+		continue
+	fi
+
+	echo "=========================================="
+	echo " F1 Season Simulator"
+	echo " Year:   $YEAR"
+	echo " Speed:  ${SPEED}x"
+	echo " Races:  $TOTAL"
+	echo "=========================================="
+
+	echo "[7/10] Running full-season replay for $YEAR..."
+
+	FAILED=0
+	for i in "${!RACES[@]}"; do
+		RACE="${RACES[$i]}"
+		NUM=$((i + 1))
+		echo ""
+		echo "[$NUM/$TOTAL][$YEAR] $RACE"
+		echo "------------------------------------------"
+
+		echo "       Stage 1/2, prepare parquet"
+		docker compose -f "$COMPOSE_FILE" run --rm producer \
+			python f1-telemetry-producer/src/prepare_race.py \
+			--year "$YEAR" \
+			--race "$RACE" \
+			--session "$SESSION" \
+			--post-race-buffer-seconds "$POST_RACE_BUFFER_SECONDS" || {
+			echo "WARNING: prepare failed for $RACE, skipping..."
+			FAILED=$((FAILED + 1))
+			continue
+		}
+
+		echo "       Stage 2/2, stream to kafka"
+		docker compose -f "$COMPOSE_FILE" run --rm producer \
+			python f1-telemetry-producer/src/stream_race.py \
+			--year "$YEAR" \
+			--race "$RACE" \
+			--session "$SESSION" \
+			--speed "$SPEED" || {
+			echo "WARNING: stream failed for $RACE, skipping..."
+			FAILED=$((FAILED + 1))
+			continue
+		}
+
+		if [ "$NUM" -lt "$TOTAL" ]; then
+			echo "       Draining (15s)..."
+			sleep 15
+		fi
+	done
+
+	echo "[8/10] Consolidating sink outputs for $YEAR..."
+	TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+	for SINK_DIR in pit_evals pit_suggestions tire_drops lift_coast drop_zones ml_features; do
+		consolidate_sink_outputs "$SINK_DIR" "$YEAR" "$TIMESTAMP"
+	done
+
+	PROCESSED=$((TOTAL - FAILED))
+	TOTAL_RACES=$((TOTAL_RACES + TOTAL))
+	TOTAL_FAILED=$((TOTAL_FAILED + FAILED))
+
+	echo ""
+	echo " Year summary: $YEAR"
+	echo " Processed: $PROCESSED/$TOTAL races"
+	if [ "$FAILED" -gt 0 ]; then
+		echo " Failed:    $FAILED"
+	fi
+	echo " Merged JSONLs: data_lake/pit_evals_${YEAR}_season_${TIMESTAMP}.jsonl"
+	echo "                data_lake/pit_suggestions_${YEAR}_season_${TIMESTAMP}.jsonl"
 done
 
 echo ""
 echo "[9/10] Final summary"
 echo "=========================================="
 echo " Season simulation complete."
-echo " Processed: $((TOTAL - FAILED))/$TOTAL races"
-if [ "$FAILED" -gt 0 ]; then
-	echo " Failed:    $FAILED"
+echo " Processed: $((TOTAL_RACES - TOTAL_FAILED))/$TOTAL_RACES races"
+if [ "$TOTAL_FAILED" -gt 0 ]; then
+	echo " Failed:    $TOTAL_FAILED"
 fi
 echo ""
 echo " Dashboard:     http://localhost:8501"
 echo " Flink UI:      http://localhost:8081"
 echo " Raw output:    data_lake/{pit_evals,pit_suggestions,tire_drops,lift_coast,drop_zones,ml_features}/"
-echo " Merged JSONLs: data_lake/pit_evals_${YEAR}_season_${TIMESTAMP}.jsonl"
-echo "                 data_lake/pit_suggestions_${YEAR}_season_${TIMESTAMP}.jsonl"
-echo "                 data_lake/tire_drops_${YEAR}_season_${TIMESTAMP}.jsonl"
+echo " Merged JSONLs: data_lake/{pit_evals,pit_suggestions,tire_drops,lift_coast,drop_zones,ml_features}_{YEAR}_season_{TIMESTAMP}.jsonl"
 echo ""
 echo " Wait ~3 min for Flink's rolling policy to finalize the"
 echo " last JSONL file, then run the ML pipeline:"

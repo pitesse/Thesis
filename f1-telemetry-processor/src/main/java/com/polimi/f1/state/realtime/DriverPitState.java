@@ -13,7 +13,7 @@ import java.io.Serializable;
  */
 public class DriverPitState implements Serializable {
 
-    private static final long serialVersionUID = 2L;
+    private static final long serialVersionUID = 3L;
 
     // stint tracking
     private int currentStint = -1;
@@ -26,6 +26,11 @@ public class DriverPitState implements Serializable {
 
     // pace performance tracking
     private double lastPaceRatio = 0.0;  // (lapTime - stintBest) / stintBest
+    private double paceRatioDelta = 0.0; // current pace ratio minus previous valid ratio
+
+    // local rival-pressure tracking
+    private Double lastGapToCarAhead;
+    private double gapToCarAheadDelta = 0.0; // current gap minus previous gap (positive = losing front car)
 
     /**
      * default no-argument constructor required for flink pojo serialization.
@@ -141,10 +146,73 @@ public class DriverPitState implements Serializable {
         this.lastPaceRatio = lastPaceRatio;
     }
 
+    /**
+     * gets the pace ratio variation between the two latest valid laps.
+     *
+     * @return current pace ratio minus previous pace ratio
+     */
+    public double getPaceRatioDelta() {
+        return paceRatioDelta;
+    }
+
+    /**
+     * sets the pace ratio variation between the two latest valid laps.
+     *
+     * @param paceRatioDelta pace ratio delta
+     */
+    public void setPaceRatioDelta(double paceRatioDelta) {
+        this.paceRatioDelta = paceRatioDelta;
+    }
+
+    /**
+     * gets the last observed gap to the car ahead.
+     *
+     * @return gap in seconds, null if unavailable
+     */
+    public Double getLastGapToCarAhead() {
+        return lastGapToCarAhead;
+    }
+
+    /**
+     * sets the last observed gap to the car ahead.
+     *
+     * @param lastGapToCarAhead gap in seconds
+     */
+    public void setLastGapToCarAhead(Double lastGapToCarAhead) {
+        this.lastGapToCarAhead = lastGapToCarAhead;
+    }
+
+    /**
+     * gets the variation of gap to the car ahead between latest observations.
+     *
+     * @return current gap minus previous gap
+     */
+    public double getGapToCarAheadDelta() {
+        return gapToCarAheadDelta;
+    }
+
+    /**
+     * sets the variation of gap to the car ahead between latest observations.
+     *
+     * @param gapToCarAheadDelta current gap minus previous gap
+     */
+    public void setGapToCarAheadDelta(double gapToCarAheadDelta) {
+        this.gapToCarAheadDelta = gapToCarAheadDelta;
+    }
+
     @Override
     public String toString() {
         return String.format(
-                "DriverPitState{stint=%d, bestLap=%.3f, slowLaps=%d, compound='%s', tyreLife=%d, paceRatio=%.4f}",
-                currentStint, stintBestLap, consecutiveSlowLaps, lastCompound, lastTyreLife, lastPaceRatio);
+                "DriverPitState{stint=%d, bestLap=%.3f, slowLaps=%d, compound='%s', tyreLife=%d, paceRatio=%.4f, "
+                + "paceDelta=%.4f, gapAhead=%s, gapDelta=%.4f}",
+                currentStint,
+                stintBestLap,
+                consecutiveSlowLaps,
+                lastCompound,
+                lastTyreLife,
+                lastPaceRatio,
+                paceRatioDelta,
+                String.valueOf(lastGapToCarAhead),
+                gapToCarAheadDelta);
     }
 }

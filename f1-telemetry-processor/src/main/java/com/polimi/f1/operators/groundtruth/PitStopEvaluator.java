@@ -33,7 +33,7 @@ import com.polimi.f1.state.groundtruth.RivalSnapshot;
 // keyed by constant "RACE" for global field visibility.
 //
 // state machine:
-//   PENDING_SETTLE   -> driver just pitted, waiting for 4 completed green settle laps
+//   PENDING_SETTLE   -> driver just pitted, waiting for configured completed green settle laps
 //   PENDING_RIVAL    -> driver settled, waiting for net rivals to pit or offset timeout
 //   (resolved)       -> cycle complete, emit classification and remove state
 //
@@ -53,7 +53,7 @@ public class PitStopEvaluator
     private static final Logger LOG = LoggerFactory.getLogger(PitStopEvaluator.class);
 
     // required number of completed green laps after pit before evaluation
-    private static final int SETTLE_LAPS = 4;
+    private static final int SETTLE_LAPS = readIntSetting("PIT_EVAL_SETTLE_LAPS", 4, 2, 6);
     private static final int WARMUP_LAPS = 2;
 
     // safety timeout: 15 minutes event time to clear stale records
@@ -61,7 +61,7 @@ public class PitStopEvaluator
 
     private static final int RECENT_LAP_WINDOW = 3;
     private static final int RIVAL_LOOKBACK_EXTRA_LAPS = 2;
-    private static final int GAP_SEARCH_WINDOW = 3;
+    private static final int GAP_SEARCH_WINDOW = readIntSetting("PIT_EVAL_GAP_SEARCH_WINDOW", 3, 2, 6);
     private static final int TIMER_FALLBACK_LOOKBACK = 5;
     private static final int LEADER_REFERENCE_SEARCH_WINDOW = 2;
     private static final int MIN_PACE_FALLBACK_SAMPLES = 2;
@@ -93,7 +93,28 @@ public class PitStopEvaluator
     private static final String RESOLUTION_REFERENCE_FALLBACK = "REFERENCE_FALLBACK";
     private static final String RESOLUTION_RIVAL_PIT_PACE_SHIFT = "RIVAL_PIT_PACE_SHIFT";
     private static final String RESOLUTION_SAFETY_TIMER_PACE_SHIFT = "SAFETY_TIMER_PACE_SHIFT";
+    private static final String RESOLUTION_OFFSET_TIMEOUT_PACE_SHIFT = "OFFSET_TIMEOUT_PACE_SHIFT";
     private static final String RESOLUTION_POSITIONAL_FALLBACK = "POSITIONAL_FALLBACK";
+
+    private static int readIntSetting(String key, int defaultValue, int minValue, int maxValue) {
+        String raw = System.getProperty(key);
+        if (raw == null || raw.isBlank()) {
+            raw = System.getenv(key);
+        }
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+
+        try {
+            int parsed = Integer.parseInt(raw.trim());
+            if (parsed < minValue || parsed > maxValue) {
+                return defaultValue;
+            }
+            return parsed;
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
 
     // flat state: all lap events, key = "lapNumber:driver"
     private transient MapState<String, LapEvent> lapEvents;
@@ -143,6 +164,11 @@ public class PitStopEvaluator
                 = new MapStateDescriptor<>("stint-bests", String.class, Double.class);
         stintDesc.enableTimeToLive(ttlConfig);
         stintBests = getRuntimeContext().getMapState(stintDesc);
+
+        LOG.info(
+            "pit evaluator config, settleLaps={}, gapSearchWindow={}",
+            SETTLE_LAPS,
+            GAP_SEARCH_WINDOW);
     }
 
     private static String lapKey(int lap, String driver) {
@@ -419,6 +445,9 @@ public class PitStopEvaluator
                     baselineLap);
             Result result;
             if (gapDeltaPct == null) {
+                if (tryResolveOffsetTimeoutWithPaceShiftFallback(cycle, currentLap, baselineLap, out)) {
+                    return true;
+                }
                 result = Result.UNRESOLVED_MISSING_POST_GAP;
             } else if (isIncidentGapDeltaPct(gapDeltaPct)) {
                 result = Result.UNRESOLVED_INCIDENT_FILTER;
@@ -435,6 +464,47 @@ public class PitStopEvaluator
         }
 
         return false;
+    }
+
+    // offset timeout can still be resolved when directed gap is missing,
+    // use relative pace shift against the primary rival as a conservative proxy.
+    private boolean tryResolveOffsetTimeoutWithPaceShiftFallback(PitCycle cycle, int currentLap,
+            double baselineLap, Collector<PitStopEvaluationAlert> out) throws Exception {
+        if (cycle.getPrimaryRival() == null) {
+            return false;
+        }
+
+        int preAnchorLap = Math.max(1, cycle.getPitLap() - 1);
+        Double prePaceGap = findRelativePaceGapNearLap(
+                cycle.getDriver(), cycle.getPrimaryRival(), preAnchorLap, MIN_PACE_FALLBACK_SAMPLES);
+        if (prePaceGap == null) {
+            return false;
+        }
+
+        Double postPaceGap = findRelativePaceGapNearLap(
+                cycle.getDriver(), cycle.getPrimaryRival(), currentLap, MIN_PACE_FALLBACK_SAMPLES);
+        if (postPaceGap == null) {
+            return false;
+        }
+
+        Double gapDeltaPct = computeGapDeltaPct(prePaceGap, postPaceGap, baselineLap);
+        if (gapDeltaPct == null) {
+            return false;
+        }
+
+        Result result;
+        if (isIncidentGapDeltaPct(gapDeltaPct)) {
+            result = Result.UNRESOLVED_INCIDENT_FILTER;
+        } else if (gapDeltaPct < -DEFEND_BAND_PCT) {
+            result = Result.OFFSET_ADVANTAGE;
+        } else if (gapDeltaPct > DEFEND_BAND_PCT) {
+            result = Result.OFFSET_DISADVANTAGE;
+        } else {
+            result = Result.SUCCESS_DEFEND;
+        }
+
+        emitResult(cycle, postPaceGap, gapDeltaPct, result, RESOLUTION_OFFSET_TIMEOUT_PACE_SHIFT, true, out);
+        return true;
     }
 
     // same-strategy classification based on gap delta percentage
