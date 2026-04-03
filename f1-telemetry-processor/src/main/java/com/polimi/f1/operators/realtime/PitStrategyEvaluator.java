@@ -74,9 +74,13 @@ public class PitStrategyEvaluator
     private static final double EMIT_THRESHOLD = 40.0;
     private static final double GOOD_PIT_THRESHOLD = 60.0;
     private static final double PIT_NOW_THRESHOLD = 80.0;
+    private static final double PROMOTED_GOOD_PIT_MIN_SCORE = 52.0;
+    private static final double PROMOTED_GOOD_PIT_MIN_URGENCY = 10.0;
+    private static final double PROMOTED_GOOD_PIT_MIN_PACE = 8.0;
 
     // emit-gate: minimum score increase since last emission before re-emitting
     private static final double RE_EMIT_DELTA = 10.0;
+    private static final int GOOD_PIT_REEMIT_LAPS = 2;
     private static final double SLOW_LAP_RATIO_THRESHOLD = 0.005;
     private static final int RECENT_LAP_WINDOW = 3;
     private static final String CURRENT_STATUS_KEY = "current";
@@ -87,15 +91,16 @@ public class PitStrategyEvaluator
     private static final int TRACK_STATUS_SCORE = 60;
 
     // pace curve: paceRatio at which score reaches 30 (fully degraded)
-    // ex: at 3% degradation vs stint best, pace score = 30
-    private static final double PACE_CEILING_RATIO = 0.03;
+    // this calibration follows heilmeier 2020 and carrasco 2023, react at narrower tire fade windows.
+    // ex: at 2% degradation vs stint best, pace score reaches the ceiling.
+    private static final double PACE_CEILING_RATIO = 0.02;
 
     // traffic thresholds (seconds)
     private static final double CLEAN_AIR_GAP = 3.0;
     private static final double DRS_THRESHOLD = 1.0;
 
-    // urgency: quadratic ramp starts at 50% of max stint
-    private static final double URGENCY_ONSET_RATIO = 0.5;
+    // urgency starts later to reduce premature calls, this follows carrasco 2023 window timing logic.
+    private static final double URGENCY_ONSET_RATIO = 0.70;
 
     // tyre life bonus for easy pass of car ahead with old tires
     private static final int EASY_PASS_TYRE_LIFE = 25;
@@ -141,6 +146,9 @@ public class PitStrategyEvaluator
 
     // emit-gate: track status at last emission per driver
     private transient MapState<String, String> lastEmittedTrackStatus;
+
+    // emit-gate: lap number at last emission per driver
+    private transient MapState<String, Integer> lastEmittedLap;
 
     // per-driver peak score tracking for LOST_CHANCE detection
     private transient MapState<String, Double> peakScores;
@@ -191,6 +199,11 @@ public class PitStrategyEvaluator
                 = new MapStateDescriptor<>("strategy-emit-track-status", Types.STRING, Types.STRING);
         emitTsDesc.enableTimeToLive(ttlConfig);
         lastEmittedTrackStatus = getRuntimeContext().getMapState(emitTsDesc);
+
+        MapStateDescriptor<String, Integer> emitLapDesc
+            = new MapStateDescriptor<>("strategy-emit-lap", Types.STRING, Types.INT);
+        emitLapDesc.enableTimeToLive(ttlConfig);
+        lastEmittedLap = getRuntimeContext().getMapState(emitLapDesc);
 
         MapStateDescriptor<String, Double> peakDesc
                 = new MapStateDescriptor<>("strategy-peak-scores", String.class, Double.class);
@@ -427,9 +440,14 @@ public class PitStrategyEvaluator
             }
 
             SuggestionLabel label = classifyScore(totalScore);
+            if (shouldPromoteMonitorToGoodPit(
+                    label, totalScore, paceScore, urgencyScore, trackStatusScore)) {
+                label = SuggestionLabel.GOOD_PIT;
+            }
 
             // emit-gate: check if we should suppress this alert
-            if (!shouldEmit(driver, current.getStint(), totalScore, currentTrackStatus, label)) {
+            if (!shouldEmit(driver, current.getStint(), current.getLapNumber(),
+                    totalScore, currentTrackStatus, label)) {
                 continue;
             }
 
@@ -437,6 +455,7 @@ public class PitStrategyEvaluator
             lastEmittedScore.put(driver, totalScore);
             lastEmittedStint.put(driver, current.getStint());
             lastEmittedTrackStatus.put(driver, currentTrackStatus);
+            lastEmittedLap.put(driver, current.getLapNumber());
 
             emitAlert(current, totalScore, paceScore, trackStatusScore,
                     traffic, strategyPenalty, urgencyScore, endOfRacePenalty,
@@ -480,16 +499,22 @@ public class PitStrategyEvaluator
     }
 
     // emit-gate: suppresses re-emission unless score escalated or track status changed
-    private boolean shouldEmit(String driver, int currentStint, double currentScore,
+    private boolean shouldEmit(String driver, int currentStint, int currentLap, double currentScore,
             String currentTrackStatus, SuggestionLabel currentLabel) throws Exception {
         Integer prevStint = lastEmittedStint.get(driver);
         Double prevScore = lastEmittedScore.get(driver);
+        Integer prevLap = lastEmittedLap.get(driver);
 
         // first emission ever, or new stint -> always emit
         if (prevStint == null || prevStint != currentStint) {
             return true;
         }
         if (prevScore == null) {
+            return true;
+        }
+
+        // this follows pit wall escalation practice, once we are at PIT_NOW we keep repeating box call.
+        if (currentLabel == SuggestionLabel.PIT_NOW) {
             return true;
         }
 
@@ -506,7 +531,15 @@ public class PitStrategyEvaluator
         }
 
         // score moved enough in either direction, emit escalation or downgrade
-        return Math.abs(currentScore - prevScore) >= RE_EMIT_DELTA;
+        if (Math.abs(currentScore - prevScore) >= RE_EMIT_DELTA) {
+            return true;
+        }
+
+        // this follows event-time window persistence, keep GOOD_PIT visible every few laps.
+        return currentLabel == SuggestionLabel.GOOD_PIT
+                && prevLabel == SuggestionLabel.GOOD_PIT
+                && prevLap != null
+                && (currentLap - prevLap) >= GOOD_PIT_REEMIT_LAPS;
     }
 
     // classifies continuous score into discrete label for pit wall decision
@@ -518,6 +551,25 @@ public class PitStrategyEvaluator
             return SuggestionLabel.GOOD_PIT;
         }
         return SuggestionLabel.MONITOR;
+    }
+
+    // this reasoning is from heilmeier 2020 and carrasco 2023,
+    // promote near-threshold monitor to good_pit only when tire and pace signals agree.
+    private static boolean shouldPromoteMonitorToGoodPit(
+            SuggestionLabel label,
+            double totalScore,
+            double paceScore,
+            double urgencyScore,
+            int trackStatusScore) {
+        if (label != SuggestionLabel.MONITOR) {
+            return false;
+        }
+        if (trackStatusScore > 0) {
+            return false;
+        }
+        return totalScore >= PROMOTED_GOOD_PIT_MIN_SCORE
+                && paceScore >= PROMOTED_GOOD_PIT_MIN_PACE
+                && urgencyScore >= PROMOTED_GOOD_PIT_MIN_URGENCY;
     }
 
     // continuous pace score: power 1.5 curve.
@@ -639,9 +691,9 @@ public class PitStrategyEvaluator
         return result;
     }
 
-    // continuous urgency score: quadratic ramp starting at 50% of max stint.
-    // zero until tires are halfway through expected life, then accelerates.
-    // ex: 70% stint -> 4.8, 90% stint -> 19.2, 100%+ -> 30.0
+    // continuous urgency score: quadratic ramp starting at 70% of max stint.
+    // zero until the late stint window, then accelerates.
+    // ex: 70% stint -> 0.0, 85% stint -> 7.5, 95% stint -> 20.8, 100%+ -> 30.0
     private double computeUrgencyScore(LapEvent current) throws Exception {
         String compound = current.getCompound();
         int tyreAge = current.getTyreLife();
