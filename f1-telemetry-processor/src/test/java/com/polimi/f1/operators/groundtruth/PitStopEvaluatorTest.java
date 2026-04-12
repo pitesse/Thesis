@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -224,6 +225,31 @@ class PitStopEvaluatorTest {
         assertEquals("OFFSET_TIMEOUT", verEval.getResolvedVia());
     }
 
+    // when offset timeout has no directed gap reconstruction, relative pace shift can still resolve.
+    @Test
+    void offsetTimeoutPaceShiftFallback_whenCurrentGapMissing_emitsOffsetAdvantage() throws Exception {
+        int totalLaps = 50;
+        feedGreenLapsTotal("VER", "LEC", 5, 9, 82.0, 81.5, totalLaps);
+
+        process(makeLap("LEC", 10, 1, "HARD", 10, null, null, null, "1", totalLaps, 1), tsFast(10));
+        process(makeLapWithPit("VER", 10, 2, "SOFT", 9, 100.0, null, 3.0, "1", totalLaps, 1), tsFast(10));
+
+        // keep rivals far apart after the pit, directed gap reconstruction is unavailable.
+        for (int l = 11; l <= 26; l++) {
+            process(makeGreenLap("LEC", l, 1, "HARD", l, 82.6, null, totalLaps, 1), tsFast(l));
+            process(makeGreenLap("VER", l, 10, "HARD", l - 10, 81.1, 1.2, totalLaps, 2), tsFast(l));
+        }
+
+        List<PitStopEvaluationAlert> results = extractResults();
+        PitStopEvaluationAlert verEval = findByDriver(results, "VER");
+        assertNotNull(verEval, "VER evaluation should exist after offset timeout fallback");
+        assertEquals(Result.OFFSET_ADVANTAGE, verEval.getResult());
+        assertEquals("OFFSET_TIMEOUT_PACE_SHIFT", verEval.getResolvedVia());
+        assertTrue(verEval.isOffsetStrategy());
+        assertNotNull(verEval.getGapDeltaPct());
+        assertTrue(verEval.getGapDeltaPct() < -0.5, "offset pace-shift should show strategic gain");
+    }
+
     // no pit entry events -> no evaluations emitted
     @Test
     void noPitEntry_noOutput() throws Exception {
@@ -305,9 +331,172 @@ class PitStopEvaluatorTest {
         assertNotNull(verEval.getPrePitGapBehind());
     }
 
+    // warmup-lap pit entries are explicitly separated from strategic labels.
+    @Test
+    void warmupPit_emitsMissingPreGapWithEarlyLapFilter() throws Exception {
+        process(makeLapWithPit("VER", 2, 2, "SOFT", 1, 20.0, null, 1.0, "1", 51, 1), ts(2));
+
+        List<PitStopEvaluationAlert> results = extractResults();
+        PitStopEvaluationAlert verEval = findByDriver(results, "VER");
+        assertNotNull(verEval, "warmup pit should emit unresolved record");
+        assertEquals(Result.UNRESOLVED_MISSING_PRE_GAP, verEval.getResult());
+        assertEquals("EARLY_LAP_FILTER", verEval.getResolvedVia());
+    }
+
+    // extreme gap movements are filtered into incident-like unresolved labels.
+    @Test
+    void incidentLikeGapDelta_emitsUnresolvedIncidentFilter() throws Exception {
+        feedGreenLaps("VER", "LEC", 15, 19, 82.0, 81.5);
+
+        process(makeLap("LEC", 20, 1, "MEDIUM", 10, null, null, null, "1", 51, 1), ts(20));
+        process(makeLapWithPit("VER", 20, 2, "SOFT", 19, 100.0, null, 2.0, "1", 51, 1), ts(20));
+
+        for (int l = 21; l <= 24; l++) {
+            process(makeLap("LEC", l, 1, "MEDIUM", 10 + (l - 20), null, null, null, "1", 51, 1), ts(l));
+            process(makeLap("VER", l, 2, "HARD", l - 20, null, null, 10.0, "1", 51, 2), ts(l));
+        }
+
+        process(makeLapWithPit("LEC", 25, 1, "MEDIUM", 15, 200.0, null, null, "1", 51, 1), ts(25));
+        process(makeLap("VER", 25, 1, "HARD", 5, null, null, null, "1", 51, 2), ts(25));
+
+        for (int l = 26; l <= 29; l++) {
+            process(makeLap("LEC", l, 1, "HARD", l - 25, null, null, null, "1", 51, 2), ts(l));
+            process(makeLap("VER", l, 2, "HARD", 5 + (l - 25), null, null, 20.0, "1", 51, 2), ts(l));
+        }
+
+        List<PitStopEvaluationAlert> results = extractResults();
+        PitStopEvaluationAlert verEval = findByDriver(results, "VER");
+        assertNotNull(verEval, "VER evaluation should exist");
+        assertEquals(Result.UNRESOLVED_INCIDENT_FILTER, verEval.getResult());
+        assertEquals("RIVAL_PIT", verEval.getResolvedVia());
+    }
+
+    // when post-gap cannot be reconstructed, evaluator can salvage with pace-shift
+    // if both drivers have enough clean laps around pre and post anchors.
+    @Test
+    void rivalPitPaceShiftFallback_whenPostGapMissing_emitsStrategicLabel() throws Exception {
+        feedGreenLaps("VER", "LEC", 15, 19, 82.0, 81.5);
+
+        process(makeLap("LEC", 20, 1, "MEDIUM", 10, null, null, null, "1", 51, 1), tsFast(20));
+        process(makeLapWithPit("VER", 20, 2, "SOFT", 19, 100.0, null, 2.0, "1", 51, 1), tsFast(20));
+
+        for (int l = 21; l <= 24; l++) {
+            process(makeGreenLap("LEC", l, 1, "MEDIUM", 10 + (l - 20), 81.7, null, 51, 1), tsFast(l));
+            process(makeGreenLap("VER", l, 10, "HARD", l - 20, 81.1, 0.8, 51, 2), tsFast(l));
+        }
+
+        process(makeLapWithPit("LEC", 25, 1, "MEDIUM", 15, 200.0, null, null, "1", 51, 1), tsFast(25));
+        process(makeLap("VER", 25, 10, "HARD", 5, null, null, 0.8, "1", 51, 2), tsFast(25));
+
+        // keep drivers far apart in position so direct gap reconstruction is unavailable.
+        for (int l = 26; l <= 32; l++) {
+            process(makeGreenLap("LEC", l, 1, "HARD", l - 25, 82.1, null, 51, 2), tsFast(l));
+            process(makeGreenLap("VER", l, 10, "HARD", 5 + (l - 25), 80.9, 0.8, 51, 2), tsFast(l));
+        }
+
+        List<PitStopEvaluationAlert> results = extractResults();
+        PitStopEvaluationAlert verEval = findByDriver(results, "VER");
+        assertNotNull(verEval, "VER evaluation should exist");
+        assertEquals(Result.SUCCESS_UNDERCUT, verEval.getResult());
+        assertEquals("RIVAL_PIT_PACE_SHIFT", verEval.getResolvedVia());
+        assertNotNull(verEval.getGapDeltaPct());
+        assertTrue(verEval.getGapDeltaPct() < -0.5, "pace-shift should show clear gain");
+    }
+
+    // fallback stays conservative, missing pace evidence must remain unresolved.
+    @Test
+    void rivalPitPaceShiftFallback_withoutPaceEvidence_staysUnresolved() throws Exception {
+        feedGreenLaps("VER", "LEC", 15, 19, 82.0, 81.5);
+
+        process(makeLap("LEC", 20, 1, "MEDIUM", 10, null, null, null, "1", 51, 1), tsFast(20));
+        process(makeLapWithPit("VER", 20, 2, "SOFT", 19, 100.0, null, 2.0, "1", 51, 1), tsFast(20));
+
+        for (int l = 21; l <= 24; l++) {
+            process(makeLap("LEC", l, 1, "MEDIUM", 10 + (l - 20), null, null, null, "1", 51, 1), tsFast(l));
+            process(makeLap("VER", l, 10, "HARD", l - 20, null, null, 0.8, "1", 51, 2), tsFast(l));
+        }
+
+        process(makeLapWithPit("LEC", 25, 1, "MEDIUM", 15, 200.0, null, null, "1", 51, 1), tsFast(25));
+        process(makeLap("VER", 25, 10, "HARD", 5, null, null, 0.8, "1", 51, 2), tsFast(25));
+
+        for (int l = 26; l <= 32; l++) {
+            process(makeLap("LEC", l, 1, "HARD", l - 25, null, null, null, "1", 51, 2), tsFast(l));
+            process(makeLap("VER", l, 10, "HARD", 5 + (l - 25), null, null, 0.8, "1", 51, 2), tsFast(l));
+        }
+
+        List<PitStopEvaluationAlert> results = extractResults();
+        PitStopEvaluationAlert verEval = findByDriver(results, "VER");
+        assertNotNull(verEval, "VER evaluation should exist");
+        assertEquals(Result.UNRESOLVED_MISSING_POST_GAP, verEval.getResult());
+        assertEquals("INSUFFICIENT_DATA", verEval.getResolvedVia());
+    }
+
+    // when both directed-gap and pace-shift fail, clear ordinal rival overtake is salvaged.
+    @Test
+    void rivalPitPositionalFallback_whenPostGapMissingAndOrderFlips_emitsStrategicLabel() throws Exception {
+        feedGreenLaps("VER", "LEC", 15, 19, 82.0, 81.5);
+
+        process(makeLap("LEC", 20, 1, "MEDIUM", 10, null, null, null, "1", 51, 1), tsFast(20));
+        process(makeLapWithPit("VER", 20, 2, "SOFT", 19, 100.0, null, 2.0, "1", 51, 1), tsFast(20));
+
+        for (int l = 21; l <= 24; l++) {
+            process(makeLap("LEC", l, 1, "MEDIUM", 10 + (l - 20), null, null, null, "1", 51, 1), tsFast(l));
+            process(makeLap("VER", l, 10, "HARD", l - 20, null, null, 0.8, "1", 51, 2), tsFast(l));
+        }
+
+        process(makeLapWithPit("LEC", 25, 1, "MEDIUM", 15, 200.0, null, null, "1", 51, 1), tsFast(25));
+        process(makeLap("VER", 25, 10, "HARD", 5, null, null, 0.8, "1", 51, 2), tsFast(25));
+
+        // no P5 events are emitted, directed gap cannot be reconstructed at comparison laps.
+        for (int l = 26; l <= 32; l++) {
+            process(makeLap("VER", l, 4, "HARD", 5 + (l - 25), null, null, 1.2, "1", 51, 2), tsFast(l));
+            process(makeLap("LEC", l, 6, "HARD", l - 25, null, null, 1.1, "1", 51, 2), tsFast(l));
+        }
+
+        List<PitStopEvaluationAlert> results = extractResults();
+        PitStopEvaluationAlert verEval = findByDriver(results, "VER");
+        assertNotNull(verEval, "VER evaluation should exist");
+        assertEquals(Result.SUCCESS_UNDERCUT, verEval.getResult());
+        assertEquals("POSITIONAL_FALLBACK", verEval.getResolvedVia());
+        assertNull(verEval.getGapDeltaPct(), "positional fallback does not fabricate time delta");
+    }
+
+    // positional fallback stays conservative when pre and post rival order is unchanged.
+    @Test
+    void rivalPitPositionalFallback_whenOrderUnchanged_staysUnresolved() throws Exception {
+        feedGreenLaps("VER", "LEC", 15, 19, 82.0, 81.5);
+
+        process(makeLap("LEC", 20, 1, "MEDIUM", 10, null, null, null, "1", 51, 1), tsFast(20));
+        process(makeLapWithPit("VER", 20, 2, "SOFT", 19, 100.0, null, 2.0, "1", 51, 1), tsFast(20));
+
+        for (int l = 21; l <= 24; l++) {
+            process(makeLap("LEC", l, 1, "MEDIUM", 10 + (l - 20), null, null, null, "1", 51, 1), tsFast(l));
+            process(makeLap("VER", l, 8, "HARD", l - 20, null, null, 0.8, "1", 51, 2), tsFast(l));
+        }
+
+        process(makeLapWithPit("LEC", 25, 1, "MEDIUM", 15, 200.0, null, null, "1", 51, 1), tsFast(25));
+        process(makeLap("VER", 25, 8, "HARD", 5, null, null, 0.8, "1", 51, 2), tsFast(25));
+
+        // driver stays behind rival, and missing gapToCarAhead on VER keeps directed gap unavailable.
+        for (int l = 26; l <= 32; l++) {
+            process(makeLap("LEC", l, 4, "HARD", l - 25, null, null, 1.2, "1", 51, 2), tsFast(l));
+            process(makeLap("VER", l, 5, "HARD", 5 + (l - 25), null, null, null, "1", 51, 2), tsFast(l));
+        }
+
+        List<PitStopEvaluationAlert> results = extractResults();
+        PitStopEvaluationAlert verEval = findByDriver(results, "VER");
+        assertNotNull(verEval, "VER evaluation should exist");
+        assertEquals(Result.UNRESOLVED_MISSING_POST_GAP, verEval.getResult());
+        assertEquals("INSUFFICIENT_DATA", verEval.getResolvedVia());
+    }
+
     // --- helpers ---
     private static long ts(int lap) {
         return T0 + (lap * 90_000L);
+    }
+
+    private static long tsFast(int lap) {
+        return T0 + (lap * 60_000L);
     }
 
     private void process(LapEvent event, long timestamp) throws Exception {

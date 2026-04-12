@@ -52,9 +52,11 @@ import com.polimi.f1.utils.JsonSerializer;
 // module c (real-time alerts): lift & coast cep, tire drop detection, drop zone analysis
 public class F1StreamingJob {
 
-    private static final String KAFKA_BOOTSTRAP = "kafka:29092";
+        private static final String KAFKA_BOOTSTRAP = "kafka:29092";
+        private static final String TOPIC_ALERTS = "f1-alerts";
+        private static final String TOPIC_ML_FEATURES = "f1-ml-features";
 
-    public static void main(String[] args) throws Exception {
+        public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         // checkpointing every 10s: required for FileSink to commit in-progress part files
@@ -352,6 +354,23 @@ public class F1StreamingJob {
 
         mlFeaturesJsonStream.sinkTo(mlFeaturesSink).name("FileSink: ML Features").uid("sink-ml-features");
 
+        // kafka sink for online ml serving.
+        // this mirrors the exact feature payload used for offline training to reduce
+        // training-serving skew in the first live comparison phase.
+        KafkaSink<String> mlFeaturesKafkaSink = KafkaSink.<String>builder()
+                .setBootstrapServers(KAFKA_BOOTSTRAP)
+                .setRecordSerializer(
+                        KafkaRecordSerializationSchema.builder()
+                                .setTopic(TOPIC_ML_FEATURES)
+                                .setValueSerializationSchema(new SimpleStringSchema())
+                                .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
+
+        mlFeaturesJsonStream.sinkTo(mlFeaturesKafkaSink)
+                .name("KafkaSink: ML Features")
+                .uid("sink-kafka-ml-features");
+
         // kafka sink (route alerts to dashboard via f1-alerts topic)
         // the dashboard subscribes to f1-alerts to display live strategic alerts.
         // all three alert types are serialized to json, unioned into a single stream,
@@ -388,7 +407,7 @@ public class F1StreamingJob {
                 .setBootstrapServers(KAFKA_BOOTSTRAP)
                 .setRecordSerializer(
                         KafkaRecordSerializationSchema.builder()
-                                .setTopic("f1-alerts")
+                                .setTopic(TOPIC_ALERTS)
                                 .setValueSerializationSchema(new SimpleStringSchema())
                                 .build())
                 .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)

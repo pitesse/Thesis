@@ -1,0 +1,96 @@
+\chapter{Solution and Design}
+\label{ch:solution_and_design}
+
+\section{System Architecture Overview}
+
+\textbf{Template intent.} Describe end-to-end architecture in one page.
+
+\begin{itemize}
+	\item Producer, broker, stream processor, data lake, and dashboard roles.
+	\item Explain how architecture choices support reproducibility and fair comparisons.
+\end{itemize}
+
+Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka}.
+
+\section{Dataflow and Processing Topology}
+
+\textbf{Template intent.} Specify operator order and data dependencies.
+
+\begin{itemize}
+	\item Event-time path from ingestion to features/alerts/labels.
+	\item Stateful operators and where context enters the pipeline.
+	\item Contracts for sinks used by audit and ML.
+\end{itemize}
+
+\subsection{Dual-Consumer Streaming Contract (Flink + ML Placeholder)}
+
+\textbf{Template intent.} Reserve this subsection for deployment-consistency design notes.
+
+\begin{itemize}
+	\item State contract: Flink computes stateful lap-context features once and emits the same feature payload to offline sink and online topic (\texttt{f1-ml-features}).
+	\item Document event-time ordering and watermark assumptions used to keep feature timestamps point-in-time consistent across replay and live serving.
+	\item Describe Kafka decoupling between heuristic processing and ML inference consumer to preserve independent runtime behavior under the same telemetry stream.
+	\item Keep raw-telemetry serving as a deferred ablation track after consistency and fairness gates are validated.
+\end{itemize}
+
+Suggested references: \citep{carbone2015flink, akidau2015dataflow, kreps2011kafka, widanage2019indy500}.
+
+\section{Heuristic Strategy Engine Design}
+
+\textbf{Template intent.} Explain the handcrafted strategy logic at a conceptual level.
+
+\begin{itemize}
+	\item Inputs, decision factors, and prioritization logic.
+	\item Expected strengths and known failure modes.
+	\item Clarify this module as baseline and operational comparator.
+\end{itemize}
+
+\subsection{Pit-Cycle Label Resolution (Skeleton Notes)}
+
+\textbf{Template intent.} Keep this subsection structural and implementation-neutral in early drafts.
+
+\begin{itemize}
+	\item Document fallback hierarchy order: direct rival-gap path, near-lap recovery, pace-shift fallback, unresolved abstention.
+	\item Explain why conservative unresolved outcomes are preserved when evidence remains incomplete.
+	\item Link rationale to lap-time decomposition and online optimization framing.
+\end{itemize}
+
+Suggested references: \citep{heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
+
+\subsection{Timing-Pressure Actionability Alignment (Skeleton Notes)}
+
+\textbf{Template intent.} Record purpose and guardrails of timing-aware suggestion logic without locking final numeric detail.
+
+\begin{itemize}
+	\item Summarize timing-pressure signals (pace trend, gap trend, strategy deficit, rival reaction, traffic context).
+	\item Note green-condition actionability gating that downgrades weak early actionable alerts to monitoring.
+	\item Capture near-window re-emission intent when timing pressure materially increases.
+	\item Emphasize deterministic bounded behavior to keep the SDE baseline stable and auditable.
+\end{itemize}
+
+Suggested references: \citep{widanage2019indy500, heilmeier2020race, carrasco2023optimization, quiroga2024optimization, cappello2025statespace}.
+
+\section{Machine Learning Formulation}
+
+\textbf{Template intent.} Specify model-family choices and data protocol without reporting outcomes yet.
+
+\begin{itemize}
+	\item Candidate baselines (for example logistic/XGBoost and optional sequence model).
+	\item Feature groups, leakage controls, and temporal/grouped split strategy.
+	\item Calibration and thresholding plan for decision outputs.
+\end{itemize}
+
+Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, brookshire2024leakage, roberts2017cvstructured, platt1999probabilistic, guo2017calibration, kull2017beta}.
+
+\section{Comparison Protocol, Heuristic vs ML}
+
+\textbf{Template intent.} Define a fairness protocol before experiments.
+
+\begin{itemize}
+	\item Same replay windows, same data availability assumptions, same excluded contexts.
+	\item Use one shared feature contract for training and first live serving comparison to reduce training-serving skew.
+	\item Report both predictive quality and operational behavior.
+	\item Predefine significance testing and uncertainty reporting.
+\end{itemize}
+
+Suggested references: \citep{dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing}.

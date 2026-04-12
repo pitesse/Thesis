@@ -158,14 +158,15 @@ public class TireDropDetector extends KeyedProcessFunction<String, LapEvent, Tir
             if (consecutive >= CONSECUTIVE_REQUIRED) {
                 double delta = lapTimeSec - best;
                 out.collect(new TireDropAlert(
+                        lap.getRace(),
                         lap.getDriver(),
                         lap.getLapNumber(),
                         lap.getCompound(),
                         lap.getTyreLife(),
                         lapTimeSec,
                         best,
-                    delta,
-                    lap.getTrackStatus()
+                        delta,
+                        lap.getTrackStatus()
                 ));
                 // reset after emission so we don't fire every subsequent lap
                 consecutiveSlowLaps.update(0);

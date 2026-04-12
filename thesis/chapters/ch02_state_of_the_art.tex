@@ -1,0 +1,99 @@
+\chapter{State of the Art}
+\label{ch:state_of_the_art}
+
+\section{Streaming Data Analytics}
+
+\textbf{Template intent.} Summarize stream-processing principles relevant to this thesis.
+
+\begin{itemize}
+	\item Define unbounded data, event time, out-of-order events, watermarks, and correctness vs latency trade-off.
+	\item Explain why a replayed historical race can still be processed as an event stream.
+	\item Connect system guarantees to downstream ML reliability and reproducibility.
+\end{itemize}
+
+Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka}.
+
+\section{Complex Event Processing}
+
+\textbf{Template intent.} Explain CEP as the bridge between raw streams and tactical race signals.
+
+\begin{itemize}
+	\item Define patterns, windows, sequence constraints, and event-time matching.
+	\item Motivate CEP for lift-and-coast, tire-drop, and other race-state transitions.
+	\item Clarify how CEP outputs differ from ML outputs and why both are needed in your architecture.
+\end{itemize}
+
+Suggested references: \citep{akidau2015dataflow, carbone2015flink, widanage2019indy500}.
+
+\section{Platforms for Stream and Event Processing}
+\subsection{Apache Kafka}
+
+\textbf{Template intent.} Describe Kafka role in your system.
+
+\begin{itemize}
+	\item Topic partitioning, ordering assumptions, replayability, and decoupling of producers/consumers.
+	\item Why replay-by-offset is essential for deterministic audits and ML dataset regeneration.
+\end{itemize}
+
+Suggested references: \citep{kreps2011kafka}.
+
+\subsection{Apache Flink}
+
+\textbf{Template intent.} Describe Flink role in your system.
+
+\begin{itemize}
+	\item Event-time operators, stateful processing, checkpointing, and fault tolerance.
+	\item Why Flink is suitable for both online alerting and offline reproducible extraction.
+\end{itemize}
+
+Suggested references: \citep{carbone2015flink, akidau2015dataflow}.
+
+\subsection{Related Technologies and Trade-offs}
+
+\textbf{Template intent.} Briefly compare alternatives and justify your stack.
+
+\begin{itemize}
+	\item Compare latency and semantics trade-offs at a high level.
+	\item State why your selected stack best matches thesis goals: correctness, replayability, and integration simplicity.
+\end{itemize}
+
+Suggested references: \citep{widanage2019indy500}.
+
+\section{Machine Learning for Motorsport and Strategy Optimization}
+
+\textbf{Template intent.} Organize literature by paradigm, then by methodology quality.
+
+\begin{itemize}
+	\item Supervised classification paradigm for pit-stop timing.
+	\item Optimization/planning paradigm for tire and stop sequencing.
+	\item Reinforcement learning paradigm for sequential control.
+	\item Explicitly separate domain results from methodology quality (splits, metrics, calibration, significance).
+\end{itemize}
+
+Suggested references: \citep{sasikumar2025pitstop, hettmann2024datatopodium, dinh2025gradient, carrasco2023optimization, quiroga2024optimization, piccinotti2020openloop, thomas2025xrlf1}.
+
+Methodology anchors to cite in this section:
+\citep{brookshire2024leakage, roberts2017cvstructured, saito2015prroc, davis2006relationship, elkan2001costsensitive, guo2017calibration, platt1999probabilistic, kull2017beta, brier1950verification, dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing, gama2014drift, arora2024driftreview, bifet2007adwin, gomes2017arf, baenagarcia2006eddm}.
+
+\section{Applications in Formula 1 Analytics}
+
+\textbf{Template intent.} Focus on direct F1 evidence and identify operational gaps.
+
+\begin{itemize}
+	\item What has been done with public F1 data (features, targets, models, evaluation).
+	\item What is still missing (streaming deployment, fair heuristic-vs-ML comparison, robust validation design).
+	\item Position tire degradation modeling as supporting signal for pit-stop decisions.
+\end{itemize}
+
+Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, cappello2025statespace, heilmeier2020race}.
+
+\section{Summary and Research Gaps}
+
+\textbf{Template intent.} Close Chapter 2 with a short, explicit gap list that leads into Chapter 3.
+
+\begin{itemize}
+	\item Gap 1: Most published F1 ML evidence is batch-oriented.
+	\item Gap 2: Validation and leakage controls are often weak or under-reported.
+	\item Gap 3: Probability quality and statistical significance are rarely central.
+	\item Gap 4: Direct heuristic-vs-ML comparisons in a streaming setting are limited.
+\end{itemize}

@@ -92,6 +92,9 @@ Persist all outputs as JSON Lines for reproducible ML workflows:
                           ▼               ▼               ▼
                     FileSink JSONL    KafkaSink      Streamlit Dashboard
                      (data_lake/)     (f1-alerts)     (localhost:8501)
+
+                    Additional ML live path (Phase 3.1):
+                    f1-ml-features (Kafka) -> ml consumer -> f1-ml-predictions (Kafka)
 ```
 
 ### Two-Stage Python Producer
@@ -128,6 +131,11 @@ Labels include:
 - `FAILURE_PACE_DEFICIT`
 - `FAILURE_TRAFFIC`
 - `WEATHER_SURVIVAL_STOP`
+- `UNRESOLVED_MISSING_RIVAL`
+- `UNRESOLVED_MISSING_PRE_GAP`
+- `UNRESOLVED_MISSING_POST_GAP`
+- `UNRESOLVED_INVALID_BASELINE`
+- `UNRESOLVED_INCIDENT_FILTER`
 - `UNRESOLVED_INSUFFICIENT_DATA`
 
 ### Module C: Real-Time Alerts
@@ -151,14 +159,24 @@ All streams are persisted as JSONL (`.jsonl`) through Flink `FileSink.forRowForm
 | ML Features | `data_lake/ml_features/` | Denormalized lap-level ML features |
 | Debug Alerts | `data_lake/debug_alerts/` | Unified debug stream of all alerts |
 
+## Live ML Topics (Phase 3.1)
+
+The pipeline now exposes a dedicated feature topic for online ML serving.
+
+| Topic | Producer | Consumer | Purpose |
+|---|---|---|---|
+| `f1-ml-features` | Flink (`RivalIdentificationFunction` side output) | Python ML consumer | Feature payload parity between offline training and live serving |
+| `f1-ml-predictions` | Python ML consumer | Dashboard/analysis tools | Real-time prediction stream for heuristic vs ML comparison |
+
 ## Data Quality Contracts
 
 The pipeline enforces explicit output contracts to keep downstream ML behavior stable and reproducible.
 
 1. `ml_features.gapAhead` and `ml_features.gapBehind` are exported as non-negative magnitudes.
 2. `tire_drops` includes `trackStatus` for context-aware filtering.
-3. Pit stops on warm-up laps (`lapNumber <= 2`) are explicitly marked as `UNRESOLVED_INSUFFICIENT_DATA` via `EARLY_LAP_FILTER`.
-4. Pit-cycle classification uses strict guardrails (`SETTLE_LAPS`, incident thresholding, safety timer) to prioritize label purity over volume.
+3. Pit stops on warm-up laps (`lapNumber <= 2`) are explicitly marked as `UNRESOLVED_MISSING_PRE_GAP` via `EARLY_LAP_FILTER`.
+4. Pit-cycle classification uses strict guardrails (`SETTLE_LAPS`, incident thresholding, safety timer) and a conservative pace-shift recovery path (`RIVAL_PIT_PACE_SHIFT`, `SAFETY_TIMER_PACE_SHIFT`) when post-gap is missing; if pace evidence is insufficient, the cycle remains unresolved.
+5. Lift/coast timestamp audits use mixed-format ISO-8601 parsing with normalization fallback (`Z`, fractional seconds, and explicit timezone offsets).
 
 ## Audit Workflow
 
@@ -195,34 +213,104 @@ Recent validation highlights (latest full 2023 run):
 
 ## How to Run
 
-### Single Race (automated)
+### 1) Freeze Three Seasons (recommended lower-speed replay)
+
+For final data freezing, replay each season at a lower speed to reduce runtime pressure and keep artifacts consistent.
+Recommended speed for freeze runs: `50`.
 
 ```bash
-./run_simulation.sh --year 2023 --race "Italian Grand Prix" --session R --speed 100 --start-lap 1
+./simulate_season.sh --year 2022 --speed 50
+./simulate_season.sh --year 2023 --speed 50
+./simulate_season.sh --year 2024 --speed 50
 ```
 
-### Full Season (bulk generation)
+After each run, the season artifacts are written under `data_lake/` with timestamped JSONL files.
+
+### 2) Train the Model (consolidated pipeline)
+
+This command prepares merged training data, runs grouped-CV training and policy selection, exports winner OOF, and builds the serving bundle.
 
 ```bash
-./simulate_season.sh --year 2023 --speed 100
+python ml_pipeline/train_model.py --years 2022 2023 2024 --season-tag season
 ```
 
-### Manual Steps
+Main artifacts:
+1. `data_lake/ml_training_dataset_2022_2024_merged.parquet`
+2. `data_lake/reports/ml_ablation_phase31c_2022_2024_merged.csv`
+3. `data_lake/reports/ml_oof_winner_2022_2024_merged.csv`
+4. `data_lake/models/pit_strategy_serving_bundle.joblib`
+
+### 3) Assess Correctness End-to-End (all methodological gates)
+
+Run unified evaluation to produce Phase B, C, D, F, G, H, and J outputs in one pass:
 
 ```bash
-# 1) Start infrastructure
-docker compose up -d
+python ml_pipeline/evaluate_model.py --years 2022 2023 2024 --season-tag season
+```
+
+This checks correctness across all major aspects:
+1. Statistical significance and uncertainty (Phase B)
+2. Threshold frontier and lookahead diagnostics (Phase C)
+3. Calibration and constrained-policy behavior (Phase D)
+4. Training-serving parity and point-in-time legality (Phase F)
+5. Latency and availability feasibility (Phase G)
+6. Integrated GO/HOLD/NO_GO synthesis (Phase H)
+7. Split integrity and comparator invariance closure audits (Phase J)
+
+Primary summary artifacts:
+1. `data_lake/reports/model_evaluation_2022_2024_merged.csv`
+2. `data_lake/reports/model_evaluation_2022_2024_merged.md`
+3. `data_lake/reports/phase_h_unified_gate_2022_2024_merged.csv`
+4. `data_lake/reports/phase_h_unified_gate_report_2022_2024_merged.txt`
+
+Optional data-quality audit for raw stream outputs:
+
+```bash
+python season_data_audit.py
+```
+
+### 4) Start Flink + ML Predictions Together
+
+#### Automated single race with live ML inference
+
+```bash
+./run_simulation.sh --year 2023 --race "Italian Grand Prix" --session R --speed 100 --start-lap 1 --with-ml-inference
+```
+
+#### Automated full season with live ML inference
+
+```bash
+./simulate_season.sh --year 2023 --speed 100 --with-ml-inference
+```
+
+#### Manual startup (infrastructure + Flink + producer stream + ML service)
+
+```bash
+# 1) Start infrastructure including optional ml-inference service
+docker compose --profile inference up -d
 
 # 2) Build Flink processor
 cd f1-telemetry-processor && mvn clean package -DskipTests && cd ..
 
-# 3) Submit job
+# 3) Submit Flink job
 docker cp f1-telemetry-processor/target/f1-telemetry-processor-1.0-SNAPSHOT.jar flink-jobmanager:/opt/flink/usrlib/
 docker exec flink-jobmanager flink run -d /opt/flink/usrlib/f1-telemetry-processor-1.0-SNAPSHOT.jar
 
-# 4) Prepare + stream race
+# 4) Prepare and stream a race
 python f1-telemetry-producer/src/prepare_race.py --year 2023 --race "Italian Grand Prix" --session R
 python f1-telemetry-producer/src/stream_race.py --year 2023 --race "Italian Grand Prix" --session R --speed 100
+```
+
+Optional local ML consumer (outside Docker profile):
+
+```bash
+python ml_pipeline/serve_model.py --bootstrap localhost:9092 --model-bundle data_lake/models/pit_strategy_serving_bundle.joblib
+```
+
+Optional prediction-topic probe:
+
+```bash
+docker exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic f1-ml-predictions --from-beginning --max-messages 5
 ```
 
 Flink UI: `http://localhost:8081`  
@@ -255,7 +343,11 @@ Dashboard: `http://localhost:8501`
 │       └── utils/
 ├── data_lake/
 ├── ml_pipeline/
-│   └── train_pit_strategy.py
+│   ├── prep_data.py
+│   ├── train_model.py
+│   ├── evaluate_model.py
+│   ├── serve_model.py
+│   └── pipeline_config.py
 └── report/
     └── main.tex
 ```

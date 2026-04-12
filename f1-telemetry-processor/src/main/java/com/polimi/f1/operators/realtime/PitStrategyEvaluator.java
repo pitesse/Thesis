@@ -39,6 +39,7 @@ import com.polimi.f1.state.realtime.DriverPitState;
 //   traffic: -30 to +30, linear interpolation based on emergence gap
 //   urgency:  0-30, quadratic ramp: 30 * min(1.0, ((tyreRatio - 0.5) / 0.5)^2)
 //   strategy: -15 to 0, continuous deficit penalty
+//   timing:   0-10, bounded decision-window pressure from pace acceleration and local gap expansion
 //   track:    0 or 60 (crisp, binary event, sc/vsc only)
 //   eor:     -100 to 0, logistic sigmoid: -100 / (1 + e^(-15*(ratio-0.92)))
 //            near-zero until 85%, ramps through 90-95%, effectively -100 at 98%+.
@@ -74,9 +75,32 @@ public class PitStrategyEvaluator
     private static final double EMIT_THRESHOLD = 40.0;
     private static final double GOOD_PIT_THRESHOLD = 60.0;
     private static final double PIT_NOW_THRESHOLD = 80.0;
+    private static final double PROMOTED_GOOD_PIT_MIN_SCORE = 52.0;
+    private static final double PROMOTED_GOOD_PIT_MIN_URGENCY = 10.0;
+    private static final double PROMOTED_GOOD_PIT_MIN_PACE = 8.0;
+    private static final double TRAFFIC_BLOCK_THRESHOLD = 0.0;
+    private static final double CRITICAL_URGENCY_SCORE = 28.0;
+    private static final double RIVAL_PIT_REACTION_BOOST_AHEAD = 10.0;
+    private static final double RIVAL_PIT_REACTION_BOOST_BEHIND = 6.0;
+    private static final double MAX_RIVAL_PIT_REACTION_BOOST = 12.0;
+    private static final int RIVAL_PIT_REACTION_LAP_WINDOW = 1;
+    private static final double EARLY_ACTION_MIN_URGENCY = 12.0;
+    private static final double EARLY_ACTION_MAX_STRATEGY_PENALTY = -3.0;
+    private static final double EARLY_ACTION_MIN_PACE_ESCALATION = 18.0;
+    private static final double EARLY_ACTION_MIN_TIMING_PRESSURE = 3.5;
+    private static final double EARLY_ACTION_MIN_PACE_ACCELERATION = 0.001;
+
+    private static final double MAX_TIMING_PRESSURE_SCORE = 10.0;
+    private static final double TIMING_PRESSURE_MIN_URGENCY = 8.0;
+    private static final double TIMING_PRESSURE_PACE_ACCEL_REFERENCE = 0.003;
+    private static final double TIMING_PRESSURE_GAP_EXPANSION_REFERENCE = 0.8;
 
     // emit-gate: minimum score increase since last emission before re-emitting
     private static final double RE_EMIT_DELTA = 10.0;
+    private static final int GOOD_PIT_REEMIT_LAPS = 2;
+    private static final int PIT_NOW_REEMIT_LAPS = 2;
+    private static final double TIMING_REEMIT_PRESSURE_DELTA = 2.0;
+    private static final double TIMING_REEMIT_MIN_URGENCY = 10.0;
     private static final double SLOW_LAP_RATIO_THRESHOLD = 0.005;
     private static final int RECENT_LAP_WINDOW = 3;
     private static final String CURRENT_STATUS_KEY = "current";
@@ -87,15 +111,16 @@ public class PitStrategyEvaluator
     private static final int TRACK_STATUS_SCORE = 60;
 
     // pace curve: paceRatio at which score reaches 30 (fully degraded)
-    // ex: at 3% degradation vs stint best, pace score = 30
-    private static final double PACE_CEILING_RATIO = 0.03;
+    // this calibration follows heilmeier 2020 and carrasco 2023, react at narrower tire fade windows.
+    // ex: at 2% degradation vs stint best, pace score reaches the ceiling.
+    private static final double PACE_CEILING_RATIO = 0.02;
 
     // traffic thresholds (seconds)
     private static final double CLEAN_AIR_GAP = 3.0;
     private static final double DRS_THRESHOLD = 1.0;
 
-    // urgency: quadratic ramp starts at 50% of max stint
-    private static final double URGENCY_ONSET_RATIO = 0.5;
+    // urgency starts later to reduce premature calls, this follows carrasco 2023 window timing logic.
+    private static final double URGENCY_ONSET_RATIO = 0.70;
 
     // tyre life bonus for easy pass of car ahead with old tires
     private static final int EASY_PASS_TYRE_LIFE = 25;
@@ -141,6 +166,12 @@ public class PitStrategyEvaluator
 
     // emit-gate: track status at last emission per driver
     private transient MapState<String, String> lastEmittedTrackStatus;
+
+    // emit-gate: lap number at last emission per driver
+    private transient MapState<String, Integer> lastEmittedLap;
+
+    // emit-gate: timing pressure at last emission per driver
+    private transient MapState<String, Double> lastEmittedTimingPressure;
 
     // per-driver peak score tracking for LOST_CHANCE detection
     private transient MapState<String, Double> peakScores;
@@ -191,6 +222,16 @@ public class PitStrategyEvaluator
                 = new MapStateDescriptor<>("strategy-emit-track-status", Types.STRING, Types.STRING);
         emitTsDesc.enableTimeToLive(ttlConfig);
         lastEmittedTrackStatus = getRuntimeContext().getMapState(emitTsDesc);
+
+        MapStateDescriptor<String, Integer> emitLapDesc
+            = new MapStateDescriptor<>("strategy-emit-lap", Types.STRING, Types.INT);
+        emitLapDesc.enableTimeToLive(ttlConfig);
+        lastEmittedLap = getRuntimeContext().getMapState(emitLapDesc);
+
+        MapStateDescriptor<String, Double> emitTimingPressureDesc
+            = new MapStateDescriptor<>("strategy-emit-timing-pressure", Types.STRING, Types.DOUBLE);
+        emitTimingPressureDesc.enableTimeToLive(ttlConfig);
+        lastEmittedTimingPressure = getRuntimeContext().getMapState(emitTimingPressureDesc);
 
         MapStateDescriptor<String, Double> peakDesc
                 = new MapStateDescriptor<>("strategy-peak-scores", String.class, Double.class);
@@ -315,24 +356,32 @@ public class PitStrategyEvaluator
             state.setStintBestLap(Double.MAX_VALUE);
             state.setConsecutiveSlowLaps(0);
             state.setLastPaceRatio(0.0);
+            state.setPaceRatioDelta(0.0);
+            state.setLastGapToCarAhead(null);
+            state.setGapToCarAheadDelta(0.0);
             peakScores.put(driver, 0.0);
             lostChanceEmitted.put(driver, false);
         }
 
         state.setLastCompound(event.getCompound());
         state.setLastTyreLife(event.getTyreLife());
+        state.setPaceRatioDelta(0.0);
+        state.setGapToCarAheadDelta(0.0);
 
         Double lapTime = event.getLapTime();
         if (lapTime != null && lapTime > 0
                 && event.getPitInTime() == null && event.getPitOutTime() == null
                 && TrackStatusCodes.isGreenOrUnknown(event.getTrackStatus())) {
+            double previousPaceRatio = state.getLastPaceRatio();
             if (lapTime < state.getStintBestLap()) {
                 state.setStintBestLap(lapTime);
             }
 
             // pace ratio for continuous scoring
             if (state.getStintBestLap() > 0 && state.getStintBestLap() < Double.MAX_VALUE) {
-                state.setLastPaceRatio((lapTime - state.getStintBestLap()) / state.getStintBestLap());
+                double currentPaceRatio = (lapTime - state.getStintBestLap()) / state.getStintBestLap();
+                state.setLastPaceRatio(currentPaceRatio);
+                state.setPaceRatioDelta(currentPaceRatio - previousPaceRatio);
             }
 
             // track consecutive slow laps (still needed for filtering one-off blips)
@@ -340,6 +389,18 @@ public class PitStrategyEvaluator
                 state.setConsecutiveSlowLaps(state.getConsecutiveSlowLaps() + 1);
             } else {
                 state.setConsecutiveSlowLaps(0);
+            }
+        }
+
+        if (event.getPitInTime() == null && event.getPitOutTime() == null
+                && TrackStatusCodes.isGreenOrUnknown(event.getTrackStatus())
+                && event.getGapToCarAhead() != null
+                && event.getGapToCarAhead() >= 0.0) {
+            Double previousGap = state.getLastGapToCarAhead();
+            double currentGap = event.getGapToCarAhead();
+            state.setLastGapToCarAhead(currentGap);
+            if (previousGap != null) {
+                state.setGapToCarAheadDelta(currentGap - previousGap);
             }
         }
 
@@ -374,6 +435,7 @@ public class PitStrategyEvaluator
         for (int i = 0; i < laps.size(); i++) {
             LapEvent current = laps.get(i);
             String driver = current.getDriver();
+            DriverPitState driverState = driverStates.get(driver);
 
             // skip fresh tires, pit laps
             if (current.getTyreLife() < MIN_TYRE_LIFE) {
@@ -388,10 +450,19 @@ public class PitStrategyEvaluator
             TrafficResult traffic = computeTrafficResult(current, laps, i, currentTrackStatus);
             double strategyPenalty = computeStrategyPenalty(current);
             double urgencyScore = computeUrgencyScore(current);
+            double rivalPitReactionBoost = computeRivalPitReactionBoost(current, laps, i);
+            double actionUrgencyScore = Math.min(30.0, urgencyScore + rivalPitReactionBoost);
+            double timingPressureScore = computeTimingPressureScore(
+                    driverState,
+                    urgencyScore,
+                    strategyPenalty,
+                    traffic.score,
+                    trackStatusScore,
+                    rivalPitReactionBoost);
             double endOfRacePenalty = computeEndOfRacePenalty(current);
 
             double totalScore = paceScore + trackStatusScore + traffic.score
-                    + strategyPenalty + urgencyScore + endOfRacePenalty;
+                    + strategyPenalty + actionUrgencyScore + timingPressureScore + endOfRacePenalty;
             totalScore = Math.max(0.0, Math.min(100.0, totalScore));
 
             // update peak score for lost_chance detection
@@ -417,7 +488,7 @@ public class PitStrategyEvaluator
                     lostChanceEmitted.put(driver, true);
                     emitAlert(current, totalScore, paceScore, trackStatusScore,
                             traffic, strategyPenalty, urgencyScore, endOfRacePenalty,
-                            currentTrackStatus, SuggestionLabel.LOST_CHANCE, out);
+                            currentTrackStatus, 0.0, 0.0, SuggestionLabel.LOST_CHANCE, out);
                     continue;
                 }
             }
@@ -427,9 +498,25 @@ public class PitStrategyEvaluator
             }
 
             SuggestionLabel label = classifyScore(totalScore);
+            if (shouldPromoteMonitorToGoodPit(
+                    label, totalScore, paceScore, actionUrgencyScore, trackStatusScore)) {
+                label = SuggestionLabel.GOOD_PIT;
+            }
+            label = applyTrafficAwareActionabilityGate(label, traffic.score, urgencyScore);
+            double paceRatioDelta = driverState != null ? driverState.getPaceRatioDelta() : 0.0;
+            label = applyEarlyActionabilityGate(
+                    label,
+                    trackStatusScore,
+                    actionUrgencyScore,
+                    strategyPenalty,
+                    paceScore,
+                    rivalPitReactionBoost,
+                    timingPressureScore,
+                    paceRatioDelta);
 
             // emit-gate: check if we should suppress this alert
-            if (!shouldEmit(driver, current.getStint(), totalScore, currentTrackStatus, label)) {
+            if (!shouldEmit(driver, current.getStint(), current.getLapNumber(),
+                    totalScore, currentTrackStatus, label, timingPressureScore, actionUrgencyScore)) {
                 continue;
             }
 
@@ -437,24 +524,31 @@ public class PitStrategyEvaluator
             lastEmittedScore.put(driver, totalScore);
             lastEmittedStint.put(driver, current.getStint());
             lastEmittedTrackStatus.put(driver, currentTrackStatus);
+            lastEmittedLap.put(driver, current.getLapNumber());
+            lastEmittedTimingPressure.put(driver, timingPressureScore);
 
             emitAlert(current, totalScore, paceScore, trackStatusScore,
-                    traffic, strategyPenalty, urgencyScore, endOfRacePenalty,
-                    currentTrackStatus, label, out);
+                    traffic, strategyPenalty, actionUrgencyScore, endOfRacePenalty,
+                    currentTrackStatus, rivalPitReactionBoost, timingPressureScore, label, out);
         }
     }
 
     private void emitAlert(LapEvent current, double totalScore, double paceScore,
             int trackStatusScore, TrafficResult traffic, double strategyPenalty,
             double urgencyScore, double endOfRacePenalty, String trackStatus,
+            double rivalPitReactionBoost,
+            double timingPressureScore,
             SuggestionLabel label, Collector<PitSuggestionAlert> out) {
 
         String suggestion = buildSuggestion(paceScore, trackStatusScore,
-                traffic.score, strategyPenalty, urgencyScore, endOfRacePenalty);
+                traffic.score, strategyPenalty, urgencyScore, endOfRacePenalty,
+                rivalPitReactionBoost, timingPressureScore);
 
         out.collect(new PitSuggestionAlert(
+                current.getRace(),
                 current.getDriver(),
                 current.getLapNumber(),
+                current.getDate(),
                 current.getPosition(),
                 current.getCompound(),
                 current.getTyreLife(),
@@ -478,10 +572,13 @@ public class PitStrategyEvaluator
     }
 
     // emit-gate: suppresses re-emission unless score escalated or track status changed
-    private boolean shouldEmit(String driver, int currentStint, double currentScore,
-            String currentTrackStatus, SuggestionLabel currentLabel) throws Exception {
+    private boolean shouldEmit(String driver, int currentStint, int currentLap, double currentScore,
+            String currentTrackStatus, SuggestionLabel currentLabel,
+            double currentTimingPressure, double urgencyScore) throws Exception {
         Integer prevStint = lastEmittedStint.get(driver);
         Double prevScore = lastEmittedScore.get(driver);
+        Integer prevLap = lastEmittedLap.get(driver);
+        Double prevTimingPressure = lastEmittedTimingPressure.get(driver);
 
         // first emission ever, or new stint -> always emit
         if (prevStint == null || prevStint != currentStint) {
@@ -491,8 +588,9 @@ public class PitStrategyEvaluator
             return true;
         }
 
-        // class changed, always emit to keep dashboard and ml timeline aligned
         SuggestionLabel prevLabel = classifyScore(prevScore);
+
+        // class changed, always emit to keep dashboard and ml timeline aligned
         if (currentLabel != prevLabel) {
             return true;
         }
@@ -504,7 +602,28 @@ public class PitStrategyEvaluator
         }
 
         // score moved enough in either direction, emit escalation or downgrade
-        return Math.abs(currentScore - prevScore) >= RE_EMIT_DELTA;
+        if (Math.abs(currentScore - prevScore) >= RE_EMIT_DELTA) {
+            return true;
+        }
+
+        if ((currentLabel == SuggestionLabel.PIT_NOW || currentLabel == SuggestionLabel.GOOD_PIT)
+                && prevTimingPressure != null
+                && urgencyScore >= TIMING_REEMIT_MIN_URGENCY
+                && (currentTimingPressure - prevTimingPressure) >= TIMING_REEMIT_PRESSURE_DELTA) {
+            return true;
+        }
+
+        if (currentLabel == SuggestionLabel.PIT_NOW
+                && prevLabel == SuggestionLabel.PIT_NOW
+                && prevLap != null) {
+            return (currentLap - prevLap) >= PIT_NOW_REEMIT_LAPS;
+        }
+
+        // this follows event-time window persistence, keep GOOD_PIT visible every few laps.
+        return currentLabel == SuggestionLabel.GOOD_PIT
+                && prevLabel == SuggestionLabel.GOOD_PIT
+                && prevLap != null
+                && (currentLap - prevLap) >= GOOD_PIT_REEMIT_LAPS;
     }
 
     // classifies continuous score into discrete label for pit wall decision
@@ -516,6 +635,136 @@ public class PitStrategyEvaluator
             return SuggestionLabel.GOOD_PIT;
         }
         return SuggestionLabel.MONITOR;
+    }
+
+    // this reasoning is from heilmeier 2020 and carrasco 2023,
+    // promote near-threshold monitor to good_pit only when tire and pace signals agree.
+    private static boolean shouldPromoteMonitorToGoodPit(
+            SuggestionLabel label,
+            double totalScore,
+            double paceScore,
+            double urgencyScore,
+            int trackStatusScore) {
+        if (label != SuggestionLabel.MONITOR) {
+            return false;
+        }
+        if (trackStatusScore > 0) {
+            return false;
+        }
+        return totalScore >= PROMOTED_GOOD_PIT_MIN_SCORE
+                && paceScore >= PROMOTED_GOOD_PIT_MIN_PACE
+                && urgencyScore >= PROMOTED_GOOD_PIT_MIN_URGENCY;
+    }
+
+    // pass c gate, avoid actionable calls when post pit traffic is bad,
+    // unless urgency is critical and waiting is no longer realistic.
+    private static SuggestionLabel applyTrafficAwareActionabilityGate(
+            SuggestionLabel label,
+            double trafficScore,
+            double urgencyScore) {
+        if (label != SuggestionLabel.PIT_NOW && label != SuggestionLabel.GOOD_PIT) {
+            return label;
+        }
+        if (trafficScore >= TRAFFIC_BLOCK_THRESHOLD) {
+            return label;
+        }
+        if (urgencyScore >= CRITICAL_URGENCY_SCORE) {
+            return label;
+        }
+        return SuggestionLabel.MONITOR;
+    }
+
+    // if actionable intent appears too early with weak tire and strategy pressure,
+    // keep the alert as monitor until the window becomes decision-relevant.
+    private static SuggestionLabel applyEarlyActionabilityGate(
+            SuggestionLabel label,
+            int trackStatusScore,
+            double urgencyScore,
+            double strategyPenalty,
+            double paceScore,
+            double rivalPitReactionBoost,
+            double timingPressureScore,
+            double paceRatioDelta) {
+        if (label != SuggestionLabel.PIT_NOW && label != SuggestionLabel.GOOD_PIT) {
+            return label;
+        }
+        if (trackStatusScore > 0 || rivalPitReactionBoost > 0.0) {
+            return label;
+        }
+        boolean urgencyReady = urgencyScore >= EARLY_ACTION_MIN_URGENCY;
+        boolean strategyReady = strategyPenalty <= EARLY_ACTION_MAX_STRATEGY_PENALTY;
+        boolean paceEscalation = paceScore >= EARLY_ACTION_MIN_PACE_ESCALATION;
+        boolean timingReady = timingPressureScore >= EARLY_ACTION_MIN_TIMING_PRESSURE;
+        boolean paceAccelerating = paceRatioDelta >= EARLY_ACTION_MIN_PACE_ACCELERATION;
+
+        if (urgencyReady && (strategyReady || timingReady || paceEscalation)) {
+            return label;
+        }
+        if (paceEscalation && strategyReady && (timingReady || paceAccelerating)) {
+            return label;
+        }
+        return SuggestionLabel.MONITOR;
+    }
+
+    // decision-window pressure approximates whether the stop window is tightening now.
+    // this follows timed strategy-window reasoning from carrasco 2023 and quiroga 2024,
+    // using deterministic local trends (pace acceleration + gap expansion) only.
+    private static double computeTimingPressureScore(
+            DriverPitState state,
+            double urgencyScore,
+            double strategyPenalty,
+            double trafficScore,
+            int trackStatusScore,
+            double rivalPitReactionBoost) {
+        if (state == null || trackStatusScore > 0) {
+            return 0.0;
+        }
+        if (urgencyScore < TIMING_PRESSURE_MIN_URGENCY && rivalPitReactionBoost <= 0.0) {
+            return 0.0;
+        }
+
+        double paceAcceleration = Math.max(0.0, state.getPaceRatioDelta());
+        double paceComponent = 6.0 * Math.min(1.0, paceAcceleration / TIMING_PRESSURE_PACE_ACCEL_REFERENCE);
+
+        double gapExpansion = Math.max(0.0, state.getGapToCarAheadDelta());
+        double gapComponent = 4.0 * Math.min(1.0, gapExpansion / TIMING_PRESSURE_GAP_EXPANSION_REFERENCE);
+
+        double strategyComponent = strategyPenalty < 0.0
+                ? 2.0 * Math.min(1.0, Math.abs(strategyPenalty) / 8.0)
+                : 0.0;
+        double rivalComponent = Math.min(2.5, rivalPitReactionBoost * 0.25);
+        double trafficAdjustment = trafficScore < 0.0 ? -1.5 : (trafficScore >= 20.0 ? 1.0 : 0.0);
+
+        double rawPressure = paceComponent + gapComponent + strategyComponent + rivalComponent + trafficAdjustment;
+        return Math.max(0.0, Math.min(MAX_TIMING_PRESSURE_SCORE, rawPressure));
+    }
+
+    // short-horizon reaction to nearby rival pit events, this shifts urgency
+    // toward realistic cover or undercut windows at lap resolution.
+    private static double computeRivalPitReactionBoost(LapEvent current, List<LapEvent> laps, int posIndex) {
+        if (!TrackStatusCodes.isGreenOrUnknown(current.getTrackStatus())) {
+            return 0.0;
+        }
+
+        double boost = 0.0;
+        if (posIndex > 0) {
+            boost += computeNeighborPitBoost(current, laps.get(posIndex - 1), true);
+        }
+        if (posIndex + 1 < laps.size()) {
+            boost += computeNeighborPitBoost(current, laps.get(posIndex + 1), false);
+        }
+        return Math.min(MAX_RIVAL_PIT_REACTION_BOOST, boost);
+    }
+
+    private static double computeNeighborPitBoost(LapEvent current, LapEvent neighbor, boolean ahead) {
+        if (neighbor == null || neighbor.getPitInTime() == null) {
+            return 0.0;
+        }
+        int lapDistance = Math.abs(current.getLapNumber() - neighbor.getLapNumber());
+        if (lapDistance > RIVAL_PIT_REACTION_LAP_WINDOW) {
+            return 0.0;
+        }
+        return ahead ? RIVAL_PIT_REACTION_BOOST_AHEAD : RIVAL_PIT_REACTION_BOOST_BEHIND;
     }
 
     // continuous pace score: power 1.5 curve.
@@ -637,9 +886,9 @@ public class PitStrategyEvaluator
         return result;
     }
 
-    // continuous urgency score: quadratic ramp starting at 50% of max stint.
-    // zero until tires are halfway through expected life, then accelerates.
-    // ex: 70% stint -> 4.8, 90% stint -> 19.2, 100%+ -> 30.0
+    // continuous urgency score: quadratic ramp starting at 70% of max stint.
+    // zero until the late stint window, then accelerates.
+    // ex: 70% stint -> 0.0, 85% stint -> 7.5, 95% stint -> 20.8, 100%+ -> 30.0
     private double computeUrgencyScore(LapEvent current) throws Exception {
         String compound = current.getCompound();
         int tyreAge = current.getTyreLife();
@@ -729,10 +978,19 @@ public class PitStrategyEvaluator
     // builds human-readable explanation from active scoring components
     private static String buildSuggestion(double paceScore, int trackStatusScore,
             double trafficScore, double strategyPenalty, double urgencyScore,
-            double endOfRacePenalty) {
+            double endOfRacePenalty, double rivalPitReactionBoost,
+            double timingPressureScore) {
         List<String> parts = new ArrayList<>();
         if (paceScore > 5.0) {
             parts.add("pace drop");
+        }
+        if (rivalPitReactionBoost > 0.0) {
+            parts.add("rival boxed");
+        }
+        if (timingPressureScore >= 6.0) {
+            parts.add("window tightening");
+        } else if (timingPressureScore >= 3.0) {
+            parts.add("window forming");
         }
         if (trackStatusScore > 0) {
             parts.add("SC/VSC opportunity");

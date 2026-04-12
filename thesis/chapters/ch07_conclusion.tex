@@ -1,0 +1,57 @@
+\chapter{Conclusion}
+\label{ch:conclusion}
+
+\section{Obtained Results}
+
+\textbf{Template intent.} Keep this section high-level until final numbers are fixed.
+
+\begin{itemize}
+	\item Summarize what was built and evaluated.
+	\item Restate outcome at the level of evidence (not hype): where ML improved, matched, or underperformed heuristic logic.
+	\item Mention both decision quality and operational feasibility.
+\end{itemize}
+
+\section{Limitations}
+
+\textbf{Template intent.} Be explicit and concrete.
+
+\begin{itemize}
+	\item Data limitations (coverage, label ambiguity, special race conditions).
+	\item Method limitations (model class, assumptions, calibration drift).
+	\item System limitations (latency budget, integration constraints, observability).
+\end{itemize}
+
+\section{Future Work}
+
+\textbf{Template intent.} Propose realistic next steps tied to thesis findings.
+
+\begin{itemize}
+	\item Drift-aware adaptation and online recalibration.
+	\item Richer decision spaces (for example compound recommendation jointly with timing).
+	\item Tighter integration patterns and broader season-level validation.
+	\item Training-serving skew mitigation when telemetry is streamed in parallel to Flink and ML inference.
+\end{itemize}
+
+Suggested references: \citep{gama2014drift, arora2024driftreview, bifet2007adwin, gomes2017arf, baenagarcia2006eddm}.
+
+\subsection{Deployment Consistency Placeholder (Flink + ML)}
+
+\textbf{Template intent.} Keep this subsection as a future-work marker until deployment experiments are run.
+
+\begin{itemize}
+	\item Define how online features should be generated at serving time to match training assumptions.
+	\item Specify consistency checks between offline Flink-derived training features and live serving features.
+	\item Reserve latency and fallback requirements for the final system design chapter pass.
+\end{itemize}
+
+\section{Overall Discussion}
+
+\textbf{Template intent.} Close by positioning your thesis against the three strategy paradigms.
+
+\begin{itemize}
+	\item Optimization/planning paradigm.
+	\item Reinforcement-learning paradigm.
+	\item Supervised classification in streaming deployment.
+\end{itemize}
+
+Suggested references: \citep{carrasco2023optimization, quiroga2024optimization, thomas2025xrlf1, sasikumar2025pitstop, hettmann2024datatopodium, dinh2025gradient}.
