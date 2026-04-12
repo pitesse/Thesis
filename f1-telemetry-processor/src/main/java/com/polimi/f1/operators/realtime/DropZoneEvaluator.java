@@ -179,6 +179,7 @@ public class DropZoneEvaluator
                 String status = TrackStatusCodes.normalizeOrGreen(current.getTrackStatus());
 
                 out.collect(new DropZoneAlert(
+                        current.getRace(),
                         current.getDriver(),
                         current.getLapNumber(),
                         current.getPosition(),

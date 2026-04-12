@@ -116,7 +116,24 @@ def _value_counts_as_dict(series: pd.Series) -> dict[str, int]:
 
 
 def _safe_to_datetime(series: pd.Series) -> pd.Series:
-    return pd.to_datetime(series, errors="coerce", utc=True)
+    # pandas mixed parser handles common iso-8601 variations across flink/kafka exports.
+    try:
+        parsed = pd.to_datetime(series, errors="coerce", format="mixed", utc=True)
+    except TypeError:
+        # fallback for older pandas versions without format="mixed" support.
+        parsed = pd.to_datetime(series, errors="coerce", utc=True)
+
+    if parsed.isna().any():
+        # normalize timezone suffixes like +0000 and whitespace separators before retry.
+        normalized = series.astype("string").str.strip()
+        normalized = normalized.str.replace(" ", "T", regex=False)
+        normalized = normalized.str.replace(r"Z$", "+00:00", regex=True)
+        normalized = normalized.str.replace(r"([+-]\d{2})(\d{2})$", r"\1:\2", regex=True)
+
+        reparsed = pd.to_datetime(normalized, errors="coerce", utc=True)
+        parsed = parsed.fillna(reparsed)
+
+    return parsed
 
 
 def _series_stats(series: pd.Series) -> dict[str, float | None]:
@@ -152,6 +169,13 @@ def _numeric_stats(series: pd.Series) -> dict[str, float | None]:
         "p95": round(float(clean.quantile(0.95)), 3),
         "max": round(float(clean.max()), 3),
     }
+
+
+def _duplicate_key_stats(df: pd.DataFrame, key_columns: list[str]) -> tuple[int, int]:
+    counts = df.groupby(key_columns, dropna=False).size()
+    duplicate_keys = int((counts > 1).sum())
+    duplicate_excess = int((counts[counts > 1] - 1).sum())
+    return duplicate_keys, duplicate_excess
 
 
 def _generic_metrics(df: pd.DataFrame) -> dict:
@@ -219,9 +243,14 @@ def _audit_pit_evals(df: pd.DataFrame) -> dict:
         )
 
     if "result" in df.columns:
-        unresolved = int((df["result"] == "UNRESOLVED_INSUFFICIENT_DATA").sum())
+        result_series = df["result"].astype(str)
+        unresolved_mask = result_series.str.startswith("UNRESOLVED_")
+        unresolved = int(unresolved_mask.sum())
         metrics["unresolved_rows"] = unresolved
         metrics["unresolved_rate_pct"] = round(_pct(unresolved, len(df)), 2)
+        metrics["unresolved_reason_distribution"] = _value_counts_as_dict(
+            result_series[unresolved_mask]
+        )
 
     if "postPitGapToRival" in df.columns:
         null_post = int(df["postPitGapToRival"].isna().sum())
@@ -248,10 +277,14 @@ def _audit_pit_suggestions(df: pd.DataFrame) -> dict:
             df["suggestionLabel"].astype(str)
         )
 
-    if {"driver", "lapNumber"}.issubset(df.columns):
-        counts = df.groupby(["driver", "lapNumber"], dropna=False).size()
-        duplicate_keys = int((counts > 1).sum())
-        duplicate_excess = int((counts[counts > 1] - 1).sum())
+    if {"race", "driver", "lapNumber"}.issubset(df.columns):
+        duplicate_keys, duplicate_excess = _duplicate_key_stats(
+            df, ["race", "driver", "lapNumber"]
+        )
+        metrics["race_driver_lap_duplicate_keys"] = duplicate_keys
+        metrics["race_driver_lap_duplicate_excess_rows"] = duplicate_excess
+    elif {"driver", "lapNumber"}.issubset(df.columns):
+        duplicate_keys, duplicate_excess = _duplicate_key_stats(df, ["driver", "lapNumber"])
         metrics["driver_lap_duplicate_keys"] = duplicate_keys
         metrics["driver_lap_duplicate_excess_rows"] = duplicate_excess
 
@@ -277,6 +310,17 @@ def _audit_pit_suggestions(df: pd.DataFrame) -> dict:
 
 def _audit_drop_zones(df: pd.DataFrame) -> dict:
     metrics: dict[str, object] = {}
+
+    if {"race", "driver", "lapNumber"}.issubset(df.columns):
+        duplicate_keys, duplicate_excess = _duplicate_key_stats(
+            df, ["race", "driver", "lapNumber"]
+        )
+        metrics["race_driver_lap_duplicate_keys"] = duplicate_keys
+        metrics["race_driver_lap_duplicate_excess_rows"] = duplicate_excess
+    elif {"driver", "lapNumber"}.issubset(df.columns):
+        duplicate_keys, duplicate_excess = _duplicate_key_stats(df, ["driver", "lapNumber"])
+        metrics["driver_lap_duplicate_keys"] = duplicate_keys
+        metrics["driver_lap_duplicate_excess_rows"] = duplicate_excess
 
     if "trackStatus" in df.columns:
         metrics["track_status_distribution"] = _value_counts_as_dict(
@@ -318,6 +362,17 @@ def _audit_drop_zones(df: pd.DataFrame) -> dict:
 def _audit_lift_coast(df: pd.DataFrame) -> dict:
     metrics: dict[str, object] = {}
 
+    if {"race", "driver", "brakeDate"}.issubset(df.columns):
+        duplicate_keys, duplicate_excess = _duplicate_key_stats(
+            df, ["race", "driver", "brakeDate"]
+        )
+        metrics["race_driver_brake_duplicate_keys"] = duplicate_keys
+        metrics["race_driver_brake_duplicate_excess_rows"] = duplicate_excess
+    elif {"driver", "brakeDate"}.issubset(df.columns):
+        duplicate_keys, duplicate_excess = _duplicate_key_stats(df, ["driver", "brakeDate"])
+        metrics["driver_brake_duplicate_keys"] = duplicate_keys
+        metrics["driver_brake_duplicate_excess_rows"] = duplicate_excess
+
     if "trackStatus" in df.columns:
         status = df["trackStatus"].astype(str)
         metrics["track_status_distribution"] = _value_counts_as_dict(status)
@@ -356,6 +411,18 @@ def _audit_lift_coast(df: pd.DataFrame) -> dict:
 
 def _audit_tire_drops(df: pd.DataFrame) -> dict:
     metrics: dict[str, object] = {}
+
+    if {"race", "driver", "lapNumber"}.issubset(df.columns):
+        duplicate_keys, duplicate_excess = _duplicate_key_stats(
+            df, ["race", "driver", "lapNumber"]
+        )
+        metrics["race_driver_lap_duplicate_keys"] = duplicate_keys
+        metrics["race_driver_lap_duplicate_excess_rows"] = duplicate_excess
+    elif {"driver", "lapNumber"}.issubset(df.columns):
+        duplicate_keys, duplicate_excess = _duplicate_key_stats(df, ["driver", "lapNumber"])
+        metrics["driver_lap_duplicate_keys"] = duplicate_keys
+        metrics["driver_lap_duplicate_excess_rows"] = duplicate_excess
+
     if "delta" in df.columns:
         delta = pd.to_numeric(df["delta"], errors="coerce")
         metrics["negative_delta_rows"] = int((delta < 0).sum())
@@ -614,8 +681,22 @@ def _print_summary(report: dict) -> None:
     ml = report.get("streams", {}).get("ml_features", {}).get("metrics", {})
     pe = report.get("streams", {}).get("pit_evals", {}).get("metrics", {})
     ps = report.get("streams", {}).get("pit_suggestions", {}).get("metrics", {})
+    dz = report.get("streams", {}).get("drop_zones", {}).get("metrics", {})
     td = report.get("streams", {}).get("tire_drops", {}).get("metrics", {})
     lc = report.get("streams", {}).get("lift_coast", {}).get("metrics", {})
+
+    ps_dup = ps.get(
+        "race_driver_lap_duplicate_excess_rows",
+        ps.get("driver_lap_duplicate_excess_rows", "N/A"),
+    )
+    dz_dup = dz.get(
+        "race_driver_lap_duplicate_excess_rows",
+        dz.get("driver_lap_duplicate_excess_rows", "N/A"),
+    )
+    td_dup = td.get(
+        "race_driver_lap_duplicate_excess_rows",
+        td.get("driver_lap_duplicate_excess_rows", "N/A"),
+    )
 
     print("--- key checks ---")
     print(
@@ -631,11 +712,16 @@ def _print_summary(report: dict) -> None:
     )
     print(
         "pit suggestions: "
-        f"driver_lap_duplicate_excess={ps.get('driver_lap_duplicate_excess_rows', 'N/A')}"
+        f"key_duplicate_excess={ps_dup}"
+    )
+    print(
+        "drop zones: "
+        f"key_duplicate_excess={dz_dup}"
     )
     print(
         "tire drops: "
         f"negative_delta={td.get('negative_delta_rows', 'N/A')}, "
+        f"key_duplicate_excess={td_dup}, "
         f"has_track_status={td.get('has_track_status_column', 'N/A')}"
     )
     print(

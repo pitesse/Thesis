@@ -1,0 +1,144 @@
+\chapter{Evaluation Campaign}
+\label{ch:evaluation_campaign}
+
+\section{Experimental Setup and Parameters}
+
+\textbf{Template intent.} Define the evaluation setting before showing any numbers.
+
+\begin{itemize}
+	\item Races/seasons included, replay speed policy, and compute environment.
+	\item Fixed parameters and tunable parameters.
+	\item Repetition policy for robustness.
+\end{itemize}
+
+\subsection{Replay-Speed Sensitivity Protocol}
+
+\textbf{Template intent.} Keep this subsection as a compact robustness checklist.
+
+\begin{itemize}
+	\item Compare nominal and high-speed replay settings for operational stability.
+	\item Check season representativeness, duplicate-key artifacts, and sink contract validity.
+	\item Confirm comparator stability after deterministic de-duplication.
+\end{itemize}
+
+Suggested references: \citep{widanage2019indy500, akidau2015dataflow, carbone2015flink}.
+
+\section{Dataset Split and Validation Protocol}
+
+\textbf{Template intent.} Explain exactly how leakage is prevented.
+
+\begin{itemize}
+	\item Grouped/temporal split strategy and rationale.
+	\item What is held out, when, and why.
+	\item Stress-test subsets (for example SC/VSC/wet) vs core training subset.
+\end{itemize}
+
+Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured}.
+
+\subsection{Training-Serving Consistency Audit Protocol}
+
+\textbf{Template intent.} Keep this subsection as a gate checklist before reporting live ML-vs-heuristic outcomes.
+
+\begin{itemize}
+	\item Compare offline \texttt{ml\_features} rows and live \texttt{f1-ml-features} payloads on race-driver-lap keys.
+	\item Verify point-in-time constraints for each feature family used by serving inference.
+	\item Report schema/feature parity rates before model-quality metrics.
+	\item Report operational live-path metrics: prediction availability and latency ($p50$, $p95$).
+\end{itemize}
+
+Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, akidau2015dataflow, widanage2019indy500}.
+
+\section{Baseline Definitions}
+\subsection{Heuristic Baseline}
+
+\textbf{Template intent.} Specify heuristic decision rule version used in the comparison.
+
+\begin{itemize}
+	\item Inputs available at inference time.
+	\item Decision output format and thresholding policy.
+\end{itemize}
+
+\subsection{Machine Learning Baseline(s)}
+
+\textbf{Template intent.} Declare model variants and calibration/threshold steps.
+
+\begin{itemize}
+	\item Model families and selected final candidates.
+	\item Calibration method and operating-point selection logic.
+\end{itemize}
+
+Suggested references: \citep{saito2015prroc, davis2006relationship, brier1950verification, guo2017calibration, platt1999probabilistic, kull2017beta}.
+
+\section{Results on Recommendation Quality}
+
+\textbf{Template intent.} Add final tables/figures only when experiments are frozen.
+
+\begin{itemize}
+	\item Report precision, recall, F1, AUC-PR, and calibration metrics.
+	\item Provide race-level and aggregate-level views.
+	\item Include uncertainty intervals and significance tests.
+\end{itemize}
+
+Suggested references: \citep{dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing}.
+
+\subsection{Current SDE Gate Status After Timing-Pressure Pass}
+
+\textbf{Template intent.} Keep one concise locked-baseline snapshot for later ML comparison.
+
+\begin{itemize}
+	\item Fixed-rule SDE baseline at $H=2$: scored rows $113$, precision $0.6903$, TP $78$, FP $35$.
+	\item Mark this as the frozen comparator reference before ML transition.
+	\item Record high-level residual pattern: horizon timing misses dominate, unresolved post-gap remains secondary.
+\end{itemize}
+
+\section{Latency and Throughput Results}
+
+\textbf{Template intent.} Keep this section focused on operational feasibility.
+
+\begin{itemize}
+	\item End-to-end latency distribution and throughput under replay loads.
+	\item Compare overhead introduced by ML inference path vs heuristic-only path.
+\end{itemize}
+
+\section{Error Analysis and Failure Modes}
+
+\textbf{Template intent.} Explain where and why decisions fail.
+
+\begin{itemize}
+	\item Analyze errors by race context (track, compound, neutralization regime).
+	\item Distinguish data issues, model limitations, and unavoidable ambiguity.
+\end{itemize}
+
+\subsection{Qualitative Spot-Check Protocol for Label Plausibility}
+
+\textbf{Template intent.} Keep this as a reproducible qualitative-audit placeholder.
+
+\begin{itemize}
+	\item Define a stratified race/event sample for manual plausibility checks.
+	\item Record context, assigned class, resolution path, and narrative consistency.
+	\item Report agreement separately for resolved labels and unresolved rationale.
+\end{itemize}
+
+Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, hettmann2024datatopodium, sasikumar2025pitstop}.
+
+\subsection{Robustness of the Conservative Unresolved Policy}
+
+\textbf{Template intent.} Keep this subsection focused on coverage-vs-purity trade-off evidence.
+
+\begin{itemize}
+	\item Report unresolved distributions by reason code.
+	\item Quantify comparator exclusions attributable to unresolved outcomes.
+	\item Reserve sensitivity discussion for conservative fallback paths only.
+	\item Keep unresolved reduction as a secondary lever after timing alignment.
+\end{itemize}
+
+Suggested references: \citep{elkan2001costsensitive, brookshire2024leakage, roberts2017cvstructured}.
+
+\section{Discussion}
+
+\textbf{Template intent.} Synthesize findings without overclaiming.
+
+\begin{itemize}
+	\item Interpret practical implications for pit-wall support.
+	\item State what can be concluded confidently and what remains uncertain.
+\end{itemize}

@@ -2,12 +2,13 @@ package com.polimi.f1.model.output;
 
 // emitted when a driver's rolling lap time average degrades beyond a threshold
 // relative to their stint best. indicates tire performance cliff.
-// ex csv: VER,25,SOFT,18,83.421,81.200,2.221
+// ex csv: Italian Grand Prix,VER,25,SOFT,18,83.421,81.200,2.221
 public class TireDropAlert {
 
     public static final String CSV_HEADER
-            = "driver,lapNumber,compound,tyreLife,rollingAvg,stintBest,delta,trackStatus";
+            = "race,driver,lapNumber,compound,tyreLife,rollingAvg,stintBest,delta,trackStatus";
 
+    private String race;
     private String driver;
     private int lapNumber;
     private String compound;
@@ -20,9 +21,10 @@ public class TireDropAlert {
     public TireDropAlert() {
     }
 
-    public TireDropAlert(String driver, int lapNumber, String compound,
+    public TireDropAlert(String race, String driver, int lapNumber, String compound,
             int tyreLife, double rollingAvg, double stintBest, double delta,
             String trackStatus) {
+        this.race = race;
         this.driver = driver;
         this.lapNumber = lapNumber;
         this.compound = compound;
@@ -31,6 +33,14 @@ public class TireDropAlert {
         this.stintBest = stintBest;
         this.delta = delta;
         this.trackStatus = trackStatus;
+    }
+
+    public String getRace() {
+        return race;
+    }
+
+    public void setRace(String race) {
+        this.race = race;
     }
 
     public String getDriver() {
@@ -97,10 +107,11 @@ public class TireDropAlert {
         this.trackStatus = trackStatus;
     }
 
-    // ml-ready csv row, ex: VER,25,SOFT,18,83.421,81.200,2.221
+    // ml-ready csv row, ex: Italian Grand Prix,VER,25,SOFT,18,83.421,81.200,2.221
     // keep 3 decimal precision for timing deltas to preserve sensitivity in ml features
     public String toCsvRow() {
         return String.join(",",
+                race != null ? race : "",
                 driver != null ? driver : "",
                 String.valueOf(lapNumber),
                 compound != null ? compound : "",
@@ -115,7 +126,8 @@ public class TireDropAlert {
     @Override
     public String toString() {
         return String.format(
-                "TIRE DROP | Driver: %s | Lap: %d | %s (life: %d) | avg: %.3fs | best: %.3fs | delta: +%.3fs",
+                "TIRE DROP | %s | Driver: %s | Lap: %d | %s (life: %d) | avg: %.3fs | best: %.3fs | delta: +%.3fs",
+                race != null ? race : "?",
                 driver, lapNumber, compound, tyreLife, rollingAvg, stintBest, delta);
     }
 }

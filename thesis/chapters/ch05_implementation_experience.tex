@@ -1,0 +1,103 @@
+\chapter{Implementation Experience}
+\label{ch:implementation_experience}
+
+\section{Engineering Stack and Environment}
+
+\textbf{Template intent.} Keep this section factual and reproducible.
+
+\begin{itemize}
+	\item Report runtime stack, versions, infrastructure, and packaging.
+	\item Document environment constraints and reproducibility notes.
+	\item Describe what is deterministic vs what can vary between runs.
+\end{itemize}
+
+\section{Pipeline Implementation}
+\subsection{Ingestion and Replay Components}
+
+\textbf{Template intent.} Describe implementation decisions that affect data fidelity.
+
+\begin{itemize}
+	\item Replay timing policy, topic schema, and serialization choices.
+	\item Error handling and idempotency notes.
+\end{itemize}
+
+\subsection{Flink Operators and Real-time Alerts}
+
+\textbf{Template intent.} Summarize operator responsibilities and state management.
+
+\begin{itemize}
+	\item Per-operator responsibilities and key state variables.
+	\item Watermarks/checkpointing and practical trade-offs encountered.
+\end{itemize}
+
+\paragraph{PitStopEvaluator evolution (skeleton).}
+\begin{itemize}
+	\item Note the fallback hierarchy and where pace-shift recovery is used.
+	\item Record deterministic abstention behavior when post-pit evidence is incomplete.
+	\item Link rationale to lap-time decomposition and online optimization references.
+\end{itemize}
+
+\paragraph{PitStrategyEvaluator evolution (skeleton).}
+\begin{itemize}
+	\item Record added timing-pressure context (pace and gap trends) at per-driver state level.
+	\item Capture actionability gate intent: avoid broad early actionable alerts in green conditions.
+	\item Emphasize deterministic bounded logic as a stable SDE baseline.
+\end{itemize}
+
+\paragraph{Replay-speed stress behavior (skeleton).}
+\begin{itemize}
+	\item Keep one concise note on 500x stress validation and season completion.
+	\item Mention duplicate-key artifacts as operational side effects, not comparator semantic changes.
+	\item State that comparator robustness relies on deterministic de-duplication before matching.
+\end{itemize}
+
+\subsection{Data Lake and Audit Layer}
+
+\textbf{Template intent.} Explain output contracts and quality checks.
+
+\begin{itemize}
+	\item Sink layout, partitioning logic, and schema consistency policy.
+	\item Audit scripts and contract-validation process.
+\end{itemize}
+
+\paragraph{Comparator diagnostics extension (skeleton).}
+\begin{itemize}
+	\item Note added timing-distance diagnostics for excluded and matched rows.
+	\item Explicitly state that matching semantics remain unchanged.
+	\item Use this subsection later for compact attribution of horizon misses vs unresolved outcomes.
+\end{itemize}
+
+\section{Model Training Pipeline}
+
+\textbf{Template intent.} Keep this broad until final experiments stabilize.
+
+\begin{itemize}
+	\item Training data extraction path and feature assembly overview.
+	\item Split strategy implementation and anti-leakage safeguards.
+	\item Hyperparameter search, calibration step, and model artifact versioning.
+\end{itemize}
+
+Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, platt1999probabilistic, guo2017calibration, kull2017beta}.
+
+\section{Real-time Inference Integration}
+
+\textbf{Template intent.} Describe integration options and chosen approach without overcommitting to one architecture in early drafts.
+
+\begin{itemize}
+	\item Integration pattern selected (in-engine, service, or decoupled consumer).
+	\item Input contract, output topic/schema, and latency budget assumptions.
+	\item Fallback and observability strategy for inference failures.
+\end{itemize}
+
+\subsection{Training-Serving Consistency Path (Option A Skeleton)}
+
+\textbf{Template intent.} Keep this subsection as an implementation checklist for the first live ML comparison phase.
+
+\begin{itemize}
+	\item Record one-feature-authority rule: Flink computes rolling/context features and emits both offline JSONL and online Kafka payloads.
+	\item Note decoupled ML inference consumer flow: \texttt{f1-ml-features} input to \texttt{f1-ml-predictions} output, independent from heuristic topic path.
+	\item Document serving bundle contract items (feature-column order, threshold metadata, model version tag).
+	\item Reserve explicit checks for temporal leakage and train-serve transform drift.
+\end{itemize}
+
+Suggested references: \citep{carbone2015flink, kreps2011kafka, brookshire2024leakage, roberts2017cvstructured}.
