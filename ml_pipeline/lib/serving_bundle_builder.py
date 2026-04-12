@@ -16,7 +16,7 @@ from pathlib import Path
 import joblib
 from xgboost import XGBClassifier
 
-from train_pit_strategy import (
+from .model_training_cv import (
     DEFAULT_DATASET,
     DEFAULT_RANDOM_STATE,
     _compute_scale_pos_weight,
@@ -27,6 +27,11 @@ from train_pit_strategy import (
 
 DEFAULT_OUTPUT = "data_lake/models/pit_strategy_serving_bundle.joblib"
 DEFAULT_THRESHOLD = 0.50
+DEFAULT_MAX_DELTA_STEP = 1
+DEFAULT_SUBSAMPLE = 0.7
+DEFAULT_COLSAMPLE_BYTREE = 0.8
+DEFAULT_SCALE_POS_WEIGHT_MODE = "fixed"
+DEFAULT_SCALE_POS_WEIGHT_VALUE = 30.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +39,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=DEFAULT_DATASET, help="path to prepared training dataset")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="output joblib path")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="default serving threshold")
+    parser.add_argument("--max-delta-step", type=int, default=DEFAULT_MAX_DELTA_STEP, help="model max_delta_step")
+    parser.add_argument("--subsample", type=float, default=DEFAULT_SUBSAMPLE, help="model subsample")
+    parser.add_argument(
+        "--colsample-bytree",
+        type=float,
+        default=DEFAULT_COLSAMPLE_BYTREE,
+        help="model colsample_bytree",
+    )
+    parser.add_argument(
+        "--scale-pos-weight-mode",
+        choices=["auto", "fixed"],
+        default=DEFAULT_SCALE_POS_WEIGHT_MODE,
+        help="whether scale_pos_weight is inferred from class balance or forced to a fixed value",
+    )
+    parser.add_argument(
+        "--scale-pos-weight-value",
+        type=float,
+        default=DEFAULT_SCALE_POS_WEIGHT_VALUE,
+        help="required when --scale-pos-weight-mode=fixed",
+    )
     parser.add_argument(
         "--with-calibration",
         action="store_true",
@@ -49,21 +74,37 @@ def main() -> None:
     args = parse_args()
     if not (0.0 < args.threshold < 1.0):
         raise ValueError("--threshold must be between 0 and 1")
+    if args.max_delta_step < 0:
+        raise ValueError("--max-delta-step must be >= 0")
+    if not (0.0 < args.subsample <= 1.0):
+        raise ValueError("--subsample must satisfy 0 < value <= 1")
+    if not (0.0 < args.colsample_bytree <= 1.0):
+        raise ValueError("--colsample-bytree must satisfy 0 < value <= 1")
+    if args.scale_pos_weight_mode == "fixed":
+        if args.scale_pos_weight_value is None:
+            raise ValueError("--scale-pos-weight-value is required when --scale-pos-weight-mode=fixed")
+        if args.scale_pos_weight_value <= 0:
+            raise ValueError("--scale-pos-weight-value must be > 0")
 
     dataset_path = Path(args.dataset)
     output_path = Path(args.output)
 
     df = _load_dataset(dataset_path)
-    X, y, _ = _prepare_matrix(df)
+    X, y, _, _ = _prepare_matrix(df)
 
-    spw = _compute_scale_pos_weight(y)
+    if args.scale_pos_weight_mode == "auto":
+        spw = _compute_scale_pos_weight(y)
+    else:
+        spw = float(args.scale_pos_weight_value)
+
     model = XGBClassifier(
         n_estimators=400,
         learning_rate=0.05,
         max_depth=6,
         min_child_weight=1,
-        subsample=0.9,
-        colsample_bytree=0.9,
+        max_delta_step=args.max_delta_step,
+        subsample=args.subsample,
+        colsample_bytree=args.colsample_bytree,
         objective="binary:logistic",
         eval_metric="aucpr",
         scale_pos_weight=spw,
@@ -90,6 +131,10 @@ def main() -> None:
         "positive_count": int((y == 1).sum()),
         "negative_count": int((y == 0).sum()),
         "scale_pos_weight": float(spw),
+        "scale_pos_weight_mode": args.scale_pos_weight_mode,
+        "max_delta_step": int(args.max_delta_step),
+        "subsample": float(args.subsample),
+        "colsample_bytree": float(args.colsample_bytree),
         "calibrated": bool(calibrator is not None),
     }
 
@@ -101,7 +146,11 @@ def main() -> None:
     print(f"output           : {output_path}")
     print(f"rows             : {bundle['row_count']}")
     print(f"feature columns  : {len(bundle['feature_columns'])}")
+    print(f"max_delta_step   : {bundle['max_delta_step']}")
+    print(f"subsample        : {bundle['subsample']:.4f}")
+    print(f"colsample_bytree : {bundle['colsample_bytree']:.4f}")
     print(f"scale_pos_weight : {bundle['scale_pos_weight']:.6f}")
+    print(f"spw mode         : {bundle['scale_pos_weight_mode']}")
     print(f"calibrated       : {bundle['calibrated']}")
     print(f"threshold        : {bundle['threshold']:.4f}")
 

@@ -24,9 +24,10 @@ SPEED=100
 SESSION="R"
 RACES_FILTER=""
 POST_RACE_BUFFER_SECONDS=120
+WITH_ML_INFERENCE=0
 JOBMANAGER_OVERVIEW_URL="http://localhost:8081/overview"
 JOBMANAGER_READY_TIMEOUT_SECONDS=30
-KAFKA_TOPICS=(f1-telemetry f1-laps f1-track-status f1-alerts)
+KAFKA_TOPICS=(f1-telemetry f1-laps f1-track-status f1-alerts f1-ml-features f1-ml-predictions)
 
 wait_for_jobmanager() {
 	echo "         Waiting for Flink JobManager REST API..."
@@ -94,6 +95,10 @@ while [[ $# -gt 0 ]]; do
 		POST_RACE_BUFFER_SECONDS="$2"
 		shift 2
 		;;
+	--with-ml-inference)
+		WITH_ML_INFERENCE=1
+		shift 1
+		;;
 	*)
 		echo "Unknown argument: $1"
 		exit 1
@@ -121,6 +126,11 @@ else
 fi
 echo " Speed:  ${SPEED}x"
 echo " Buffer: ${POST_RACE_BUFFER_SECONDS}s"
+if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
+	echo " ML Inference: enabled"
+else
+	echo " ML Inference: disabled"
+fi
 echo "=========================================="
 
 # 1. tear down existing stack
@@ -135,7 +145,16 @@ docker compose -f "$COMPOSE_FILE" build
 echo "[3/10] Starting Docker stack..."
 mkdir -p "$PROJECT_DIR/data_lake"
 chmod -R 777 "$PROJECT_DIR/data_lake" 2>/dev/null || true
-docker compose -f "$COMPOSE_FILE" up -d
+if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
+	MODEL_BUNDLE="$PROJECT_DIR/data_lake/models/pit_strategy_serving_bundle.joblib"
+	if [ ! -f "$MODEL_BUNDLE" ]; then
+		echo "WARNING: ML inference requested but model bundle not found at $MODEL_BUNDLE"
+		echo "         Build it first with: python ml_pipeline/train_model.py"
+	fi
+	docker compose -f "$COMPOSE_FILE" --profile inference up -d
+else
+	docker compose -f "$COMPOSE_FILE" up -d
+fi
 
 # wait for flink jobmanager rest api to be ready
 wait_for_jobmanager
@@ -283,6 +302,9 @@ fi
 echo ""
 echo " Dashboard:     http://localhost:8501"
 echo " Flink UI:      http://localhost:8081"
+if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
+	echo " ML topic:      f1-ml-predictions"
+fi
 echo " Raw output:    data_lake/{pit_evals,pit_suggestions,tire_drops,lift_coast,drop_zones,ml_features}/"
 echo " Merged JSONLs: data_lake/{pit_evals,pit_suggestions,tire_drops,lift_coast,drop_zones,ml_features}_{YEAR}_season_{TIMESTAMP}.jsonl"
 echo ""

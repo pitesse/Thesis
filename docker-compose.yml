@@ -92,6 +92,32 @@ services:
       - ./data_lake:/app/data_lake
     command: ["streamlit", "run", "dashboard/app.py", "--server.headless", "true", "--server.address", "0.0.0.0"]
 
+  # optional live inference consumer. enable with: docker compose --profile inference up -d
+  ml-inference:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: f1-python-app
+    container_name: f1-ml-inference
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_BROKER=kafka:29092
+    volumes:
+      - ./data_lake:/app/data_lake
+      - ./ml_pipeline:/app/ml_pipeline
+    command:
+      [
+        "python",
+        "ml_pipeline/serve_model.py",
+        "--bootstrap",
+        "kafka:29092",
+        "--model-bundle",
+        "data_lake/models/pit_strategy_serving_bundle.joblib"
+      ]
+    profiles:
+      - inference
+
   # cli service for ad-hoc python commands (prepare_race, stream_race, ml training).
   # not started by `docker compose up`, invoked via `docker compose run --rm producer <cmd>`.
   producer:
