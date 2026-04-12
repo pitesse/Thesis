@@ -61,6 +61,14 @@ REQUIRED_PIT_EVAL_COLUMNS = [
     "result",
 ]
 
+REQUIRED_DROP_ZONE_COLUMNS = [
+    "race",
+    "driver",
+    "lapNumber",
+    "positionsLost",
+    "gapToPhysicalCar",
+]
+
 
 def _normalize_label(value: object) -> str:
     if value is None:
@@ -93,12 +101,20 @@ def _require_columns(df: pd.DataFrame, required: Iterable[str], name: str) -> No
         raise ValueError(f"{name} is missing required columns: {missing}")
 
 
-def _prepare_features(features: pd.DataFrame) -> pd.DataFrame:
+def _prepare_features(
+    features: pd.DataFrame,
+    drop_zones: pd.DataFrame | None = None,
+    source_year_fallback: int = DEFAULT_YEAR,
+) -> pd.DataFrame:
     _require_columns(features, REQUIRED_FEATURE_COLUMNS, "ml_features")
 
     work = features.copy()
     work["race"] = work["race"].astype(str)
     work["driver"] = work["driver"].astype(str)
+
+    # keep season context explicit for multi-season calibration stability.
+    parsed_year = pd.to_numeric(work["race"].str.split(" :: ", n=1).str[0], errors="coerce")
+    work["_source_year"] = parsed_year.fillna(int(source_year_fallback)).astype(int)
 
     work["lapNumber"] = pd.to_numeric(work["lapNumber"], errors="coerce")
     work = work[work["lapNumber"].notna()].copy()
@@ -115,6 +131,34 @@ def _prepare_features(features: pd.DataFrame) -> pd.DataFrame:
     work["gapBehind"] = pd.to_numeric(work["gapBehind"], errors="coerce")
     work["gapAhead"] = work["gapAhead"].fillna(STRUCTURAL_GAP_FILL)
     work["gapBehind"] = work["gapBehind"].fillna(STRUCTURAL_GAP_FILL)
+
+    if drop_zones is not None:
+        work = work.merge(
+            drop_zones,
+            how="left",
+            on=["race", "driver", "lapNumber"],
+            validate="m:1",
+            indicator="_drop_zone_join",
+        )
+        work["has_drop_zone_data"] = work["_drop_zone_join"].eq("both")
+        work.drop(columns=["_drop_zone_join"], inplace=True)
+    else:
+        work["positions_lost"] = 0
+        work["gap_to_physical_car"] = STRUCTURAL_GAP_FILL
+        work["has_drop_zone_data"] = False
+
+    if "positions_lost" not in work.columns:
+        work["positions_lost"] = 0
+    if "gap_to_physical_car" not in work.columns:
+        work["gap_to_physical_car"] = STRUCTURAL_GAP_FILL
+
+    work["positions_lost"] = pd.to_numeric(work["positions_lost"], errors="coerce").fillna(0).astype(int)
+    work["gap_to_physical_car"] = (
+        pd.to_numeric(work["gap_to_physical_car"], errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(STRUCTURAL_GAP_FILL)
+    )
+    work["has_drop_zone_data"] = work["has_drop_zone_data"].fillna(False).astype(bool)
 
     work.sort_values(by=["race", "driver", "lapNumber"], inplace=True)
 
@@ -157,6 +201,27 @@ def _prepare_features(features: pd.DataFrame) -> pd.DataFrame:
         .clip(lower=0.0, upper=2.0)
     )
 
+    # keep momentum causal by using only lagged values within each race-driver stream.
+    work["pace_trend"] = (
+        work["pace_drop_ratio"]
+        - work.groupby(["race", "driver"], sort=False)["pace_drop_ratio"].shift(2)
+    )
+    work["pace_trend"] = (
+        work["pace_trend"]
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+
+    work["gapAhead_trend"] = (
+        work["gapAhead"]
+        - work.groupby(["race", "driver"], sort=False)["gapAhead"].shift(2)
+    )
+    work["gapAhead_trend"] = (
+        work["gapAhead_trend"]
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+
     work.drop(
         columns=[
             "compound_norm",
@@ -190,6 +255,37 @@ def _prepare_pit_evals(pit_evals: pd.DataFrame) -> pd.DataFrame:
     work["result_norm"] = work["result"].map(_normalize_label)
 
     work.sort_values(by=["race", "driver", "pitLapNumber"], inplace=True)
+    work.reset_index(drop=True, inplace=True)
+    return work
+
+
+def _prepare_drop_zones(drop_zones: pd.DataFrame) -> pd.DataFrame:
+    _require_columns(drop_zones, REQUIRED_DROP_ZONE_COLUMNS, "drop_zones")
+
+    work = drop_zones.copy()
+    work["race"] = work["race"].astype(str)
+    work["driver"] = work["driver"].astype(str)
+
+    work["lapNumber"] = pd.to_numeric(work["lapNumber"], errors="coerce")
+    work = work[work["lapNumber"].notna()].copy()
+    work["lapNumber"] = work["lapNumber"].astype(int)
+
+    work["positions_lost"] = pd.to_numeric(work["positionsLost"], errors="coerce")
+    work["gap_to_physical_car"] = pd.to_numeric(work["gapToPhysicalCar"], errors="coerce")
+
+    work = work[
+        [
+            "race",
+            "driver",
+            "lapNumber",
+            "positions_lost",
+            "gap_to_physical_car",
+        ]
+    ]
+
+    # replay retries can duplicate keys, keep the latest row for deterministic joins.
+    work.drop_duplicates(subset=["race", "driver", "lapNumber"], keep="last", inplace=True)
+    work.sort_values(by=["race", "driver", "lapNumber"], inplace=True)
     work.reset_index(drop=True, inplace=True)
     return work
 
@@ -264,6 +360,11 @@ def _build_targets(features: pd.DataFrame, pit_evals: pd.DataFrame, horizon: int
 def _write_dataset(dataset: pd.DataFrame, output_path: Path, strict_parquet: bool) -> tuple[Path, str]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    suffix = output_path.suffix.lower()
+    if suffix == ".csv":
+        dataset.to_csv(output_path, index=False)
+        return output_path, "csv"
+
     try:
         dataset.to_parquet(output_path, index=False)
         return output_path, "parquet"
@@ -283,6 +384,7 @@ def _write_dataset(dataset: pd.DataFrame, output_path: Path, strict_parquet: boo
 def _print_summary(
     dataset: pd.DataFrame,
     ml_features_path: Path,
+    drop_zones_path: Path,
     pit_evals_path: Path,
     output_path: Path,
     output_format: str,
@@ -299,6 +401,7 @@ def _print_summary(
 
     print("=== ML TRAINING DATASET SUMMARY ===")
     print(f"ml_features input : {ml_features_path}")
+    print(f"drop_zones input  : {drop_zones_path}")
     print(f"pit_evals input   : {pit_evals_path}")
     print(f"output            : {output_path} ({output_format})")
     print(f"shape             : {dataset.shape}")
@@ -311,6 +414,11 @@ def _print_summary(
     print("\nlabel coverage diagnostics")
     print(f"rows with pit in look-ahead window: {matched}")
     print(f"rows without pit in look-ahead     : {total - matched}")
+
+    with_drop_zone = int(dataset["has_drop_zone_data"].sum()) if "has_drop_zone_data" in dataset.columns else 0
+    print("\ntraffic context diagnostics")
+    print(f"rows with drop-zones context       : {with_drop_zone}")
+    print(f"rows without drop-zones context    : {total - with_drop_zone}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -337,12 +445,19 @@ def main() -> None:
     data_lake = Path(args.data_lake)
 
     ml_features_path = _latest_jsonl(data_lake, "ml_features", args.year, args.season_tag)
+    drop_zones_path = _latest_jsonl(data_lake, "drop_zones", args.year, args.season_tag)
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", args.year, args.season_tag)
 
     features_raw = _load_jsonl(ml_features_path)
+    drop_zones_raw = _load_jsonl(drop_zones_path)
     pit_evals_raw = _load_jsonl(pit_evals_path)
 
-    features = _prepare_features(features_raw)
+    drop_zones = _prepare_drop_zones(drop_zones_raw)
+    features = _prepare_features(
+        features_raw,
+        drop_zones,
+        source_year_fallback=args.year,
+    )
     pit_evals = _prepare_pit_evals(pit_evals_raw)
 
     dataset = _build_targets(features, pit_evals, args.horizon)
@@ -356,6 +471,7 @@ def main() -> None:
     _print_summary(
         dataset=dataset,
         ml_features_path=ml_features_path,
+        drop_zones_path=drop_zones_path,
         pit_evals_path=pit_evals_path,
         output_path=saved_path,
         output_format=output_format,

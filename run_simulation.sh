@@ -22,9 +22,10 @@ RACE="Italian Grand Prix"
 SESSION="R"
 SPEED=50
 START_LAP=1
+WITH_ML_INFERENCE=0
 JOBMANAGER_OVERVIEW_URL="http://localhost:8081/overview"
 JOBMANAGER_READY_TIMEOUT_SECONDS=30
-KAFKA_TOPICS=(f1-telemetry f1-laps f1-track-status f1-alerts)
+KAFKA_TOPICS=(f1-telemetry f1-laps f1-track-status f1-alerts f1-ml-features f1-ml-predictions)
 
 wait_for_jobmanager() {
 	echo "       Waiting for Flink JobManager REST API..."
@@ -97,6 +98,10 @@ while [[ $# -gt 0 ]]; do
 		START_LAP="$2"
 		shift 2
 		;;
+	--with-ml-inference)
+		WITH_ML_INFERENCE=1
+		shift 1
+		;;
 	*)
 		echo "Unknown argument: $1"
 		exit 1
@@ -110,8 +115,8 @@ COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 # stop the dashboard container on exit
 cleanup() {
 	echo ""
-	echo "Stopping dashboard container..."
-	docker compose -f "$COMPOSE_FILE" stop dashboard 2>/dev/null || true
+	echo "Stopping optional UI/inference containers..."
+	docker compose -f "$COMPOSE_FILE" stop dashboard ml-inference 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -123,6 +128,11 @@ echo " Race:      $RACE"
 echo " Session:   $SESSION"
 echo " Speed:     ${SPEED}x"
 echo " Start Lap: $START_LAP"
+if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
+	echo " ML Inference: enabled"
+else
+	echo " ML Inference: disabled"
+fi
 echo "========================================"
 
 # ===========================
@@ -148,7 +158,16 @@ docker compose -f "$COMPOSE_FILE" build
 echo "[3/7] Starting Docker stack..."
 mkdir -p "$PROJECT_DIR/data_lake"
 chmod -R 777 "$PROJECT_DIR/data_lake" 2>/dev/null || true
-docker compose -f "$COMPOSE_FILE" up -d
+if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
+	MODEL_BUNDLE="$PROJECT_DIR/data_lake/models/pit_strategy_serving_bundle.joblib"
+	if [ ! -f "$MODEL_BUNDLE" ]; then
+		echo "WARNING: ML inference requested but model bundle not found at $MODEL_BUNDLE"
+		echo "         Build it first with: python ml_pipeline/train_model.py"
+	fi
+	docker compose -f "$COMPOSE_FILE" --profile inference up -d
+else
+	docker compose -f "$COMPOSE_FILE" up -d
+fi
 
 # wait for flink jobmanager rest api to be ready
 wait_for_jobmanager
@@ -170,6 +189,9 @@ docker exec flink-jobmanager flink run \
 # 6. dashboard is already running via docker compose up
 # ===========================
 echo "[6/7] Dashboard is running at http://localhost:8501"
+if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
+	echo "       ML inference consumer is running in parallel (topic: f1-ml-predictions)"
+fi
 
 # open the dashboard in the default browser after a short delay so streamlit
 # has time to bind the port. uses python's webbrowser module which works on
@@ -225,4 +247,7 @@ echo " Simulation complete."
 echo " Dashboard:  http://localhost:8501"
 echo " Flink UI:   http://localhost:8081"
 echo " Flink logs: docker logs -f flink-taskmanager"
+if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
+	echo " ML topic:   f1-ml-predictions"
+fi
 echo "========================================"
