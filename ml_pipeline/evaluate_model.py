@@ -137,7 +137,7 @@ def _existing_merged_has_prefixed_race(path: Path) -> bool:
     return True
 
 
-def _existing_merged_pit_evals_is_deduped(path: Path) -> bool:
+def _existing_merged_stream_is_deduped(path: Path, lap_field: str) -> bool:
     seen: set[tuple[str, str, int | str]] = set()
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -153,7 +153,7 @@ def _existing_merged_pit_evals_is_deduped(path: Path) -> bool:
 
             race = str(row.get("race", ""))
             driver = str(row.get("driver", ""))
-            lap_raw = row.get("pitLapNumber")
+            lap_raw = row.get(lap_field)
             if not race or not driver or lap_raw is None:
                 continue
 
@@ -168,6 +168,14 @@ def _existing_merged_pit_evals_is_deduped(path: Path) -> bool:
             seen.add(key)
 
     return True
+
+
+def _existing_merged_pit_evals_is_deduped(path: Path) -> bool:
+    return _existing_merged_stream_is_deduped(path, "pitLapNumber")
+
+
+def _existing_merged_ml_features_is_deduped(path: Path) -> bool:
+    return _existing_merged_stream_is_deduped(path, "lapNumber")
 
 
 def _ensure_merged_jsonl(
@@ -189,6 +197,8 @@ def _ensure_merged_jsonl(
         existing_valid = _existing_merged_has_prefixed_race(existing_merged)
         if existing_valid and stream == "pit_evals":
             existing_valid = _existing_merged_pit_evals_is_deduped(existing_merged)
+        if existing_valid and stream == "ml_features":
+            existing_valid = _existing_merged_ml_features_is_deduped(existing_merged)
 
     if existing_valid:
         return existing_merged
@@ -196,7 +206,8 @@ def _ensure_merged_jsonl(
     output_path = data_lake / f"{stream}_{merged_year}_{merged_tag}_{merge_stamp}.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if stream == "pit_evals":
+    if stream in {"pit_evals", "ml_features"}:
+        dedup_field = "pitLapNumber" if stream == "pit_evals" else "lapNumber"
         deduped_rows: dict[tuple[str, str, int | str], dict[str, object]] = {}
         passthrough_rows: list[dict[str, object]] = []
 
@@ -215,7 +226,7 @@ def _ensure_merged_jsonl(
 
                     race = str(row.get("race", ""))
                     driver = str(row.get("driver", ""))
-                    lap_raw = row.get("pitLapNumber")
+                    lap_raw = row.get(dedup_field)
                     try:
                         lap_key: int | str = int(float(lap_raw))
                     except (TypeError, ValueError):

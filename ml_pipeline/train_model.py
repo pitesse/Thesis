@@ -24,7 +24,10 @@ from lib.model_training_cv import (
     DEFAULT_CONSTRAINED_FP_COST,
     DEFAULT_FOLDS,
     DEFAULT_GRID_COLSAMPLE_BYTREE,
+    DEFAULT_GRID_LEARNING_RATE,
     DEFAULT_GRID_MAX_DELTA_STEP,
+    DEFAULT_GRID_MAX_DEPTH,
+    DEFAULT_GRID_N_ESTIMATORS,
     DEFAULT_GRID_SCALE_POS_WEIGHT,
     DEFAULT_GRID_SUBSAMPLE,
     DEFAULT_LEADERBOARD_TOP_K,
@@ -148,6 +151,24 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=list(DEFAULT_GRID_SCALE_POS_WEIGHT),
     )
+    parser.add_argument(
+        "--grid-max-depth",
+        type=int,
+        nargs="+",
+        default=list(DEFAULT_GRID_MAX_DEPTH),
+    )
+    parser.add_argument(
+        "--grid-learning-rate",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_GRID_LEARNING_RATE),
+    )
+    parser.add_argument(
+        "--grid-n-estimators",
+        type=int,
+        nargs="+",
+        default=list(DEFAULT_GRID_N_ESTIMATORS),
+    )
     parser.add_argument("--top-k", type=int, default=DEFAULT_LEADERBOARD_TOP_K)
 
     parser.add_argument(
@@ -167,6 +188,9 @@ def parse_args() -> argparse.Namespace:
         "--serving-bundle-output", default="", help="serving bundle output path"
     )
     parser.add_argument("--serving-threshold", type=float, default=0.50)
+    parser.add_argument("--serving-max-depth", type=int, default=6)
+    parser.add_argument("--serving-learning-rate", type=float, default=0.05)
+    parser.add_argument("--serving-n-estimators", type=int, default=400)
     parser.add_argument("--serving-max-delta-step", type=int, default=1)
     parser.add_argument("--serving-subsample", type=float, default=0.7)
     parser.add_argument("--serving-colsample-bytree", type=float, default=0.8)
@@ -183,6 +207,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if any(value <= 0 for value in args.grid_max_depth):
+        raise ValueError("--grid-max-depth values must be >= 1")
+    if any(value <= 0.0 or value > 1.0 for value in args.grid_learning_rate):
+        raise ValueError("--grid-learning-rate values must satisfy 0 < value <= 1")
+    if any(value < 1 for value in args.grid_n_estimators):
+        raise ValueError("--grid-n-estimators values must be >= 1")
+
+    if args.serving_max_depth <= 0:
+        raise ValueError("--serving-max-depth must be >= 1")
+    if not (0.0 < args.serving_learning_rate <= 1.0):
+        raise ValueError("--serving-learning-rate must satisfy 0 < value <= 1")
+    if args.serving_n_estimators < 1:
+        raise ValueError("--serving-n-estimators must be >= 1")
+
     years = normalize_years(args.years)
     data_lake = Path(args.data_lake)
 
@@ -249,6 +288,12 @@ def main() -> None:
         *[str(value) for value in args.grid_colsample_bytree],
         "--grid-scale-pos-weight",
         *[str(value) for value in args.grid_scale_pos_weight],
+        "--grid-max-depth",
+        *[str(value) for value in args.grid_max_depth],
+        "--grid-learning-rate",
+        *[str(value) for value in args.grid_learning_rate],
+        "--grid-n-estimators",
+        *[str(value) for value in args.grid_n_estimators],
         "--top-k",
         str(args.top_k),
         "--leaderboard-output",
@@ -277,6 +322,12 @@ def main() -> None:
             str(serving_bundle_output),
             "--threshold",
             str(args.serving_threshold),
+            "--max-depth",
+            str(args.serving_max_depth),
+            "--learning-rate",
+            str(args.serving_learning_rate),
+            "--n-estimators",
+            str(args.serving_n_estimators),
             "--max-delta-step",
             str(args.serving_max_delta_step),
             "--subsample",
