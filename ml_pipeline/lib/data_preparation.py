@@ -113,7 +113,9 @@ def _prepare_features(
     work["driver"] = work["driver"].astype(str)
 
     # keep season context explicit for multi-season calibration stability.
-    parsed_year = pd.to_numeric(work["race"].str.split(" :: ", n=1).str[0], errors="coerce")
+    parsed_year = pd.to_numeric(
+        work["race"].str.split(" :: ", n=1).str[0], errors="coerce"
+    )
     work["_source_year"] = parsed_year.fillna(int(source_year_fallback)).astype(int)
 
     work["lapNumber"] = pd.to_numeric(work["lapNumber"], errors="coerce")
@@ -152,7 +154,9 @@ def _prepare_features(
     if "gap_to_physical_car" not in work.columns:
         work["gap_to_physical_car"] = STRUCTURAL_GAP_FILL
 
-    work["positions_lost"] = pd.to_numeric(work["positions_lost"], errors="coerce").fillna(0).astype(int)
+    work["positions_lost"] = (
+        pd.to_numeric(work["positions_lost"], errors="coerce").fillna(0).astype(int)
+    )
     work["gap_to_physical_car"] = (
         pd.to_numeric(work["gap_to_physical_car"], errors="coerce")
         .replace([np.inf, -np.inf], np.nan)
@@ -164,8 +168,12 @@ def _prepare_features(
 
     # this pace proxy follows heilmeier 2020 style decomposition,
     # use best lap so far within the current stint to avoid future leakage.
-    prev_tyre_life = work.groupby(["race", "driver"], sort=False)["tyre_life_num"].shift(1)
-    prev_compound = work.groupby(["race", "driver"], sort=False)["compound_norm"].shift(1)
+    prev_tyre_life = work.groupby(["race", "driver"], sort=False)[
+        "tyre_life_num"
+    ].shift(1)
+    prev_compound = work.groupby(["race", "driver"], sort=False)["compound_norm"].shift(
+        1
+    )
     stint_break = (
         prev_tyre_life.isna()
         | (work["tyre_life_num"] < prev_tyre_life)
@@ -177,10 +185,12 @@ def _prepare_features(
         work.groupby(["race", "driver"], sort=False)["stint_break"].cumsum().astype(int)
     )
 
-    work["lap_time_clean"] = work["lap_time_num"].where(work["lap_time_num"] > 0, np.nan)
-    work["stint_best_lap_so_far"] = (
-        work.groupby(["race", "driver", "stint_id"], sort=False)["lap_time_clean"].cummin()
+    work["lap_time_clean"] = work["lap_time_num"].where(
+        work["lap_time_num"] > 0, np.nan
     )
+    work["stint_best_lap_so_far"] = work.groupby(
+        ["race", "driver", "stint_id"], sort=False
+    )["lap_time_clean"].cummin()
     work["pace_drop_ratio"] = work["lap_time_clean"] / work["stint_best_lap_so_far"]
     work["pace_drop_ratio"] = (
         work["pace_drop_ratio"]
@@ -202,24 +212,18 @@ def _prepare_features(
     )
 
     # keep momentum causal by using only lagged values within each race-driver stream.
+    work["pace_trend"] = work["pace_drop_ratio"] - work.groupby(
+        ["race", "driver"], sort=False
+    )["pace_drop_ratio"].shift(2)
     work["pace_trend"] = (
-        work["pace_drop_ratio"]
-        - work.groupby(["race", "driver"], sort=False)["pace_drop_ratio"].shift(2)
-    )
-    work["pace_trend"] = (
-        work["pace_trend"]
-        .replace([np.inf, -np.inf], np.nan)
-        .fillna(0.0)
+        work["pace_trend"].replace([np.inf, -np.inf], np.nan).fillna(0.0)
     )
 
+    work["gapAhead_trend"] = work["gapAhead"] - work.groupby(
+        ["race", "driver"], sort=False
+    )["gapAhead"].shift(2)
     work["gapAhead_trend"] = (
-        work["gapAhead"]
-        - work.groupby(["race", "driver"], sort=False)["gapAhead"].shift(2)
-    )
-    work["gapAhead_trend"] = (
-        work["gapAhead_trend"]
-        .replace([np.inf, -np.inf], np.nan)
-        .fillna(0.0)
+        work["gapAhead_trend"].replace([np.inf, -np.inf], np.nan).fillna(0.0)
     )
 
     work.drop(
@@ -271,7 +275,9 @@ def _prepare_drop_zones(drop_zones: pd.DataFrame) -> pd.DataFrame:
     work["lapNumber"] = work["lapNumber"].astype(int)
 
     work["positions_lost"] = pd.to_numeric(work["positionsLost"], errors="coerce")
-    work["gap_to_physical_car"] = pd.to_numeric(work["gapToPhysicalCar"], errors="coerce")
+    work["gap_to_physical_car"] = pd.to_numeric(
+        work["gapToPhysicalCar"], errors="coerce"
+    )
 
     work = work[
         [
@@ -284,13 +290,17 @@ def _prepare_drop_zones(drop_zones: pd.DataFrame) -> pd.DataFrame:
     ]
 
     # replay retries can duplicate keys, keep the latest row for deterministic joins.
-    work.drop_duplicates(subset=["race", "driver", "lapNumber"], keep="last", inplace=True)
+    work.drop_duplicates(
+        subset=["race", "driver", "lapNumber"], keep="last", inplace=True
+    )
     work.sort_values(by=["race", "driver", "lapNumber"], inplace=True)
     work.reset_index(drop=True, inplace=True)
     return work
 
 
-def _build_targets(features: pd.DataFrame, pit_evals: pd.DataFrame, horizon: int) -> pd.DataFrame:
+def _build_targets(
+    features: pd.DataFrame, pit_evals: pd.DataFrame, horizon: int
+) -> pd.DataFrame:
     dataset = features.copy()
     dataset["target_y"] = 0
     dataset["matched_pit_lap"] = pd.NA
@@ -326,6 +336,7 @@ def _build_targets(features: pd.DataFrame, pit_evals: pd.DataFrame, horizon: int
         row_idx = np.asarray(list(idx), dtype=np.int64)
         row_laps = dataset.loc[row_idx, "lapNumber"].to_numpy(dtype=np.int64)
 
+        # pick the first pit strictly after lap k, matching the [k+1, k+h] window contract.
         search_idx = np.searchsorted(pit_laps, row_laps + 1, side="left")
         valid = search_idx < pit_laps.size
         if not np.any(valid):
@@ -337,6 +348,7 @@ def _build_targets(features: pd.DataFrame, pit_evals: pd.DataFrame, horizon: int
         if not np.any(in_window):
             continue
 
+        # assign labels from the nearest valid future pit only to avoid multi-target leakage.
         candidate_results = pit_results[safe_idx]
         positive_mask = in_window & np.isin(candidate_results, positive_array)
 
@@ -353,11 +365,15 @@ def _build_targets(features: pd.DataFrame, pit_evals: pd.DataFrame, horizon: int
         )
 
     dataset["target_y"] = dataset["target_y"].astype(int)
-    dataset["matched_pit_lap"] = pd.to_numeric(dataset["matched_pit_lap"], errors="coerce").astype("Int64")
+    dataset["matched_pit_lap"] = pd.to_numeric(
+        dataset["matched_pit_lap"], errors="coerce"
+    ).astype("Int64")
     return dataset
 
 
-def _write_dataset(dataset: pd.DataFrame, output_path: Path, strict_parquet: bool) -> tuple[Path, str]:
+def _write_dataset(
+    dataset: pd.DataFrame, output_path: Path, strict_parquet: bool
+) -> tuple[Path, str]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     suffix = output_path.suffix.lower()
@@ -415,7 +431,11 @@ def _print_summary(
     print(f"rows with pit in look-ahead window: {matched}")
     print(f"rows without pit in look-ahead     : {total - matched}")
 
-    with_drop_zone = int(dataset["has_drop_zone_data"].sum()) if "has_drop_zone_data" in dataset.columns else 0
+    with_drop_zone = (
+        int(dataset["has_drop_zone_data"].sum())
+        if "has_drop_zone_data" in dataset.columns
+        else 0
+    )
     print("\ntraffic context diagnostics")
     print(f"rows with drop-zones context       : {with_drop_zone}")
     print(f"rows without drop-zones context    : {total - with_drop_zone}")
@@ -423,10 +443,19 @@ def _print_summary(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="prepare ml-ready training dataset")
-    parser.add_argument("--data-lake", default=DEFAULT_DATA_LAKE, help="data lake directory")
+    parser.add_argument(
+        "--data-lake", default=DEFAULT_DATA_LAKE, help="data lake directory"
+    )
     parser.add_argument("--year", type=int, default=DEFAULT_YEAR, help="season year")
-    parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token")
-    parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="look-ahead horizon in laps")
+    parser.add_argument(
+        "--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token"
+    )
+    parser.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_HORIZON,
+        help="look-ahead horizon in laps",
+    )
     parser.add_argument(
         "--output",
         default=DEFAULT_OUTPUT,
@@ -444,7 +473,9 @@ def main() -> None:
     args = parse_args()
     data_lake = Path(args.data_lake)
 
-    ml_features_path = _latest_jsonl(data_lake, "ml_features", args.year, args.season_tag)
+    ml_features_path = _latest_jsonl(
+        data_lake, "ml_features", args.year, args.season_tag
+    )
     drop_zones_path = _latest_jsonl(data_lake, "drop_zones", args.year, args.season_tag)
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", args.year, args.season_tag)
 
@@ -466,7 +497,9 @@ def main() -> None:
     if not output_path.is_absolute():
         output_path = data_lake / output_path
 
-    saved_path, output_format = _write_dataset(dataset, output_path, strict_parquet=args.strict_parquet)
+    saved_path, output_format = _write_dataset(
+        dataset, output_path, strict_parquet=args.strict_parquet
+    )
 
     _print_summary(
         dataset=dataset,

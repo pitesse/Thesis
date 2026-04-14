@@ -114,6 +114,7 @@ def main() -> None:
 
     grouped_overlap_count = 0
     grouped_overlap_folds = 0
+    # labels are irrelevant here; GroupKFold only needs row count and race groups.
     dummy = np.zeros(row_count, dtype=np.int8)
     gkf = GroupKFold(n_splits=args.folds)
 
@@ -162,6 +163,7 @@ def main() -> None:
         raise ValueError("oof fold column contains non-numeric values")
     oof["fold"] = oof["fold"].astype(int)
 
+    # each race should map to exactly one fold in winner OOF outputs.
     race_fold_cardinality = oof.groupby("race", dropna=False)["fold"].nunique()
     multi_fold_races = race_fold_cardinality[race_fold_cardinality > 1]
     multi_fold_race_count = int(len(multi_fold_races))

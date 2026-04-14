@@ -164,6 +164,7 @@ def _audit_single_dataset(
         .size()
         .reset_index(name="count")
     )
+    # duplicate targets indicate comparator fairness drift from the one-to-one contract.
     duplicate_targets = matched_group[matched_group["count"] > 1]
     duplicate_target_count = int(len(duplicate_targets))
     _append_check(
@@ -288,6 +289,7 @@ def main() -> None:
     summary_rows: list[dict[str, object]] = []
     detail_rows: list[dict[str, object]] = []
 
+    # keep schema order aligned so downstream reports can consume both artifacts interchangeably.
     schema_exact = list(heuristic.columns) == list(ml.columns)
     _append_check(
         summary_rows,

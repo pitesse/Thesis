@@ -278,6 +278,7 @@ def main() -> None:
     )
     reliability_rows = rel_rows_raw + rel_rows_cal
 
+    # constrained_pred is the fold-tuned deployment policy output from phase 3.1C.
     constrained_metrics = _binary_metrics(y_true=y, y_pred=constrained_pred)
 
     mode_counts = oof["constrained_mode"].astype(str).value_counts().to_dict()
@@ -285,6 +286,7 @@ def main() -> None:
 
     reference_rows: list[dict[str, float | int | str]] = []
     for threshold in sorted(set(float(x) for x in args.reference_thresholds)):
+        # fixed-threshold rows provide interpretable baselines against constrained policy.
         reference_rows.append(
             _policy_row(
                 y_true=y,

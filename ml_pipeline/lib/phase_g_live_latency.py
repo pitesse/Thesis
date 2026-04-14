@@ -230,6 +230,7 @@ def main() -> None:
             packaging_ms = (time.perf_counter() - t_pack_start) * 1000.0
 
             total_ms = (time.perf_counter() - t_total_start) * 1000.0
+            # split baseline-like work from ml-only work to quantify incremental overhead.
             heuristic_proxy_ms = parse_ms + feature_ms + packaging_ms
             ml_overhead_ms = matrix_ms + inference_ms + calibration_ms
 
@@ -256,6 +257,7 @@ def main() -> None:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             total_ms = (time.perf_counter() - t_total_start) * 1000.0
             error_type = type(exc).__name__
+            # bucket failures so availability diagnostics can map fallback pressure.
             failures[error_type] = failures.get(error_type, 0) + 1
             timing_rows.append(
                 {

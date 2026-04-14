@@ -115,10 +115,12 @@ def main() -> None:
     model.fit(X, y)
 
     calibrator = None
+    # this full-fit calibrator is for dry-runs; final thesis metrics remain fold-calibrated.
     if args.with_calibration:
         train_scores = model.predict_proba(X)[:, 1]
         calibrator = _fit_isotonic_calibrator(train_scores, y)
 
+    # persist schema and training context so serving and parity checks stay reproducible.
     bundle = {
         "model": model,
         "calibrator": calibrator,

@@ -211,6 +211,7 @@ def _summarize_by_year(comparator: pd.DataFrame, threshold: float) -> list[dict[
 def _select_best_threshold(summary: pd.DataFrame, floor: float) -> pd.Series:
     floor_ok = summary[(summary["meets_precision_floor"] == 1) & (summary["scored"] > 0)].copy()
     if not floor_ok.empty:
+        # primary policy: maximize recovered scored rows while staying precision-safe.
         floor_ok.sort_values(
             by=["scored", "tp", "precision", "threshold"],
             ascending=[False, False, False, True],
@@ -221,6 +222,7 @@ def _select_best_threshold(summary: pd.DataFrame, floor: float) -> pd.Series:
     fallback = summary[summary["scored"] > 0].copy()
     if fallback.empty:
         return summary.iloc[0]
+    # deterministic fallback for sparse settings where no threshold reaches the floor.
     fallback.sort_values(
         by=["precision", "scored", "tp", "threshold"],
         ascending=[False, False, False, True],
@@ -283,6 +285,7 @@ def main() -> None:
     for threshold in thresholds:
         suggestions = _suggestions_at_threshold(prepared, args.score_column, threshold)
         if suggestions.empty:
+            # keep empty-threshold rows so sweep plots stay complete and comparable.
             summary_rows.append(_empty_summary(threshold, args.precision_floor, args.sde_scored_baseline))
             continue
 

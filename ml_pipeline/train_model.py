@@ -39,6 +39,7 @@ from lib.model_training_cv import (
 
 @contextmanager
 def _patched_argv(argv: list[str]):
+    # invoke module mains as if called from cli, avoids duplicate parser code paths.
     original = sys.argv[:]
     sys.argv = argv
     try:
@@ -52,6 +53,7 @@ def _run_step(step_name: str, module_name: str, module_args: list[str]) -> None:
     print("command:")
     print(f"{module_name} {' '.join(module_args)}")
 
+    # load by module name so top-level scripts and lib modules share one execution mechanism.
     module = importlib.import_module(module_name)
     main_fn = getattr(module, "main", None)
     if not callable(main_fn):
@@ -66,15 +68,42 @@ def parse_args() -> argparse.Namespace:
         description="train the pit strategy model with optional multi-season dataset preparation"
     )
 
-    parser.add_argument("--data-lake", default=DEFAULT_DATA_LAKE, help="data lake directory")
-    parser.add_argument("--years", type=int, nargs="+", default=list(DEFAULT_YEARS), help="season years")
-    parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token in JSONL filenames")
-    parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="look-ahead horizon in laps")
+    parser.add_argument(
+        "--data-lake", default=DEFAULT_DATA_LAKE, help="data lake directory"
+    )
+    parser.add_argument(
+        "--years", type=int, nargs="+", default=list(DEFAULT_YEARS), help="season years"
+    )
+    parser.add_argument(
+        "--season-tag",
+        default=DEFAULT_SEASON_TAG,
+        help="season tag token in JSONL filenames",
+    )
+    parser.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_HORIZON,
+        help="look-ahead horizon in laps",
+    )
     parser.add_argument("--dataset", default="", help="training dataset path")
-    parser.add_argument("--strict-parquet", action="store_true", help="fail if parquet backend is unavailable")
+    parser.add_argument(
+        "--strict-parquet",
+        action="store_true",
+        help="fail if parquet backend is unavailable",
+    )
 
-    parser.add_argument("--prepare-data", dest="prepare_data", action="store_true", help="prepare dataset before training")
-    parser.add_argument("--skip-prepare-data", dest="prepare_data", action="store_false", help="use existing dataset")
+    parser.add_argument(
+        "--prepare-data",
+        dest="prepare_data",
+        action="store_true",
+        help="prepare dataset before training",
+    )
+    parser.add_argument(
+        "--skip-prepare-data",
+        dest="prepare_data",
+        action="store_false",
+        help="use existing dataset",
+    )
     parser.set_defaults(prepare_data=True)
 
     parser.add_argument("--folds", type=int, default=DEFAULT_FOLDS)
@@ -82,29 +111,61 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sweep-min", type=float, default=DEFAULT_SWEEP_MIN)
     parser.add_argument("--sweep-max", type=float, default=DEFAULT_SWEEP_MAX)
     parser.add_argument("--sweep-points", type=int, default=DEFAULT_SWEEP_POINTS)
-    parser.add_argument("--precision-floor", type=float, default=DEFAULT_PRECISION_FLOOR)
-    parser.add_argument("--constrained-fp-cost", type=float, default=DEFAULT_CONSTRAINED_FP_COST)
+    parser.add_argument(
+        "--precision-floor", type=float, default=DEFAULT_PRECISION_FLOOR
+    )
+    parser.add_argument(
+        "--constrained-fp-cost", type=float, default=DEFAULT_CONSTRAINED_FP_COST
+    )
     parser.add_argument(
         "--calibration-policy",
         choices=["auto", "isotonic", "sigmoid"],
         default=DEFAULT_CALIBRATION_POLICY,
     )
-    parser.add_argument("--min-calibration-positives", type=int, default=DEFAULT_MIN_CALIBRATION_POSITIVES)
+    parser.add_argument(
+        "--min-calibration-positives",
+        type=int,
+        default=DEFAULT_MIN_CALIBRATION_POSITIVES,
+    )
 
-    parser.add_argument("--grid-max-delta-step", type=int, nargs="+", default=list(DEFAULT_GRID_MAX_DELTA_STEP))
-    parser.add_argument("--grid-subsample", type=float, nargs="+", default=list(DEFAULT_GRID_SUBSAMPLE))
-    parser.add_argument("--grid-colsample-bytree", type=float, nargs="+", default=list(DEFAULT_GRID_COLSAMPLE_BYTREE))
-    parser.add_argument("--grid-scale-pos-weight", nargs="+", default=list(DEFAULT_GRID_SCALE_POS_WEIGHT))
+    parser.add_argument(
+        "--grid-max-delta-step",
+        type=int,
+        nargs="+",
+        default=list(DEFAULT_GRID_MAX_DELTA_STEP),
+    )
+    parser.add_argument(
+        "--grid-subsample", type=float, nargs="+", default=list(DEFAULT_GRID_SUBSAMPLE)
+    )
+    parser.add_argument(
+        "--grid-colsample-bytree",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_GRID_COLSAMPLE_BYTREE),
+    )
+    parser.add_argument(
+        "--grid-scale-pos-weight",
+        nargs="+",
+        default=list(DEFAULT_GRID_SCALE_POS_WEIGHT),
+    )
     parser.add_argument("--top-k", type=int, default=DEFAULT_LEADERBOARD_TOP_K)
 
-    parser.add_argument("--leaderboard-output", default="", help="ablation leaderboard output csv")
+    parser.add_argument(
+        "--leaderboard-output", default="", help="ablation leaderboard output csv"
+    )
     parser.add_argument("--oof-output", default="", help="winner OOF output csv")
 
-    parser.add_argument("--build-serving-bundle", dest="build_serving_bundle", action="store_true")
-    parser.add_argument("--skip-serving-bundle", dest="build_serving_bundle", action="store_false")
+    parser.add_argument(
+        "--build-serving-bundle", dest="build_serving_bundle", action="store_true"
+    )
+    parser.add_argument(
+        "--skip-serving-bundle", dest="build_serving_bundle", action="store_false"
+    )
     parser.set_defaults(build_serving_bundle=True)
 
-    parser.add_argument("--serving-bundle-output", default="", help="serving bundle output path")
+    parser.add_argument(
+        "--serving-bundle-output", default="", help="serving bundle output path"
+    )
     parser.add_argument("--serving-threshold", type=float, default=0.50)
     parser.add_argument("--serving-max-delta-step", type=int, default=1)
     parser.add_argument("--serving-subsample", type=float, default=0.7)
@@ -125,9 +186,14 @@ def main() -> None:
     years = normalize_years(args.years)
     data_lake = Path(args.data_lake)
 
-    dataset_path = Path(args.dataset) if args.dataset else default_dataset_path(data_lake, years, args.season_tag)
+    dataset_path = (
+        Path(args.dataset)
+        if args.dataset
+        else default_dataset_path(data_lake, years, args.season_tag)
+    )
 
     if args.prepare_data:
+        # keep prep optional, useful for fast reruns when dataset is already frozen.
         dataset_path = prepare_dataset(
             data_lake=data_lake,
             years=years,
@@ -143,7 +209,9 @@ def main() -> None:
     leaderboard_output = (
         Path(args.leaderboard_output)
         if args.leaderboard_output
-        else default_report_csv(data_lake, "ml_ablation_phase31c", years, args.season_tag)
+        else default_report_csv(
+            data_lake, "ml_ablation_phase31c", years, args.season_tag
+        )
     )
     oof_output = (
         Path(args.oof_output)
@@ -151,6 +219,7 @@ def main() -> None:
         else default_report_csv(data_lake, "ml_oof_winner", years, args.season_tag)
     )
 
+    # forward all training options to the cv module, keeps one source of truth for model selection logic.
     train_cmd = [
         "--dataset",
         str(dataset_path),
@@ -187,7 +256,11 @@ def main() -> None:
         "--oof-output",
         str(oof_output),
     ]
-    _run_step("Training and cross-validated policy selection", "lib.model_training_cv", train_cmd)
+    _run_step(
+        "Training and cross-validated policy selection",
+        "lib.model_training_cv",
+        train_cmd,
+    )
 
     serving_bundle_output = (
         Path(args.serving_bundle_output)
@@ -196,6 +269,7 @@ def main() -> None:
     )
 
     if args.build_serving_bundle:
+        # bundle build is separate from cv winner selection, serving may use a different threshold policy.
         serving_cmd = [
             "--dataset",
             str(dataset_path),

@@ -35,8 +35,6 @@ DEFAULT_CONSTRAINED_FP_COST = 3.0
 DEFAULT_CALIBRATION_POLICY = "auto"
 DEFAULT_MIN_CALIBRATION_POSITIVES = 30
 DEFAULT_OOF_OUTPUT = ""
-
-# Frozen from Phase 3.1B ablation winner (2026-04-04).
 DEFAULT_GRID_MAX_DELTA_STEP = (1,)
 DEFAULT_GRID_SUBSAMPLE = (0.7,)
 DEFAULT_GRID_COLSAMPLE_BYTREE = (0.8,)
@@ -269,7 +267,7 @@ def _find_best_f1_threshold_unconstrained(
 
     for threshold in thresholds[1:]:
         precision, recall, f1 = _metrics_at_threshold(y_true, proba, float(threshold))
-        # Tie-break favors higher recall under asymmetric false negative cost.
+        # tie-break favors higher recall under asymmetric false negative cost.
         if f1 > best_f1 or (np.isclose(f1, best_f1) and recall > best_recall):
             best_threshold = float(threshold)
             best_precision = precision
@@ -301,7 +299,7 @@ def _find_best_f1_threshold_with_precision_floor(
     candidate_count = int(len(all_rows))
 
     if constrained:
-        # Stage 2 policy: among precision-safe thresholds, maximize utility, then F1.
+        # policy: among precision-safe thresholds, maximize utility, then F1.
         best = max(
             constrained, key=lambda row: (row[4], row[3], row[2], row[1], row[0])
         )
@@ -318,7 +316,7 @@ def _find_best_f1_threshold_with_precision_floor(
             best[6],
         )
 
-    # Stage 3 deterministic fallback for sparse folds where floor is unreachable.
+    # deterministic fallback for sparse folds where floor is unreachable.
     best = max(all_rows, key=lambda row: (row[1], row[4], row[2], row[3], row[0]))
     return (
         best[0],
@@ -458,6 +456,7 @@ def _run_grouped_cv_for_config(
             )
 
         inner_gkf = GroupKFold(n_splits=inner_splits)
+        # fit model on one inner block and reserve the other for honest calibration/threshold tuning.
         fit_rel_idx, calib_rel_idx = next(
             inner_gkf.split(X_train, y_train, groups=groups_train)
         )
@@ -491,6 +490,7 @@ def _run_grouped_cv_for_config(
         )
         calib_proba = _apply_calibrator(calibrator, calib_raw_proba)
 
+        # lock threshold policy on inner calibration rows before touching outer test rows.
         unconstrained_threshold, _, _, _ = _find_best_f1_threshold_unconstrained(
             y_calib,
             calib_proba,

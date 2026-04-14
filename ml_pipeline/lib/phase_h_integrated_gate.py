@@ -332,6 +332,7 @@ def main() -> None:
     for phase in PHASE_SEQUENCE:
         block = by_layer_df[by_layer_df["phase"] == phase]
         statuses = block["status"].tolist()
+        # precedence is fail > hold > pass so risk signals are never hidden by passes.
         if any(status == "FAIL" for status in statuses):
             phase_status = "FAIL"
         elif any(status == "HOLD" for status in statuses):
@@ -356,6 +357,7 @@ def main() -> None:
     core_pass = all(phase_status_map[phase] == "PASS" for phase in ["B", "C", "D", "F"])
     g_state = phase_status_map["G"]
 
+    # core validity phases gate deployment first, then phase G controls operational posture.
     if core_fail:
         decision = "NO_GO"
         confidence = "LOW"

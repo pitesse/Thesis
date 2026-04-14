@@ -138,6 +138,7 @@ def _map_outcome(result_norm: str) -> tuple[str, str]:
         return "1", ""
     if result_norm in NEGATIVE_RESULTS:
         return "0", ""
+    # unresolved and weather cases stay excluded so binary labels remain audit-safe.
     if result_norm.startswith("UNRESOLVED_"):
         return "EXCLUDED", result_norm
     if result_norm == "WEATHER_SURVIVAL_STOP":
@@ -159,6 +160,7 @@ def _build_comparator_dataset(
 
     grouped_evals = {key: grp.copy() for key, grp in evals.groupby(["race", "driver"], sort=False)}
 
+    # consume each pit evaluation at most once across the full comparator stream.
     used_eval_ids: set[int] = set()
     rows: list[dict[str, object]] = []
 
@@ -189,6 +191,7 @@ def _build_comparator_dataset(
             ]
             pit_in_window_before_consumption = not window_all.empty
 
+            # keep one-to-one pairing by dropping targets already consumed by earlier rows.
             window = candidates_df[
                 (candidates_df["pit_lap_num"] >= lap)
                 & (candidates_df["pit_lap_num"] <= (lap + horizon))
