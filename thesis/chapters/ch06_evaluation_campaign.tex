@@ -37,16 +37,44 @@ Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured}.
 
 \subsection{Training-Serving Consistency Audit Protocol}
 
-\textbf{Template intent.} Keep this subsection as a gate checklist before reporting live ML-vs-heuristic outcomes.
+\textbf{Template intent.} Keep this subsection as a hard gate before reporting live ML-vs-heuristic readiness claims.
 
 \begin{itemize}
-	\item Compare offline \texttt{ml\_features} rows and live \texttt{f1-ml-features} payloads on race-driver-lap keys.
-	\item Verify point-in-time constraints for each feature family used by serving inference.
-	\item Report schema/feature parity rates before model-quality metrics.
-	\item Report operational live-path metrics: prediction availability and latency ($p50$, $p95$).
+	\item Phase F merged audit status: PASS at gate level (all required checks passed on merged 2022--2024 artifacts).
+	\item Schema parity: serving bundle \texttt{feature\_columns} and training matrix columns matched exactly (order-sensitive check passed).
+	\item Point-in-time legality: lag-2 contracts for \texttt{pace\_trend} and \texttt{gapAhead\_trend} passed with zero mismatch rows and zero initial-lag violations.
+	\item Offline-vs-live sampled parity: overall parity score $1.0000$ on $3000$ sampled race-driver-lap keys across $22$ serving features under tolerance $10^{-6}$.
+	\item Reporting guardrail: deployment-strength claims remain conditional on subsequent Phase G latency and prediction-availability gates.
+	\item Frozen artifacts: \texttt{phase\_f\_parity\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_f\_parity\_details\_2022\_2024\_merged.csv}, \texttt{phase\_f\_parity\_report\_2022\_2024\_merged.txt}.
 \end{itemize}
 
 Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, akidau2015dataflow, widanage2019indy500}.
+
+\subsection{Phase 3.1 Offline Feature and Regularization Checks}
+
+\textbf{Template intent.} Keep this subsection focused on offline evidence before live parity claims.
+
+\begin{itemize}
+	\item Report drop-zones join coverage and default-rate diagnostics for traffic-context features.
+	\item Verify causal construction for momentum features with lag-only operations per race-driver sequence.
+	\item Report grouped-cross-validation metrics for the fixed regularization baseline and reserve ablation sweep as a follow-up experiment.
+\end{itemize}
+
+Suggested references: \citep{carrasco2023optimization, quiroga2024optimization, widanage2019indy500, heilmeier2020race, elkan2001costsensitive, brookshire2024leakage, roberts2017cvstructured}.
+
+\subsection{Phase J Split-Integrity and Comparator-Invariance Closure Audits}
+
+\textbf{Template intent.} Keep this subsection as explicit closure evidence for grouped-validation and frozen comparator semantics.
+
+\begin{itemize}
+    \item Split-integrity audit on merged training and OOF artifacts passed: race-key prefix and source-year consistency checks passed, grouped fold race overlap remained zero across all folds, and OOF race-to-fold uniqueness was preserved.
+    \item OOF coverage consistency checks also passed: OOF row count matched dataset row count and race universe matched exactly across merged 2022--2024 artifacts.
+    \item Comparator-invariance audit passed on both heuristic and ML comparator outputs: exact schema parity, fixed horizon contract $H=2$, actionable-label contract, one-to-one pit consumption, and horizon-bounded matched distances all remained valid.
+    \item Reporting implication: fairness-contract and split-integrity assumptions are now validated by dedicated closure artifacts rather than inferred from upstream scripts.
+    \item Frozen closure artifacts: \texttt{phase\_j\_split\_integrity\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_j\_split\_integrity\_details\_2022\_2024\_merged.csv}, \texttt{phase\_j\_split\_integrity\_report\_2022\_2024\_merged.txt}, \texttt{phase\_j\_comparator\_invariance\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_j\_comparator\_invariance\_details\_2022\_2024\_merged.csv}, \texttt{phase\_j\_comparator\_invariance\_report\_2022\_2024\_merged.txt}.
+\end{itemize}
+
+Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, walters2022comparing, dietterich1998approximate}.
 
 \section{Baseline Definitions}
 \subsection{Heuristic Baseline}
@@ -81,24 +109,118 @@ Suggested references: \citep{saito2015prroc, davis2006relationship, brier1950ver
 
 Suggested references: \citep{dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing}.
 
-\subsection{Current SDE Gate Status After Timing-Pressure Pass}
+\subsection{Merged Comparator Baseline Snapshot (2022--2024)}
 
-\textbf{Template intent.} Keep one concise locked-baseline snapshot for later ML comparison.
+\textbf{Template intent.} Keep one concise merged baseline snapshot for subsequent operating-point and significance discussion.
 
 \begin{itemize}
-	\item Fixed-rule SDE baseline at $H=2$: scored rows $113$, precision $0.6903$, TP $78$, FP $35$.
-	\item Mark this as the frozen comparator reference before ML transition.
-	\item Record high-level residual pattern: horizon timing misses dominate, unresolved post-gap remains secondary.
+	\item Comparator semantics remain frozen: actionable-only matching, one-to-one pit consumption, fixed horizon $H=2$.
+	\item SDE merged reference: scored rows $714$, TP $515$, FP $199$, precision $0.7213$, Wilson 95\% CI $[0.6873, 0.7529]$.
+	\item ML constrained comparator reference: scored rows $750$, TP $706$, FP $44$, precision $0.9413$, Wilson 95\% CI $[0.9222, 0.9560]$.
+	\item Delta snapshot (ML minus SDE): precision $+0.2200$ ($+22.00$ pp), scored rows $+36$.
+	\item Frozen merged artifacts: \texttt{phase\_b\_significance\_summary\_2022\_2024\_merged.csv}, \texttt{heuristic\_comparator\_2022\_2024\_merged.csv}, \texttt{ml\_comparator\_2022\_2024\_merged.csv}.
 \end{itemize}
+
+\subsection{Phase B Significance Snapshot (Merged)}
+
+\textbf{Template intent.} Keep this subsection concise and explicit about test scope and interpretation limits.
+
+\begin{itemize}
+	\item Independent scored-row test: two-proportion z statistic $z=11.3110$, $p=0.0$ (reported under numerical underflow).
+	\item Paired sensitivity check on overlap keys only: McNemar overlap $n=109$, discordant pairs $0$, exact $p=1.0$.
+	\item Interpretation skeleton: precision gain is strong under independent scored-row inference; paired overlap result is reported as a sensitivity check because overlap support is limited.
+	\item Reporting rule: keep comparative superiority claims conditional on stated pairing assumptions and fairness-contract scope.
+\end{itemize}
+
+Suggested references: \citep{dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing}.
+
+\subsection{Phase 3.1C ML Winner Offline Snapshot (Grouped 5-Fold OOF, Merged)}
+
+\textbf{Template intent.} Record frozen winner diagnostics from merged grouped-CV outputs before live-serving claims.
+
+\begin{itemize}
+	\item Winner configuration: \texttt{max\_depth=6}, \texttt{learning\_rate=0.1}, \texttt{n\_estimators=400}, \texttt{max\_delta\_step=1}, \texttt{subsample=0.7}, \texttt{colsample\_bytree=0.8}, \texttt{scale\_pos\_weight=30}.
+	\item Mean grouped-CV metrics (merged): AUC-PR raw $0.4619$, PR-lift raw $0.4065$, unconstrained F1 $0.4789$, constrained F1 $0.3439$.
+	\item Decision-policy diagnostics: constrained precision $0.7558$, mean constrained threshold $0.7560$, precision-floor reachability ratio $0.9758$, fallback $0/5$ folds.
+	\item Calibration snapshot: mean Brier score $0.0398$, calibration mix isotonic in $5/5$ folds.
+	\item Frozen artifact: \texttt{data\_lake/reports/ml\_ablation\_phase31c\_structural\_dedup\_2022\_2024\_merged.csv}.
+\end{itemize}
+
+Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, saito2015prroc, davis2006relationship, brier1950verification, guo2017calibration, kull2017beta, elkan2001costsensitive}.
+
+\subsection{Phase 3.1C Operating-Point Frontier Snapshot (SDE vs ML)}
+
+\textbf{Template intent.} Keep this subsection as a concise threshold-to-coverage map under fixed comparator semantics.
+
+\begin{itemize}
+	\item SDE merged anchor: scored rows $714$, precision $0.7213$.
+	\item ML threshold $0.50$: actionable $2512$, scored $1075$, precision $0.9284$.
+	\item ML threshold $0.10$ (reference reporting point): actionable $7873$, scored $1687$, precision $0.8726$ (above SDE floor).
+	\item ML threshold $0.05$ (higher-coverage sensitivity case): actionable $19978$, scored $2130$, precision $0.8178$.
+	\item Interpretation skeleton: threshold control exposes an explicit precision-coverage frontier; $0.10$ remains the balanced reporting point in this cycle.
+\end{itemize}
+
+Suggested references: \citep{saito2015prroc, davis2006relationship, elkan2001costsensitive, walters2022comparing}.
+
+\subsection{Lookahead-Limitation Diagnostics (Merged)}
+
+\textbf{Template intent.} Replace hypothesis-only wording with concise verified diagnostics while preserving caveats.
+
+\begin{itemize}
+	\item At threshold $0.10$, excluded rows are dominated by \texttt{NO\_MATCH\_WITHIN\_HORIZON}: $5961$ rows, rate $0.9636$ among exclusions.
+	\item No-match timing split at threshold $0.10$: one lap beyond $758$, two-to-three laps beyond $1000$, four or more laps beyond $1659$.
+	\item In-window consumed conflicts at threshold $0.10$: $1570$ rows.
+	\item Interpretation skeleton: horizon-lag effects remain the dominant exclusion mechanism even after threshold relaxation, while threshold tuning still recovers substantial scored coverage.
+	\item Reporting guardrail: keep causality claims bounded to fixed $H=2$ contract and point-in-time feature availability assumptions.
+\end{itemize}
+
+Suggested references: \citep{akidau2015dataflow, brookshire2024leakage, roberts2017cvstructured, walters2022comparing}.
+
+\subsection{Phase D Calibration and Decision-Policy Diagnostics (Merged)}
+
+\textbf{Template intent.} Keep this subsection as an explicit reliability and policy-conservatism checkpoint on grouped-CV OOF outputs.
+
+\begin{itemize}
+	\item OOF reliability summary (merged): calibrated Brier $0.0398$, calibrated ECE $0.0094$, calibrated MCE $0.2271$; calibration materially improves raw reliability diagnostics.
+	\item Constrained policy behavior on OOF rows: positive-rate $0.0174$, precision $0.7377$, recall $0.2319$, mean constrained threshold $0.7560$ (range $0.75$ to $0.77$).
+	\item Precision-floor diagnostics from winner ablation: reachability ratio $0.9758$, mean margin-to-floor $+0.6558$, fallback $0/5$ folds, calibration mix isotonic $5/5$ folds.
+	\item Reference-threshold sensitivity on the same OOF rows: fixed threshold $0.10$ yields positive-rate $0.0934$, precision $0.3272$, recall $0.5516$; fixed threshold $0.50$ yields positive-rate $0.0298$, precision $0.6425$, recall $0.3456$.
+	\item Interpretation skeleton: constrained utility policy remains precision-oriented while keeping measurable recall, and remains easier to satisfy than in the prior freeze snapshot.
+	\item Frozen artifacts: \texttt{phase\_d\_calibration\_policy\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_d\_policy\_reference\_thresholds\_2022\_2024\_merged.csv}, \texttt{phase\_d\_policy\_by\_year\_2022\_2024\_merged.csv}.
+\end{itemize}
+
+Suggested references: \citep{brier1950verification, platt1999probabilistic, guo2017calibration, kull2017beta, elkan2001costsensitive}.
 
 \section{Latency and Throughput Results}
 
 \textbf{Template intent.} Keep this section focused on operational feasibility.
 
 \begin{itemize}
-	\item End-to-end latency distribution and throughput under replay loads.
-	\item Compare overhead introduced by ML inference path vs heuristic-only path.
+	\item Phase G merged latency gate status: PASS on $3000$ replayed events from the merged feature stream under frozen serving contract.
+	\item End-to-end feature-to-prediction latency stayed within operational budget: $p50=3.392$ ms, $p95=7.758$ ms, $p99=17.959$ ms, with budget fixed at $p95 < 500$ ms.
+	\item Prediction availability also passed: $100.0\%$ ($3000/3000$ successful predictions, $0$ failed events) against a fixed $\geq 99\%$ gate.
+	\item By-year latency stability remained consistent: 2022 $p95=9.211$ ms, 2023 $p95=7.441$ ms, 2024 $p95=7.627$ ms.
+	\item Overhead attribution remained explicit: heuristic-proxy $p95=0.059$ ms, ML-added overhead $p95=7.710$ ms, ML total-path $p95=7.758$ ms.
+	\item Reporting guardrail closure: Phase H integrated synthesis returned GO for the engineered-feature scope; deployment-strength framing is therefore supported, while still bounded to fixed fairness-contract and replay assumptions.
+	\item Frozen artifacts: \texttt{phase\_g\_latency\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_g\_latency\_details\_2022\_2024\_merged.csv}, \texttt{phase\_g\_latency\_by\_year\_2022\_2024\_merged.csv}, \texttt{phase\_g\_availability\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_g\_overhead\_comparison\_2022\_2024\_merged.csv}.
 \end{itemize}
+
+Suggested references: \citep{akidau2015dataflow, carbone2015flink, widanage2019indy500}.
+
+\subsection{Phase H Integrated Go/No-Go Evaluation Gate}
+
+\textbf{Template intent.} Consolidate all required evidence into one auditable claim-readiness decision.
+
+\begin{itemize}
+	\item Phase H integrated decision on merged 2022--2024 artifacts: GO (high confidence).
+	\item All phase-level gates passed: B significance and uncertainty, C lookahead diagnostics at threshold $0.10$, D calibration-policy diagnostics, F training-serving parity, and G latency-availability feasibility.
+	\item By-layer integrated checks passed $12/12$, with no HOLD or FAIL rows in the unified by-layer gate table.
+	\item Decision-critical evidence remained consistent with earlier sections: two-proportion test $p=0.0$ (numerical underflow), reference-threshold precision $0.8726$ above SDE floor $0.7213$, constrained-policy precision $0.7377$ with reachability ratio $0.9758$, parity score $1.0000$, latency $p95=7.758$ ms, availability $100.0\%$.
+	\item Reporting guardrail: GO enables stronger deployment-readiness framing for the engineered-feature scope, while claims remain bounded to the fixed fairness contract and replay protocol assumptions.
+	\item Frozen artifacts: \texttt{phase\_h\_unified\_gate\_2022\_2024\_merged.csv}, \texttt{phase\_h\_unified\_gate\_by\_layer\_2022\_2024\_merged.csv}, \texttt{phase\_h\_unified\_gate\_report\_2022\_2024\_merged.txt}.
+\end{itemize}
+
+Suggested references: \citep{dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing, saito2015prroc, davis2006relationship, elkan2001costsensitive, brier1950verification, platt1999probabilistic, guo2017calibration, kull2017beta, brookshire2024leakage, roberts2017cvstructured, akidau2015dataflow, carbone2015flink, widanage2019indy500}.
 
 \section{Error Analysis and Failure Modes}
 

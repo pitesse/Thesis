@@ -27,6 +27,9 @@ from .model_training_cv import (
 
 DEFAULT_OUTPUT = "data_lake/models/pit_strategy_serving_bundle.joblib"
 DEFAULT_THRESHOLD = 0.50
+DEFAULT_N_ESTIMATORS = 400
+DEFAULT_LEARNING_RATE = 0.05
+DEFAULT_MAX_DEPTH = 6
 DEFAULT_MAX_DELTA_STEP = 1
 DEFAULT_SUBSAMPLE = 0.7
 DEFAULT_COLSAMPLE_BYTREE = 0.8
@@ -39,6 +42,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=DEFAULT_DATASET, help="path to prepared training dataset")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="output joblib path")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="default serving threshold")
+    parser.add_argument("--n-estimators", type=int, default=DEFAULT_N_ESTIMATORS, help="model n_estimators")
+    parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE, help="model learning_rate")
+    parser.add_argument("--max-depth", type=int, default=DEFAULT_MAX_DEPTH, help="model max_depth")
     parser.add_argument("--max-delta-step", type=int, default=DEFAULT_MAX_DELTA_STEP, help="model max_delta_step")
     parser.add_argument("--subsample", type=float, default=DEFAULT_SUBSAMPLE, help="model subsample")
     parser.add_argument(
@@ -74,6 +80,12 @@ def main() -> None:
     args = parse_args()
     if not (0.0 < args.threshold < 1.0):
         raise ValueError("--threshold must be between 0 and 1")
+    if args.n_estimators < 1:
+        raise ValueError("--n-estimators must be >= 1")
+    if not (0.0 < args.learning_rate <= 1.0):
+        raise ValueError("--learning-rate must satisfy 0 < value <= 1")
+    if args.max_depth <= 0:
+        raise ValueError("--max-depth must be >= 1")
     if args.max_delta_step < 0:
         raise ValueError("--max-delta-step must be >= 0")
     if not (0.0 < args.subsample <= 1.0):
@@ -98,9 +110,9 @@ def main() -> None:
         spw = float(args.scale_pos_weight_value)
 
     model = XGBClassifier(
-        n_estimators=400,
-        learning_rate=0.05,
-        max_depth=6,
+        n_estimators=args.n_estimators,
+        learning_rate=args.learning_rate,
+        max_depth=args.max_depth,
         min_child_weight=1,
         max_delta_step=args.max_delta_step,
         subsample=args.subsample,
@@ -134,6 +146,9 @@ def main() -> None:
         "negative_count": int((y == 0).sum()),
         "scale_pos_weight": float(spw),
         "scale_pos_weight_mode": args.scale_pos_weight_mode,
+        "n_estimators": int(args.n_estimators),
+        "learning_rate": float(args.learning_rate),
+        "max_depth": int(args.max_depth),
         "max_delta_step": int(args.max_delta_step),
         "subsample": float(args.subsample),
         "colsample_bytree": float(args.colsample_bytree),
@@ -148,6 +163,9 @@ def main() -> None:
     print(f"output           : {output_path}")
     print(f"rows             : {bundle['row_count']}")
     print(f"feature columns  : {len(bundle['feature_columns'])}")
+    print(f"n_estimators     : {bundle['n_estimators']}")
+    print(f"learning_rate    : {bundle['learning_rate']:.4f}")
+    print(f"max_depth        : {bundle['max_depth']}")
     print(f"max_delta_step   : {bundle['max_delta_step']}")
     print(f"subsample        : {bundle['subsample']:.4f}")
     print(f"colsample_bytree : {bundle['colsample_bytree']:.4f}")

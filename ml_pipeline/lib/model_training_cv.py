@@ -39,6 +39,9 @@ DEFAULT_GRID_MAX_DELTA_STEP = (1,)
 DEFAULT_GRID_SUBSAMPLE = (0.7,)
 DEFAULT_GRID_COLSAMPLE_BYTREE = (0.8,)
 DEFAULT_GRID_SCALE_POS_WEIGHT = ("30",)
+DEFAULT_GRID_MAX_DEPTH = (6,)
+DEFAULT_GRID_LEARNING_RATE = (0.05,)
+DEFAULT_GRID_N_ESTIMATORS = (400,)
 DEFAULT_LEADERBOARD_TOP_K = 5
 DEFAULT_LEADERBOARD_OUTPUT = ""
 
@@ -387,15 +390,18 @@ def _format_scale_pos_weight_label(mode: str, fixed_value: float | None) -> str:
 
 
 def _build_model(
+    n_estimators: int,
+    learning_rate: float,
+    max_depth: int,
     scale_pos_weight: float,
     max_delta_step: int,
     subsample: float,
     colsample_bytree: float,
 ) -> XGBClassifier:
     return XGBClassifier(
-        n_estimators=400,
-        learning_rate=0.05,
-        max_depth=6,
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        max_depth=max_depth,
         min_child_weight=1,
         max_delta_step=max_delta_step,
         subsample=subsample,
@@ -418,6 +424,9 @@ def _run_grouped_cv_for_config(
     baseline_threshold: float,
     precision_floor: float,
     constrained_fp_cost: float,
+    max_depth: int,
+    learning_rate: float,
+    n_estimators: int,
     max_delta_step: int,
     subsample: float,
     colsample_bytree: float,
@@ -474,6 +483,9 @@ def _run_grouped_cv_for_config(
         )
 
         calib_model = _build_model(
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            max_depth=max_depth,
             scale_pos_weight=calib_spw,
             max_delta_step=max_delta_step,
             subsample=subsample,
@@ -516,6 +528,9 @@ def _run_grouped_cv_for_config(
         )
 
         model = _build_model(
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            max_depth=max_depth,
             scale_pos_weight=fold_spw,
             max_delta_step=max_delta_step,
             subsample=subsample,
@@ -670,6 +685,9 @@ def _run_grouped_cv_for_config(
 def _summarize_config(
     fold_df: pd.DataFrame,
     config_id: int,
+    max_depth: int,
+    learning_rate: float,
+    n_estimators: int,
     max_delta_step: int,
     subsample: float,
     colsample_bytree: float,
@@ -694,6 +712,9 @@ def _summarize_config(
 
     return {
         "config_id": int(config_id),
+        "max_depth": int(max_depth),
+        "learning_rate": float(learning_rate),
+        "n_estimators": int(n_estimators),
         "max_delta_step": int(max_delta_step),
         "subsample": float(subsample),
         "colsample_bytree": float(colsample_bytree),
@@ -831,6 +852,27 @@ def parse_args() -> argparse.Namespace:
         help="ablation grid for scale_pos_weight (use 'auto' and/or numeric values)",
     )
     parser.add_argument(
+        "--grid-max-depth",
+        type=int,
+        nargs="+",
+        default=list(DEFAULT_GRID_MAX_DEPTH),
+        help="ablation grid for max_depth",
+    )
+    parser.add_argument(
+        "--grid-learning-rate",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_GRID_LEARNING_RATE),
+        help="ablation grid for learning_rate",
+    )
+    parser.add_argument(
+        "--grid-n-estimators",
+        type=int,
+        nargs="+",
+        default=list(DEFAULT_GRID_N_ESTIMATORS),
+        help="ablation grid for n_estimators",
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=DEFAULT_LEADERBOARD_TOP_K,
@@ -885,6 +927,17 @@ def main() -> None:
         raise ValueError("--grid-colsample-bytree values must satisfy 0 < value <= 1")
 
     grid_scale_pos_weight = _parse_scale_pos_weight_grid(args.grid_scale_pos_weight)
+    grid_max_depths = sorted(set(args.grid_max_depth))
+    if any(value <= 0 for value in grid_max_depths):
+        raise ValueError("--grid-max-depth values must be >= 1")
+
+    grid_learning_rates = sorted(set(args.grid_learning_rate))
+    if any(value <= 0.0 or value > 1.0 for value in grid_learning_rates):
+        raise ValueError("--grid-learning-rate values must satisfy 0 < value <= 1")
+
+    grid_n_estimators = sorted(set(args.grid_n_estimators))
+    if any(value < 1 for value in grid_n_estimators):
+        raise ValueError("--grid-n-estimators values must be >= 1")
 
     config_grid = list(
         product(
@@ -892,6 +945,9 @@ def main() -> None:
             grid_subsamples,
             grid_colsamples,
             grid_scale_pos_weight,
+            grid_max_depths,
+            grid_learning_rates,
+            grid_n_estimators,
         )
     )
     if not config_grid:
@@ -935,13 +991,24 @@ def main() -> None:
     print(f"grid subsample          : {grid_subsamples}")
     print(f"grid colsample_bytree   : {grid_colsamples}")
     print(f"grid scale_pos_weight   : {spw_labels}")
+    print(f"grid max_depth          : {grid_max_depths}")
+    print(f"grid learning_rate      : {grid_learning_rates}")
+    print(f"grid n_estimators       : {grid_n_estimators}")
     print(f"total configurations    : {len(config_grid)}")
 
     leaderboard_rows: list[dict[str, float | int | str]] = []
     collect_oof = bool(args.oof_output)
     oof_frames: list[pd.DataFrame] = []
 
-    for config_id, (max_delta_step, subsample, colsample_bytree, spw_cfg) in enumerate(
+    for config_id, (
+        max_delta_step,
+        subsample,
+        colsample_bytree,
+        spw_cfg,
+        max_depth,
+        learning_rate,
+        n_estimators,
+    ) in enumerate(
         config_grid, start=1
     ):
         spw_mode, spw_fixed = spw_cfg
@@ -952,6 +1019,9 @@ def main() -> None:
         print(f"subsample            : {subsample:.4f}")
         print(f"colsample_bytree     : {colsample_bytree:.4f}")
         print(f"scale_pos_weight     : {spw_label}")
+        print(f"max_depth            : {max_depth}")
+        print(f"learning_rate        : {learning_rate:.4f}")
+        print(f"n_estimators         : {n_estimators}")
 
         fold_df, oof_df = _run_grouped_cv_for_config(
             X=X,
@@ -963,6 +1033,9 @@ def main() -> None:
             baseline_threshold=args.threshold,
             precision_floor=args.precision_floor,
             constrained_fp_cost=args.constrained_fp_cost,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            n_estimators=n_estimators,
             max_delta_step=max_delta_step,
             subsample=subsample,
             colsample_bytree=colsample_bytree,
@@ -980,6 +1053,9 @@ def main() -> None:
         summary = _summarize_config(
             fold_df=fold_df,
             config_id=config_id,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            n_estimators=n_estimators,
             max_delta_step=max_delta_step,
             subsample=subsample,
             colsample_bytree=colsample_bytree,
@@ -1021,6 +1097,9 @@ def main() -> None:
     top_k = min(args.top_k, len(leaderboard_df))
     display_cols = [
         "config_id",
+        "max_depth",
+        "learning_rate",
+        "n_estimators",
         "max_delta_step",
         "subsample",
         "colsample_bytree",
@@ -1044,6 +1123,9 @@ def main() -> None:
     winner = leaderboard_df.iloc[0]
     print("\n=== SELECTED WINNER ===")
     print(f"config_id            : {int(winner['config_id'])}")
+    print(f"max_depth            : {int(winner['max_depth'])}")
+    print(f"learning_rate        : {float(winner['learning_rate']):.6f}")
+    print(f"n_estimators         : {int(winner['n_estimators'])}")
     print(f"max_delta_step       : {int(winner['max_delta_step'])}")
     print(f"subsample            : {float(winner['subsample']):.4f}")
     print(f"colsample_bytree     : {float(winner['colsample_bytree']):.4f}")
