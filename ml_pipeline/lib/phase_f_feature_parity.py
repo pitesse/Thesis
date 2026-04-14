@@ -100,7 +100,9 @@ def _collect_serving_features(
     drop_zone_lookup: dict[tuple[str, str, int], tuple[int, float]] | None,
 ) -> pd.DataFrame:
     work = _normalize_key_frame(ml_features)
-    work.sort_values(by=KEY_COLUMNS, inplace=True)
+    # mirror offline prep contract: keep-last dedup before lag-state derivation.
+    work = work.drop_duplicates(subset=KEY_COLUMNS, keep="last").copy()
+    work.sort_values(by=KEY_COLUMNS, kind="mergesort", inplace=True)
 
     engineer = OnlineFeatureEngineer(drop_zone_lookup=drop_zone_lookup)
     rows: list[dict[str, object]] = []
@@ -116,7 +118,6 @@ def _collect_serving_features(
         )
 
     serving_df = pd.DataFrame(rows)
-    serving_df.drop_duplicates(subset=KEY_COLUMNS, keep="last", inplace=True)
     serving_df.reset_index(drop=True, inplace=True)
     return serving_df
 

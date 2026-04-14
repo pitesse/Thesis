@@ -69,6 +69,12 @@ REQUIRED_DROP_ZONE_COLUMNS = [
     "gapToPhysicalCar",
 ]
 
+def _duplicate_key_stats(df: pd.DataFrame, key_columns: list[str]) -> tuple[int, int]:
+    counts = df.groupby(key_columns, dropna=False).size()
+    duplicate_keys = int((counts > 1).sum())
+    duplicate_excess = int((counts[counts > 1] - 1).sum())
+    return duplicate_keys, duplicate_excess
+
 
 def _normalize_label(value: object) -> str:
     if value is None:
@@ -121,6 +127,18 @@ def _prepare_features(
     work["lapNumber"] = pd.to_numeric(work["lapNumber"], errors="coerce")
     work = work[work["lapNumber"].notna()].copy()
     work["lapNumber"] = work["lapNumber"].astype(int)
+
+    dedup_keys_before, dedup_excess_before = _duplicate_key_stats(
+        work, ["race", "driver", "lapNumber"]
+    )
+    work = work.drop_duplicates(
+        subset=["race", "driver", "lapNumber"],
+        keep="last",
+    ).copy()
+    dedup_keys_after, dedup_excess_after = _duplicate_key_stats(
+        work, ["race", "driver", "lapNumber"]
+    )
+
     work["compound_norm"] = work["compound"].map(_normalize_label)
     work["tyre_life_num"] = pd.to_numeric(work["tyreLife"], errors="coerce")
     work["lap_time_num"] = pd.to_numeric(work["lapTime"], errors="coerce")
@@ -242,6 +260,13 @@ def _prepare_features(
     )
 
     work.reset_index(drop=True, inplace=True)
+    work.attrs["dedup_stats"] = {
+        "key_columns": "race,driver,lapNumber",
+        "dedup_keys_before": dedup_keys_before,
+        "dedup_excess_rows_before": dedup_excess_before,
+        "dedup_keys_after": dedup_keys_after,
+        "dedup_excess_rows_after": dedup_excess_after,
+    }
     return work
 
 
@@ -256,10 +281,28 @@ def _prepare_pit_evals(pit_evals: pd.DataFrame) -> pd.DataFrame:
     work = work[work["pitLapNumber"].notna()].copy()
     work["pitLapNumber"] = work["pitLapNumber"].astype(int)
 
+    dedup_keys_before, dedup_excess_before = _duplicate_key_stats(
+        work, ["race", "driver", "pitLapNumber"]
+    )
+    work = work.drop_duplicates(
+        subset=["race", "driver", "pitLapNumber"],
+        keep="last",
+    ).copy()
+    dedup_keys_after, dedup_excess_after = _duplicate_key_stats(
+        work, ["race", "driver", "pitLapNumber"]
+    )
+
     work["result_norm"] = work["result"].map(_normalize_label)
 
     work.sort_values(by=["race", "driver", "pitLapNumber"], inplace=True)
     work.reset_index(drop=True, inplace=True)
+    work.attrs["dedup_stats"] = {
+        "key_columns": "race,driver,pitLapNumber",
+        "dedup_keys_before": dedup_keys_before,
+        "dedup_excess_rows_before": dedup_excess_before,
+        "dedup_keys_after": dedup_keys_after,
+        "dedup_excess_rows_after": dedup_excess_after,
+    }
     return work
 
 
@@ -404,6 +447,8 @@ def _print_summary(
     pit_evals_path: Path,
     output_path: Path,
     output_format: str,
+    feature_dedup_stats: dict[str, int | str] | None = None,
+    pit_eval_dedup_stats: dict[str, int | str] | None = None,
 ) -> None:
     positives = int((dataset["target_y"] == 1).sum())
     negatives = int((dataset["target_y"] == 0).sum())
@@ -439,6 +484,24 @@ def _print_summary(
     print("\ntraffic context diagnostics")
     print(f"rows with drop-zones context       : {with_drop_zone}")
     print(f"rows without drop-zones context    : {total - with_drop_zone}")
+    if feature_dedup_stats is not None or pit_eval_dedup_stats is not None:
+        print("\ndedup diagnostics")
+    if feature_dedup_stats is not None:
+        print(
+            "ml_features keys               : "
+            f"before={feature_dedup_stats.get('dedup_keys_before', 0)}, "
+            f"excess_before={feature_dedup_stats.get('dedup_excess_rows_before', 0)}, "
+            f"after={feature_dedup_stats.get('dedup_keys_after', 0)}, "
+            f"excess_after={feature_dedup_stats.get('dedup_excess_rows_after', 0)}"
+        )
+    if pit_eval_dedup_stats is not None:
+        print(
+            "pit_evals keys                 : "
+            f"before={pit_eval_dedup_stats.get('dedup_keys_before', 0)}, "
+            f"excess_before={pit_eval_dedup_stats.get('dedup_excess_rows_before', 0)}, "
+            f"after={pit_eval_dedup_stats.get('dedup_keys_after', 0)}, "
+            f"excess_after={pit_eval_dedup_stats.get('dedup_excess_rows_after', 0)}"
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -508,6 +571,8 @@ def main() -> None:
         pit_evals_path=pit_evals_path,
         output_path=saved_path,
         output_format=output_format,
+        feature_dedup_stats=features.attrs.get("dedup_stats"),
+        pit_eval_dedup_stats=pit_evals.attrs.get("dedup_stats"),
     )
 
 

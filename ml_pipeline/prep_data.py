@@ -35,6 +35,8 @@ class PreparedSeason:
     ml_features_path: Path
     drop_zones_path: Path
     pit_evals_path: Path
+    feature_dedup_stats: dict[str, int | str]
+    pit_eval_dedup_stats: dict[str, int | str]
     dataset: pd.DataFrame
 
 
@@ -69,6 +71,8 @@ def _prepare_one_season(
         source_year_fallback=year,
     )
     pit_evals = _prepare_pit_evals(pit_evals_raw)
+    feature_dedup_stats = dict(features.attrs.get("dedup_stats", {}))
+    pit_eval_dedup_stats = dict(pit_evals.attrs.get("dedup_stats", {}))
 
     # keep race keys unique across seasons to preserve grouped-CV integrity.
     features = _with_year_prefixed_race(features, year)
@@ -81,6 +85,8 @@ def _prepare_one_season(
         ml_features_path=ml_features_path,
         drop_zones_path=drop_zones_path,
         pit_evals_path=pit_evals_path,
+        feature_dedup_stats=feature_dedup_stats,
+        pit_eval_dedup_stats=pit_eval_dedup_stats,
         dataset=dataset,
     )
 
@@ -116,6 +122,14 @@ def _print_multi_season_summary(
         print(f"{item.year}: ml_features={item.ml_features_path}")
         print(f"{item.year}: drop_zones={item.drop_zones_path}")
         print(f"{item.year}: pit_evals={item.pit_evals_path}")
+        print(
+            f"{item.year}: ml_features_dedup_excess={item.feature_dedup_stats.get('dedup_excess_rows_before', 0)} "
+            f"-> {item.feature_dedup_stats.get('dedup_excess_rows_after', 0)}"
+        )
+        print(
+            f"{item.year}: pit_evals_dedup_excess={item.pit_eval_dedup_stats.get('dedup_excess_rows_before', 0)} "
+            f"-> {item.pit_eval_dedup_stats.get('dedup_excess_rows_after', 0)}"
+        )
         print(f"{item.year}: rows={len(item.dataset)}")
 
     print("\nclass distribution")
@@ -158,6 +172,8 @@ def prepare_dataset(
             pit_evals_path=season.pit_evals_path,
             output_path=saved_path,
             output_format=output_format,
+            feature_dedup_stats=season.feature_dedup_stats,
+            pit_eval_dedup_stats=season.pit_eval_dedup_stats,
         )
         return saved_path
 
