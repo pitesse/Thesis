@@ -65,6 +65,7 @@ def _prepare_ml_suggestions(
     work[decision_column] = pd.to_numeric(work[decision_column], errors="coerce").fillna(0).astype(int)
     work[score_column] = pd.to_numeric(work[score_column], errors="coerce")
 
+    # only positive decisions become actions so comparator precision stays interpretable.
     actionable = work[work[decision_column] == 1].copy()
     if actionable.empty:
         raise ValueError("No actionable ML decisions were found (decision column has no positive rows)")
@@ -113,6 +114,7 @@ def main() -> None:
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", args.year, args.season_tag)
     pit_evals = _prepare_pit_evals(_load_jsonl(pit_evals_path))
 
+    # reuse the exact heuristic matcher to preserve a fair ML-vs-heuristic contract.
     comparator = _build_comparator_dataset(suggestions, pit_evals, args.horizon)
 
     output_path = Path(args.output)

@@ -53,6 +53,7 @@ def _prepare_one_season(
     season_tag: str,
     horizon: int,
 ) -> PreparedSeason:
+    # always select latest stream snapshots per season token, this keeps retraining aligned with latest validated exports.
     ml_features_path = _latest_jsonl(data_lake, "ml_features", year, season_tag)
     drop_zones_path = _latest_jsonl(data_lake, "drop_zones", year, season_tag)
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", year, season_tag)
@@ -69,7 +70,7 @@ def _prepare_one_season(
     )
     pit_evals = _prepare_pit_evals(pit_evals_raw)
 
-    # Keep race keys unique across seasons to preserve grouped-CV integrity.
+    # keep race keys unique across seasons to preserve grouped-CV integrity.
     features = _with_year_prefixed_race(features, year)
     pit_evals = _with_year_prefixed_race(pit_evals, year)
 
@@ -87,6 +88,7 @@ def _prepare_one_season(
 def _merge_seasons(prepared: list[PreparedSeason]) -> pd.DataFrame:
     frames = [item.dataset for item in prepared]
     merged = pd.concat(frames, ignore_index=True)
+    # stable sort order keeps downstream hashes and grouped cv splits deterministic across reruns.
     merged.sort_values(by=["race", "driver", "lapNumber"], inplace=True)
     merged.reset_index(drop=True, inplace=True)
     return merged
@@ -143,6 +145,7 @@ def prepare_dataset(
 
     if len(prepared) == 1:
         season = prepared[0]
+        # single season path preserves the same summary format used by legacy training runs.
         saved_path, output_format = _write_dataset(
             season.dataset,
             output_path,
@@ -158,6 +161,7 @@ def prepare_dataset(
         )
         return saved_path
 
+    # multi season path merges first, then writes one canonical artifact consumed by training and evaluation.
     merged = _merge_seasons(prepared)
     saved_path, output_format = _write_dataset(
         merged,
@@ -213,7 +217,11 @@ def main() -> None:
     data_lake = Path(args.data_lake)
     years = normalize_years(args.years)
 
-    output_path = Path(args.output) if args.output else default_dataset_path(data_lake, years, args.season_tag)
+    output_path = (
+        Path(args.output)
+        if args.output
+        else default_dataset_path(data_lake, years, args.season_tag)
+    )
     if not output_path.is_absolute():
         output_path = Path(output_path)
 

@@ -189,6 +189,7 @@ def main() -> None:
         n_b=int(ml_summary["scored"]),
     )
 
+    # pair only exact race-driver-lap keys so mcnemar uses truly matched decisions.
     overlap = sde_scored.merge(
         ml_scored,
         on=KEY_COLUMNS,
@@ -197,6 +198,7 @@ def main() -> None:
     )
 
     if overlap.empty:
+        # no shared keys means paired significance is undefined for this run.
         mcnemar = {
             "discordant_total": 0,
             "sde_success_ml_failure": 0,

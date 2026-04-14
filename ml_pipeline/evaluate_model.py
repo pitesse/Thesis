@@ -32,6 +32,7 @@ from lib.data_preparation import _latest_jsonl
 
 @contextmanager
 def _patched_argv(argv: list[str]):
+    # run nested module mains with script-like argv, keeps argparse behavior consistent.
     original = sys.argv[:]
     sys.argv = argv
     try:
@@ -49,6 +50,7 @@ def _run_step(step_name: str, command: list[str]) -> None:
         raise RuntimeError(f"invalid command for {step_name}: {command}")
 
     script_path = Path(command[1])
+    # map file paths to importable module names, this keeps one execution path for cli and orchestrator modes.
     if script_path.parent.name == "lib":
         module_name = f"lib.{script_path.stem}"
     else:
@@ -182,6 +184,7 @@ def _ensure_merged_jsonl(
 
     newest_source_mtime = max(path.stat().st_mtime for _, path in source_paths)
     existing_valid = False
+    # reuse merged files when source streams did not change, avoids hidden drift across repeated evaluations.
     if existing_merged is not None and existing_merged.stat().st_mtime >= newest_source_mtime:
         existing_valid = _existing_merged_has_prefixed_race(existing_merged)
         if existing_valid and stream == "pit_evals":
@@ -219,6 +222,7 @@ def _ensure_merged_jsonl(
                         lap_key = str(lap_raw)
 
                     if race and driver and lap_raw is not None:
+                        # keep the latest row per pit key, enforces deterministic one to one comparator inputs.
                         deduped_rows[(race, driver, lap_key)] = row
                     else:
                         passthrough_rows.append(row)
@@ -297,6 +301,7 @@ def main() -> None:
     comparator_year, comparator_tag = comparator_source_year_and_tag(years, args.season_tag)
 
     ensured_merged: dict[str, Path] = {}
+    # multi-season evaluations must operate on aligned merged streams, avoids cross-season key collisions.
     if len(years) > 1:
         merge_stamp = pd.Timestamp.utcnow().strftime("%Y%m%d_%H%M%S")
         for stream in ("pit_suggestions", "pit_evals", "ml_features", "drop_zones"):

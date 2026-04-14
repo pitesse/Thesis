@@ -241,6 +241,7 @@ def main() -> None:
     offline_for_pit = _normalize_key_frame(offline_features)
     offline_for_pit.sort_values(by=KEY_COLUMNS, inplace=True)
 
+    # recompute lag-2 trends from base columns to verify point-in-time legality directly.
     pace_expected = (
         offline_for_pit["pace_drop_ratio"]
         - offline_for_pit.groupby(["race", "driver"], sort=False)["pace_drop_ratio"].shift(2)
@@ -311,6 +312,7 @@ def main() -> None:
     offline_compare.drop_duplicates(subset=KEY_COLUMNS, keep="last", inplace=True)
 
     compare_columns = [column for column in PARITY_COMPARE_COLUMNS if column in offline_compare.columns and column in serving_features.columns]
+    # merge on exact race-driver-lap keys so differences reflect transform drift only.
     merged = offline_compare[KEY_COLUMNS + compare_columns].merge(
         serving_features[KEY_COLUMNS + compare_columns],
         on=KEY_COLUMNS,

@@ -9,6 +9,7 @@ DEFAULT_DATA_LAKE = "data_lake"
 DEFAULT_SEASON_TAG = "season"
 DEFAULT_HORIZON = 2
 DEFAULT_YEARS = (2022, 2023, 2024)
+# merged runs use a synthetic year token, keeps artifact names stable while preserving single season paths.
 DEFAULT_MERGED_YEAR_TOKEN = 9999
 DEFAULT_MERGED_SEASON_TAG = "merged"
 
@@ -22,6 +23,7 @@ def normalize_years(years: Iterable[int]) -> list[int]:
 
 def run_suffix(years: Iterable[int], season_tag: str) -> str:
     normalized = normalize_years(years)
+    # keep single season names short, merged names explicit for reproducibility in reports.
     if len(normalized) == 1:
         year = normalized[0]
         if season_tag == DEFAULT_SEASON_TAG:
@@ -60,6 +62,7 @@ def default_report_md(data_lake: str | Path, stem: str, years: Iterable[int], se
 
 def comparator_source_year_and_tag(years: Iterable[int], season_tag: str) -> tuple[int, str]:
     normalized = normalize_years(years)
+    # comparator builders consume one year and one tag, merged evaluations route through the synthetic merged token.
     if len(normalized) == 1:
         return normalized[0], season_tag
     return DEFAULT_MERGED_YEAR_TOKEN, DEFAULT_MERGED_SEASON_TAG

@@ -206,6 +206,7 @@ class OnlineFeatureEngineer:
         gap_ahead_value = gap_ahead_raw if gap_ahead_raw is not None else STRUCTURAL_GAP_FILL
         gap_behind_value = gap_behind_raw if gap_behind_raw is not None else STRUCTURAL_GAP_FILL
 
+        # mirror offline shift(2): compare against the value from two laps earlier.
         if len(state.pace_drop_history) >= 2:
             pace_trend = pace_drop_ratio - state.pace_drop_history[-2]
         else:
@@ -254,6 +255,7 @@ class OnlineFeatureEngineer:
             "_source_year": int(source_year),
         }
 
+        # update state after feature emission so the current lap never informs itself.
         state.pace_drop_history.append(pace_drop_ratio)
         state.gap_ahead_history.append(gap_ahead_value)
 
@@ -277,6 +279,7 @@ def _build_model_matrix(feature_row: dict[str, Any], feature_columns: list[str])
     if len(bool_cols) > 0:
         X[bool_cols] = X[bool_cols].astype(int)
 
+    # enforce exact training schema and zero-fill unseen dummies for stable inference.
     X = X.reindex(columns=feature_columns, fill_value=0)
     return X
 
