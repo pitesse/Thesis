@@ -101,8 +101,10 @@ class DriverStintState:
     prev_tyre_life: float | None = None
     prev_compound_norm: str = ""
     stint_best_lap_so_far: float | None = None
+    stint_lap_times: dict[int, float] = field(default_factory=dict)
     pace_drop_history: deque[float] = field(default_factory=lambda: deque(maxlen=3))
     gap_ahead_history: deque[float] = field(default_factory=lambda: deque(maxlen=3))
+    last_lap_number: int | None = None
 
 
 def _source_year_from_race(race: str) -> int:
@@ -161,6 +163,9 @@ class OnlineFeatureEngineer:
 
         key = (race, driver)
         state = self._state.get(key, DriverStintState())
+        duplicate_lap_event = (
+            state.last_lap_number is not None and lap_number == state.last_lap_number
+        )
 
         stint_break = (
             state.prev_tyre_life is None
@@ -170,15 +175,16 @@ class OnlineFeatureEngineer:
         )
 
         if stint_break:
-            if lap_time is not None and lap_time > 0:
-                state.stint_best_lap_so_far = lap_time
-            else:
-                state.stint_best_lap_so_far = None
-        elif lap_time is not None and lap_time > 0:
-            if state.stint_best_lap_so_far is None:
-                state.stint_best_lap_so_far = lap_time
-            else:
-                state.stint_best_lap_so_far = min(state.stint_best_lap_so_far, lap_time)
+            state.stint_lap_times.clear()
+
+        if lap_time is not None and lap_time > 0 and lap_number > 0:
+            # mirror offline keep-last dedup semantics for same race-driver-lap keys.
+            state.stint_lap_times[lap_number] = float(lap_time)
+
+        if state.stint_lap_times:
+            state.stint_best_lap_so_far = min(state.stint_lap_times.values())
+        else:
+            state.stint_best_lap_so_far = None
 
         if (
             lap_time is not None
@@ -206,14 +212,22 @@ class OnlineFeatureEngineer:
         gap_ahead_value = gap_ahead_raw if gap_ahead_raw is not None else STRUCTURAL_GAP_FILL
         gap_behind_value = gap_behind_raw if gap_behind_raw is not None else STRUCTURAL_GAP_FILL
 
+        pace_history_values = list(state.pace_drop_history)
+        gap_history_values = list(state.gap_ahead_history)
+        if duplicate_lap_event:
+            if pace_history_values:
+                pace_history_values = pace_history_values[:-1]
+            if gap_history_values:
+                gap_history_values = gap_history_values[:-1]
+
         # mirror offline shift(2): compare against the value from two laps earlier.
-        if len(state.pace_drop_history) >= 2:
-            pace_trend = pace_drop_ratio - state.pace_drop_history[-2]
+        if len(pace_history_values) >= 2:
+            pace_trend = pace_drop_ratio - pace_history_values[-2]
         else:
             pace_trend = 0.0
 
-        if len(state.gap_ahead_history) >= 2:
-            gap_ahead_trend = gap_ahead_value - state.gap_ahead_history[-2]
+        if len(gap_history_values) >= 2:
+            gap_ahead_trend = gap_ahead_value - gap_history_values[-2]
         else:
             gap_ahead_trend = 0.0
 
@@ -256,11 +270,19 @@ class OnlineFeatureEngineer:
         }
 
         # update state after feature emission so the current lap never informs itself.
-        state.pace_drop_history.append(pace_drop_ratio)
-        state.gap_ahead_history.append(gap_ahead_value)
+        if duplicate_lap_event and len(state.pace_drop_history) > 0:
+            state.pace_drop_history[-1] = pace_drop_ratio
+        else:
+            state.pace_drop_history.append(pace_drop_ratio)
+
+        if duplicate_lap_event and len(state.gap_ahead_history) > 0:
+            state.gap_ahead_history[-1] = gap_ahead_value
+        else:
+            state.gap_ahead_history.append(gap_ahead_value)
 
         state.prev_tyre_life = tyre_life
         state.prev_compound_norm = compound_norm
+        state.last_lap_number = lap_number
         self._state[key] = state
 
         return feature_row

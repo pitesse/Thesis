@@ -77,10 +77,12 @@ Suggested references: \citep{widanage2019indy500, heilmeier2020race, carrasco202
 \begin{itemize}
 	\item Candidate baselines (for example logistic/XGBoost and optional sequence model).
 	\item Feature groups, leakage controls, and temporal/grouped split strategy.
+	\item Traffic-context family for pit feasibility, integrated from drop-zone state (positions lost and nearest physical-car gap) on race-driver-lap keys.
+	\item Causal momentum family based on lagged differences (for example $k-2$ pace and gap trends) to preserve point-in-time availability.
 	\item Calibration and thresholding plan for decision outputs.
 \end{itemize}
 
-Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, brookshire2024leakage, roberts2017cvstructured, platt1999probabilistic, guo2017calibration, kull2017beta}.
+Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, carrasco2023optimization, quiroga2024optimization, widanage2019indy500, heilmeier2020race, brookshire2024leakage, roberts2017cvstructured, platt1999probabilistic, guo2017calibration, kull2017beta}.
 
 \section{Comparison Protocol, Heuristic vs ML}
 
@@ -88,9 +90,12 @@ Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikum
 
 \begin{itemize}
 	\item Same replay windows, same data availability assumptions, same excluded contexts.
+	\item Fairness contract is frozen in this cycle: actionable-only matching, one-to-one pit consumption, fixed horizon $H=2$.
+	\item Raw telemetry branch is deferred to Phase 3.2, comparator semantics are not relaxed in Phase 3.1 claims.
 	\item Use one shared feature contract for training and first live serving comparison to reduce training-serving skew.
+	\item Treat decision threshold as an operating-point control variable, selected from a precision-coverage frontier under a predefined safety floor.
 	\item Report both predictive quality and operational behavior.
 	\item Predefine significance testing and uncertainty reporting.
 \end{itemize}
 
-Suggested references: \citep{dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing}.
+Suggested references: \citep{dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing, elkan2001costsensitive}.

@@ -353,15 +353,19 @@ def main() -> None:
             }
         )
 
-    core_fail = any(phase_status_map[phase] == "FAIL" for phase in ["B", "C", "D", "F"])
-    core_pass = all(phase_status_map[phase] == "PASS" for phase in ["B", "C", "D", "F"])
+    core_phases = ["B", "C", "D", "F"]
+    failed_core_phases = [
+        phase for phase in core_phases if phase_status_map[phase] == "FAIL"
+    ]
+    core_fail = len(failed_core_phases) > 0
+    core_pass = all(phase_status_map[phase] == "PASS" for phase in core_phases)
     g_state = phase_status_map["G"]
 
     # core validity phases gate deployment first, then phase G controls operational posture.
     if core_fail:
         decision = "NO_GO"
         confidence = "LOW"
-        decision_note = "core validity gate failed in B/C/D/F"
+        decision_note = f"core validity gate failed in {'/'.join(failed_core_phases)}"
     elif core_pass and g_state == "PASS":
         decision = "GO"
         confidence = "HIGH"
