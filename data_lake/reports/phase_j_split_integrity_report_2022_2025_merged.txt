@@ -1,0 +1,31 @@
+=== PHASE J SPLIT-INTEGRITY AUDIT REPORT ===
+dataset input          : data_lake/ml_training_dataset_2022_2025_merged.parquet
+oof input              : data_lake/reports/ml_oof_winner_2022_2025_merged.csv
+rows                   : 124136
+unique races           : 96
+expected folds         : 5
+
+check summary
+- race_key_prefix_format: PASS (1.0)
+  note: invalid_prefix_rows=0
+- source_year_prefix_consistency: PASS (1.0)
+  note: mismatch_rows=0
+- grouped_kfold_no_race_overlap: PASS (1.0)
+  note: overlap_folds=0, overlap_races=0
+- oof_fold_uniqueness_per_race: PASS (1.0)
+  note: races_in_multiple_folds=0
+- oof_row_coverage_vs_dataset: PASS (1.0)
+  note: oof_rows=124136, dataset_rows=124136
+- oof_race_universe_match: PASS (1.0)
+  note: missing_in_oof=0,extra_in_oof=0,sample_missing=,sample_extra=
+- oof_fold_count_match: PASS (1.0)
+  note: observed_folds=[1, 2, 3, 4, 5]
+- phase_j_split_integrity_overall: PASS (1.0)
+  note: all split-integrity checks must pass
+
+overall gate           : PASS
+
+artifacts
+summary csv            : data_lake/reports/phase_j_split_integrity_summary_2022_2025_merged.csv
+details csv            : data_lake/reports/phase_j_split_integrity_details_2022_2025_merged.csv
+report txt             : data_lake/reports/phase_j_split_integrity_report_2022_2025_merged.txt

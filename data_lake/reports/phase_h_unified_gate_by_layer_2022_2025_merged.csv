@@ -1,0 +1,13 @@
+phase,check,status,value,threshold,direction,margin_to_threshold,artifact,note
+B,ml_precision_delta_vs_sde,PASS,0.22545638945233282,0.0,gte,0.22545638945233282,data_lake/reports/phase_b_significance_summary_2022_2025_merged.csv,positive precision delta required
+B,two_proportion_pvalue,PASS,0.0,0.05,lte,0.05,data_lake/reports/phase_b_significance_tests_2022_2025_merged.csv,z=10.692854
+C,reference_threshold_precision_vs_sde_floor,PASS,0.868713605082054,0.734313725490196,gte,0.13439987959185795,data_lake/reports/phase_c_threshold_sweep_2022_2025_merged.csv,threshold=0.1000
+C,lookahead_no_match_dominance_rate,PASS,0.9710988892483554,0.9,gte,0.07109888924835539,data_lake/reports/phase_c_threshold_sweep_2022_2025_merged.csv,higher values indicate horizon-lag dominates exclusions
+D,constrained_precision_min,PASS,0.807556080283353,0.6,gte,0.20755608028335304,data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv,policy precision gate
+D,precision_floor_reachability_ratio,PASS,0.9818181818181818,0.9,gte,0.08181818181818179,data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv,fraction of candidate thresholds reaching floor
+D,fallback_rate_max,PASS,0.0,0.1,lte,0.1,data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv,fallbacks should remain bounded
+F,phase_f_overall_gate,PASS,1.0,1.0,gte,0.0,data_lake/reports/phase_f_parity_summary_2022_2025_merged.csv,"schema, PIT, and parity checks"
+F,offline_live_parity_score,PASS,1.0,0.95,gte,0.050000000000000044,data_lake/reports/phase_f_parity_summary_2022_2025_merged.csv,sampled parity gate
+G,latency_p95_total_ms,PASS,5.615486000078816,500.0,lte,494.3845139999212,data_lake/reports/phase_g_latency_summary_2022_2025_merged.csv,hold_if<800.0
+G,availability_pct,PASS,100.0,99.0,gte,1.0,data_lake/reports/phase_g_latency_summary_2022_2025_merged.csv,hold_if>=95.0
+G,failed_events_count,PASS,0.0,0.0,lte,0.0,data_lake/reports/phase_g_availability_summary_2022_2025_merged.csv,observed replay failures
