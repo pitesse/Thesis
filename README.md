@@ -213,7 +213,7 @@ Recent validation highlights (latest full 2023 run):
 
 ## How to Run
 
-### 1) Freeze Three Seasons (recommended lower-speed replay)
+### 1) Freeze Four Seasons (2022-2025, recommended lower-speed replay)
 
 For final data freezing, replay each season at a lower speed to reduce runtime pressure and keep artifacts consistent.
 Recommended speed for freeze runs: `50`.
@@ -222,6 +222,7 @@ Recommended speed for freeze runs: `50`.
 ./simulate_season.sh --year 2022 --speed 50
 ./simulate_season.sh --year 2023 --speed 50
 ./simulate_season.sh --year 2024 --speed 50
+./simulate_season.sh --year 2025 --speed 50
 ```
 
 After each run, the season artifacts are written under `data_lake/` with timestamped JSONL files.
@@ -231,13 +232,13 @@ After each run, the season artifacts are written under `data_lake/` with timesta
 This command prepares merged training data, runs grouped-CV training and policy selection, exports winner OOF, and builds the serving bundle.
 
 ```bash
-python ml_pipeline/train_model.py --years 2022 2023 2024 --season-tag season
+python ml_pipeline/train_model.py --years 2022 2023 2024 2025 --season-tag season
 ```
 
 Main artifacts:
-1. `data_lake/ml_training_dataset_2022_2024_merged.parquet`
-2. `data_lake/reports/ml_ablation_phase31c_2022_2024_merged.csv`
-3. `data_lake/reports/ml_oof_winner_2022_2024_merged.csv`
+1. `data_lake/ml_training_dataset_2022_2025_merged.parquet`
+2. `data_lake/reports/ml_ablation_phase31c_2022_2025_merged.csv`
+3. `data_lake/reports/ml_oof_winner_2022_2025_merged.csv`
 4. `data_lake/models/pit_strategy_serving_bundle.joblib`
 
 ### 3) Assess Correctness End-to-End (all methodological gates)
@@ -245,7 +246,7 @@ Main artifacts:
 Run unified evaluation to produce Phase B, C, D, F, G, H, and J outputs in one pass:
 
 ```bash
-python ml_pipeline/evaluate_model.py --years 2022 2023 2024 --season-tag season
+python ml_pipeline/evaluate_model.py --years 2022 2023 2024 2025 --season-tag season
 ```
 
 This checks correctness across all major aspects:
@@ -258,10 +259,12 @@ This checks correctness across all major aspects:
 7. Split integrity and comparator invariance closure audits (Phase J)
 
 Primary summary artifacts:
-1. `data_lake/reports/model_evaluation_2022_2024_merged.csv`
-2. `data_lake/reports/model_evaluation_2022_2024_merged.md`
-3. `data_lake/reports/phase_h_unified_gate_2022_2024_merged.csv`
-4. `data_lake/reports/phase_h_unified_gate_report_2022_2024_merged.txt`
+1. `data_lake/reports/model_evaluation_2022_2025_merged.csv`
+2. `data_lake/reports/model_evaluation_2022_2025_merged.md`
+3. `data_lake/reports/phase_h_unified_gate_2022_2025_merged.csv`
+4. `data_lake/reports/phase_h_unified_gate_report_2022_2025_merged.txt`
+5. `data_lake/reports/phase_b_sde_ml_comparison_2022_2025_merged.md`
+6. `data_lake/reports/phase_b_sde_ml_comparison_summary_2022_2025_merged.csv`
 
 Optional data-quality audit for raw stream outputs:
 
@@ -305,6 +308,22 @@ Optional local ML consumer (outside Docker profile):
 
 ```bash
 python ml_pipeline/serve_model.py --bootstrap localhost:9092 --model-bundle data_lake/models/pit_strategy_serving_bundle.joblib
+```
+
+Troubleshooting `NoBrokersAvailable`:
+
+1. `serve_model.py` defaults to `kafka:29092`, which is correct only for container-to-container traffic.
+2. If you run the script from the host shell, always pass `--bootstrap localhost:9092`.
+3. If you want Docker-native inference (where `kafka:29092` is valid), run:
+
+```bash
+docker compose --profile inference up -d ml-inference
+```
+
+If `serve_model.py` runs but appears idle, check whether `f1-ml-features` currently has events:
+
+```bash
+docker exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic f1-ml-features --from-beginning --max-messages 5
 ```
 
 Optional prediction-topic probe:
