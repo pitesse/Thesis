@@ -1,0 +1,11 @@
+section,name,value,note
+grouped_split,fold_1,0,"train_rows=99378,test_rows=24758,train_races=77,test_races=19,overlap_sample="
+grouped_split,fold_2,0,"train_rows=99014,test_rows=25122,train_races=76,test_races=20,overlap_sample="
+grouped_split,fold_3,0,"train_rows=99412,test_rows=24724,train_races=77,test_races=19,overlap_sample="
+grouped_split,fold_4,0,"train_rows=99343,test_rows=24793,train_races=77,test_races=19,overlap_sample="
+grouped_split,fold_5,0,"train_rows=99397,test_rows=24739,train_races=77,test_races=19,overlap_sample="
+oof_distribution,fold_1,24758,race_count=19
+oof_distribution,fold_2,25122,race_count=20
+oof_distribution,fold_3,24724,race_count=19
+oof_distribution,fold_4,24793,race_count=19
+oof_distribution,fold_5,24739,race_count=19

@@ -1,0 +1,9 @@
+check,status,value,threshold,note
+race_key_prefix_format,PASS,1.0,1.0,invalid_prefix_rows=0
+source_year_prefix_consistency,PASS,1.0,1.0,mismatch_rows=0
+grouped_kfold_no_race_overlap,PASS,1.0,1.0,"overlap_folds=0, overlap_races=0"
+oof_fold_uniqueness_per_race,PASS,1.0,1.0,races_in_multiple_folds=0
+oof_row_coverage_vs_dataset,PASS,1.0,1.0,"oof_rows=124136, dataset_rows=124136"
+oof_race_universe_match,PASS,1.0,1.0,"missing_in_oof=0,extra_in_oof=0,sample_missing=,sample_extra="
+oof_fold_count_match,PASS,1.0,1.0,"observed_folds=[1, 2, 3, 4, 5]"
+phase_j_split_integrity_overall,PASS,1.0,1.0,all split-integrity checks must pass
