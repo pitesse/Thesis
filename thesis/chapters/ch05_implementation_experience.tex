@@ -123,8 +123,8 @@ Suggested references: \citep{carrasco2023optimization, quiroga2024optimization, 
 	\item Session update (2026-04-14): parity replay now de-duplicates \texttt{ml\_features} on \texttt{(race, driver, lapNumber)} before stateful feature transform, with stable key sorting.
 	\item Session update (2026-04-14): merged evaluator now validates and regenerates de-duplicated \texttt{ml\_features} streams, matching the deterministic keep-last contract used for merged audits.
 	\item Session update (2026-04-14): integrated gate notes now report failing core phases dynamically, avoiding hardcoded failure attribution.
-	\item Phase F parity gate (merged 2022--2024) passed: schema parity pass, point-in-time lag legality pass, and offline-vs-live sampled parity pass ($3000$ sampled keys, $22$ audited serving features, overall parity $1.0000$).
-	\item Frozen parity artifacts: \texttt{phase\_f\_parity\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_f\_parity\_details\_2022\_2024\_merged.csv}, \texttt{phase\_f\_parity\_report\_2022\_2024\_merged.txt}.
+	\item Phase F parity gate (merged 2022--2025) passed: schema parity pass, point-in-time lag legality pass, and offline-vs-live sampled parity pass ($3000$ sampled keys, $22$ audited serving features, overall parity $1.0000$).
+	\item Frozen parity artifacts: \texttt{phase\_f\_parity\_summary\_2022\_2025\_merged.csv}, \texttt{phase\_f\_parity\_details\_2022\_2025\_merged.csv}, \texttt{phase\_f\_parity\_report\_2022\_2025\_merged.txt}.
 \end{itemize}
 
 Suggested references: \citep{carbone2015flink, kreps2011kafka, brookshire2024leakage, roberts2017cvstructured}.
@@ -132,18 +132,18 @@ Suggested references: \citep{carbone2015flink, kreps2011kafka, brookshire2024lea
 \paragraph{Phase G latency and operational feasibility (merged).}
 \begin{itemize}
 	\item Phase G merged replay audit passed on $3000$ sampled feature-stream events using the frozen serving bundle and parity-aligned serving transform.
-	\item End-to-end feature-to-prediction latency remained far below the operational budget: $p50=3.392$ ms, $p95=7.758$ ms, $p99=17.959$ ms against a fixed $p95 < 500$ ms gate.
+	\item End-to-end feature-to-prediction latency remained far below the operational budget: $p50=3.216$ ms, $p95=5.625$ ms, $p99=17.227$ ms against a fixed $p95 < 500$ ms gate.
 	\item Prediction availability gate also passed with $100.0\%$ successful predictions ($3000/3000$, zero failed events) against the fixed $\geq 99\%$ floor.
-	\item Overhead attribution remained explicit: heuristic-proxy $p95=0.059$ ms, ML total-path $p95=7.758$ ms, ML-added overhead $p95=7.710$ ms, preventing model-cost and infrastructure-cost conflation.
-	\item Frozen operational artifacts: \texttt{phase\_g\_latency\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_g\_latency\_details\_2022\_2024\_merged.csv}, \texttt{phase\_g\_latency\_by\_year\_2022\_2024\_merged.csv}, \texttt{phase\_g\_availability\_summary\_2022\_2024\_merged.csv}, \texttt{phase\_g\_overhead\_comparison\_2022\_2024\_merged.csv}, \texttt{phase\_g\_latency\_report\_2022\_2024\_merged.txt}.
+	\item Overhead attribution remained explicit: heuristic-proxy $p95=0.050$ ms, ML total-path $p95=5.625$ ms, ML-added overhead $p95=5.574$ ms, preventing model-cost and infrastructure-cost conflation.
+	\item Frozen operational artifacts: \texttt{phase\_g\_latency\_summary\_2022\_2025\_merged.csv}, \texttt{phase\_g\_latency\_details\_2022\_2025\_merged.csv}, \texttt{phase\_g\_latency\_by\_year\_2022\_2025\_merged.csv}, \texttt{phase\_g\_availability\_summary\_2022\_2025\_merged.csv}, \texttt{phase\_g\_overhead\_comparison\_2022\_2025\_merged.csv}, \texttt{phase\_g\_latency\_report\_2022\_2025\_merged.txt}.
 \end{itemize}
 
 \paragraph{Phase H integrated gate synthesis (merged).}
 \begin{itemize}
 	\item Phase H integrated gate combined significance (B), lookahead diagnostics (C), calibration-policy diagnostics (D), parity (F), and latency-availability (G) into one auditable readiness decision.
 	\item Integrated result was GO with high confidence, all $12/12$ by-layer checks passing under frozen comparator semantics.
-	\item Key margins remained positive across all layers: significance test reported $p=0.0$ (numerical underflow, interpreted as extremely small), reference-threshold precision $0.8726$ versus SDE floor $0.7213$, constrained precision $0.7377$ with reachability $0.9758$, parity $1.0000$, and latency margin $+492.242$ ms below the $500$ ms budget.
-	\item Frozen artifacts: \texttt{phase\_h\_unified\_gate\_2022\_2024\_merged.csv}, \texttt{phase\_h\_unified\_gate\_by\_layer\_2022\_2024\_merged.csv}, \texttt{phase\_h\_unified\_gate\_report\_2022\_2024\_merged.txt}.
+	\item Key margins remained positive across all layers: significance test reported $p=0.0$ (numerical underflow, interpreted as extremely small), reference-threshold precision $0.8687$ versus SDE floor $0.7343$, constrained precision $0.8076$ with reachability $0.9818$, parity $1.0000$, and latency margin $+494.375$ ms below the $500$ ms budget.
+	\item Frozen artifacts: \texttt{phase\_h\_unified\_gate\_2022\_2025\_merged.csv}, \texttt{phase\_h\_unified\_gate\_by\_layer\_2022\_2025\_merged.csv}, \texttt{phase\_h\_unified\_gate\_report\_2022\_2025\_merged.txt}.
 \end{itemize}
 
 Suggested references: \citep{widanage2019indy500, akidau2015dataflow, carbone2015flink, brookshire2024leakage, roberts2017cvstructured, walters2022comparing, dietterich1998approximate, nadeau2003inference, demsar2006statistical}.

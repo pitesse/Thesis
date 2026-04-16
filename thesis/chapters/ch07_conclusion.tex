@@ -7,9 +7,9 @@
 
 \begin{itemize}
 	\item Delivered an end-to-end comparison pipeline under a fixed fairness contract ($H=2$, actionable-only, one-to-one matching) between deterministic SDE and engineered-feature ML.
-	\item Merged 2022--2024 evidence shows a precision gain at constrained ML operating policy: SDE precision $0.7213$ vs ML precision $0.9413$, with independent scored-row test reported as $p=0.0$ (numerical underflow).
-	\item Threshold frontier analysis confirms controllable precision-coverage tradeoff; threshold $0.10$ remains the balanced reporting point (precision $0.8726$, above the SDE floor $0.7213$).
-	\item Integrated readiness gate returned GO (high confidence): all core phases B/C/D/F/G passed, with $12/12$ by-layer checks passing, parity $1.0000$, latency $p95=7.758$ ms, and availability $100.0\%$.
+	\item Merged 2022--2025 evidence shows a precision gain at constrained ML operating policy: SDE precision $0.7343$ vs ML precision $0.9598$, with independent scored-row test reported as $p=0.0$ (numerical underflow).
+	\item Threshold frontier analysis confirms controllable precision-coverage tradeoff; threshold $0.10$ remains the balanced reporting point (precision $0.8687$, above the SDE floor $0.7343$).
+	\item Integrated readiness gate returned GO (high confidence): all core phases B/C/D/F/G passed, with $12/12$ by-layer checks passing, parity $1.0000$, latency $p95=5.625$ ms, and availability $100.0\%$.
 	\item Session-level hardening completed before this freeze: duplicate-lap keep-last serving semantics, pre-transform dedup in parity replay, merged \texttt{ml\_features} dedup validation in evaluator, and dynamic integrated gate note attribution.
 \end{itemize}
 
@@ -57,7 +57,7 @@ Suggested references: \citep{gama2014drift, arora2024driftreview, bifet2007adwin
 	\item Scope lock for this cycle: engineered-feature ML only, with raw telemetry modeling deferred to Phase 3.2.
 	\item Entry prerequisites for Phase 3.2 remain explicit and auditable: integrated gate state not weaker than GO WITH CONDITIONS, stable drift/skew monitoring protocol, and documented point-in-time raw feature extraction with leakage audits.
 	\item Method guardrail for future Phase 3.2 experiments: preserve grouped temporal validation and fairness-contract transparency while treating construct-validity caveats explicitly.
-	\item Phase I lock artifacts: \texttt{phase\_i\_scope\_lock\_2022\_2024\_merged.txt}, \texttt{phase\_i\_future\_work\_prerequisites\_2022\_2024\_merged.md}.
+	\item Phase I lock artifacts remain deferred in this run cycle and should be regenerated together with the dedicated Phase 3.2 scope-lock package.
 \end{itemize}
 
 Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, gama2014drift, arora2024driftreview, widanage2019indy500, cappello2025statespace, heilmeier2020race}.
