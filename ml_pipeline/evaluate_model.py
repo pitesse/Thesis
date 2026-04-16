@@ -343,6 +343,9 @@ def main() -> None:
     phase_b_summary = reports / f"phase_b_significance_summary_{suffix}.csv"
     phase_b_tests = reports / f"phase_b_significance_tests_{suffix}.csv"
     phase_b_report = reports / f"phase_b_significance_report_{suffix}.txt"
+    phase_b_meeting_report = reports / f"phase_b_sde_ml_comparison_{suffix}.md"
+    phase_b_meeting_summary = reports / f"phase_b_sde_ml_comparison_summary_{suffix}.csv"
+    phase_b_meeting_by_year = reports / f"phase_b_sde_ml_comparison_by_year_{suffix}.csv"
 
     phase_c_sweep = reports / f"phase_c_threshold_sweep_{suffix}.csv"
     phase_c_by_year = reports / f"phase_c_threshold_sweep_by_year_{suffix}.csv"
@@ -448,6 +451,28 @@ def main() -> None:
             str(phase_b_tests),
             "--report-output",
             str(phase_b_report),
+        ],
+    )
+
+    _run_step(
+        "Phase B dedicated SDE vs ML meeting report",
+        [
+            sys.executable,
+            pipeline_script("phase_b_sde_ml_comparison_report.py"),
+            "--phase-b-summary",
+            str(phase_b_summary),
+            "--phase-b-tests",
+            str(phase_b_tests),
+            "--heuristic-comparator",
+            str(heuristic_comparator),
+            "--ml-comparator",
+            str(ml_comparator),
+            "--output-md",
+            str(phase_b_meeting_report),
+            "--output-summary-csv",
+            str(phase_b_meeting_summary),
+            "--output-by-year-csv",
+            str(phase_b_meeting_by_year),
         ],
     )
 
@@ -846,6 +871,9 @@ def main() -> None:
             "## Core Artifacts",
             f"- Unified summary CSV: {evaluation_summary_output}",
             f"- Phase H report: {phase_h_report}",
+            f"- Phase B dedicated comparison report: {phase_b_meeting_report}",
+            f"- Phase B dedicated comparison summary: {phase_b_meeting_summary}",
+            f"- Phase B dedicated comparison by year: {phase_b_meeting_by_year}",
             f"- Comparator files: {heuristic_comparator}, {ml_comparator}",
             f"- Threshold sweep report: {phase_c_report}",
             f"- Calibration report: {phase_d_report}",
@@ -865,6 +893,9 @@ def main() -> None:
     print(f"summary csv         : {evaluation_summary_output}")
     print(f"markdown report     : {evaluation_markdown_output}")
     print(f"phase h report      : {phase_h_report}")
+    print(f"phase b meeting md  : {phase_b_meeting_report}")
+    print(f"phase b meeting csv : {phase_b_meeting_summary}")
+    print(f"phase b meeting yr  : {phase_b_meeting_by_year}")
 
 
 if __name__ == "__main__":

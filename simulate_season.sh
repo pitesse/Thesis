@@ -111,7 +111,7 @@ if [ -n "$YEAR_ARG" ]; then
 	YEAR_EXPLICIT=1
 	YEARS=("$YEAR_ARG")
 else
-	YEARS=(2022 2023 2024)
+	YEARS=(2022 2023 2024 2025)
 fi
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
