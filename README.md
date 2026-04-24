@@ -241,7 +241,34 @@ Main artifacts:
 3. `data_lake/reports/ml_oof_winner_2022_2025_merged.csv`
 4. `data_lake/models/pit_strategy_serving_bundle.joblib`
 
-### 3) Assess Correctness End-to-End (all methodological gates)
+### 3) Run MOA ARF Baseline (apples-to-apples ARFF input)
+
+Install MOA jar to the default local path used by the runner:
+
+```bash
+mkdir -p data_lake/tools
+curl -fL https://repo1.maven.org/maven2/nz/ac/waikato/cms/moa/moa/2024.07.0/moa-2024.07.0.jar -o data_lake/tools/moa.jar
+```
+
+Export the MOA matrix and run the ARF baseline:
+
+```bash
+python ml_pipeline/export_moa_dataset.py --years 2022 2023 2024 2025 --season-tag season --skip-prepare-data
+python ml_pipeline/run_moa_arf.py --years 2022 2023 2024 2025 --season-tag season
+python ml_pipeline/build_three_way_comparator.py --years 2022 2023 2024 2025 --season-tag season
+python ml_pipeline/explain_moa_shap_proxy.py --years 2022 2023 2024 2025 --season-tag season
+```
+
+Main artifacts:
+1. `data_lake/reports/moa_dataset_2022_2025_merged.arff`
+2. `data_lake/reports/moa_arf_learning_curve_2022_2025_merged.csv`
+3. `data_lake/reports/moa_arf_summary_2022_2025_merged.csv`
+4. `data_lake/reports/moa_arf_run_2022_2023_2024_2025_season.json`
+5. `data_lake/reports/three_way_comparator_2022_2025_merged.csv`
+6. `data_lake/reports/three_way_comparator_2022_2025_merged.md`
+7. `data_lake/reports/moa_shap_proxy_summary.csv`
+
+### 4) Assess Correctness End-to-End (all methodological gates)
 
 Run unified evaluation to produce Phase B, C, D, F, G, H, and J outputs in one pass:
 
@@ -272,7 +299,7 @@ Optional data-quality audit for raw stream outputs:
 python season_data_audit.py
 ```
 
-### 4) Start Flink + ML Predictions Together
+### 5) Start Flink + ML Predictions Together
 
 #### Automated single race with live ML inference
 

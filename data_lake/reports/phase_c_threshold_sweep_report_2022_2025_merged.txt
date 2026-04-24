@@ -7,28 +7,28 @@ threshold points   : 37
 
 selected threshold
 best_threshold     : 0.050000
-best_actionable    : 37100
-best_scored        : 4396
-best_tp            : 3712
-best_fp            : 684
-best_precision     : 0.844404
-best_scored_rate   : 0.118491
+best_actionable    : 39671
+best_scored        : 4486
+best_tp            : 3766
+best_fp            : 720
+best_precision     : 0.839501
+best_scored_rate   : 0.113080
 meets_floor        : 1
 
 delta vs reference threshold
 reference_threshold: 0.100000
-reference_scored   : 3778
-reference_precision: 0.868714
-delta_scored       : +618
-delta_actionable   : +14776
+reference_scored   : 3906
+reference_precision: 0.862519
+delta_scored       : +580
+delta_actionable   : +15666
 
 lookahead diagnostics at selected threshold
-no_match_count     : 31854
-no_match_rate      : 0.974009
-one_lap_beyond     : 3111
-two_to_three_beyond: 4759
-four_plus_beyond   : 10526
-in_window_consumed : 6165
+no_match_count     : 34263
+no_match_rate      : 0.973796
+one_lap_beyond     : 3269
+two_to_three_beyond: 5074
+four_plus_beyond   : 11650
+in_window_consumed : 6399
 
 artifacts
 summary csv        : data_lake/reports/phase_c_threshold_sweep_2022_2025_merged.csv

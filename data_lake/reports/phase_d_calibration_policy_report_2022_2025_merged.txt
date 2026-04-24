@@ -5,26 +5,26 @@ rows                : 124136
 prevalence          : 0.066830
 
 reliability summary
-raw brier           : 0.194907
-calibrated brier    : 0.047851
-raw ece             : 0.332599
-calibrated ece      : 0.006723
-raw mce             : 0.578678
-calibrated mce      : 0.148166
+raw brier           : 0.204595
+calibrated brier    : 0.048518
+raw ece             : 0.345324
+calibrated ece      : 0.008274
+raw mce             : 0.585167
+calibrated mce      : 0.135796
 
 constrained policy
-positive rate       : 0.006823
-precision           : 0.807556
-recall              : 0.082449
-f1                  : 0.149623
-threshold mean/min/max: 0.772166/0.750000/0.830000
+positive rate       : 0.006630
+precision           : 0.787363
+recall              : 0.078110
+f1                  : 0.142121
+threshold mean/min/max: 0.791003/0.750000/0.910000
 
 winner diagnostics from ablation
-reachability ratio  : 0.981818
-fallback folds      : 0/5
+reachability ratio  : 0.987058
+fallback folds      : 0/96
 fallback rate       : 0.000000
-margin to floor     : 0.725386
-calibration mix     : isotonic:5
+margin to floor     : 0.412520
+calibration mix     : isotonic:96
 
 artifacts
 summary csv         : data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv

@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 from itertools import product
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, cast
 
 import numpy as np
 import pandas as pd
@@ -44,6 +44,8 @@ DEFAULT_GRID_LEARNING_RATE = (0.05,)
 DEFAULT_GRID_N_ESTIMATORS = (400,)
 DEFAULT_LEADERBOARD_TOP_K = 5
 DEFAULT_LEADERBOARD_OUTPUT = ""
+DEFAULT_SPLIT_PROTOCOL = "grouped_race"
+DEFAULT_ROLLING_MIN_TRAIN_YEARS = 1
 
 TARGET_COLUMN = "target_y"
 GROUP_COLUMN = "race"
@@ -88,7 +90,7 @@ def _compute_scale_pos_weight(y: pd.Series) -> float:
 
 def _prepare_matrix(
     df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series, pd.DataFrame]:
     if TARGET_COLUMN not in df.columns:
         raise ValueError(f"missing target column: {TARGET_COLUMN}")
     if GROUP_COLUMN not in df.columns:
@@ -105,6 +107,7 @@ def _prepare_matrix(
     work[TARGET_COLUMN] = work[TARGET_COLUMN].astype(int)
 
     work[GROUP_COLUMN] = work[GROUP_COLUMN].astype(str)
+    source_year = _infer_source_year(work)
 
     feature_cols = _select_feature_columns(work.columns)
     if not feature_cols:
@@ -134,8 +137,35 @@ def _prepare_matrix(
     meta["lapNumber"] = pd.to_numeric(meta["lapNumber"], errors="coerce").astype(
         "Int64"
     )
+    meta["source_year"] = source_year.values
 
-    return X, y, groups, meta
+    return X, y, groups, source_year, meta
+
+
+def _infer_source_year(work: pd.DataFrame) -> pd.Series:
+    if "_source_year" in work.columns:
+        parsed_year = pd.to_numeric(work["_source_year"], errors="coerce")
+    else:
+        parsed_year = pd.to_numeric(
+            work["race"].astype(str).str.extract(r"^(\d{4})\s::")[0],
+            errors="coerce",
+        )
+
+    missing_mask = parsed_year.isna()
+    if missing_mask.any():
+        race_examples = (
+            work.loc[missing_mask, "race"]
+            .astype(str)
+            .drop_duplicates()
+            .head(3)
+            .tolist()
+        )
+        raise ValueError(
+            "unable to infer source year for some rows; "
+            f"examples={race_examples}"
+        )
+
+    return parsed_year.astype(int)
 
 
 def _metrics_with_counts(
@@ -414,12 +444,133 @@ def _build_model(
     )
 
 
+def _build_grouped_race_split_plan(
+    X: pd.DataFrame,
+    y: pd.Series,
+    groups: pd.Series,
+    folds: int,
+) -> list[dict[str, object]]:
+    gkf = GroupKFold(n_splits=folds)
+    split_plan: list[dict[str, object]] = []
+
+    for fold_idx, (train_idx, test_idx) in enumerate(
+        gkf.split(X, y, groups=groups), start=1
+    ):
+        split_plan.append(
+            {
+                "fold": int(fold_idx),
+                "split_label": f"grouped_race_fold_{fold_idx}",
+                "train_idx": train_idx,
+                "test_idx": test_idx,
+                "train_year_start": None,
+                "train_year_end": None,
+                "test_year": None,
+            }
+        )
+
+    return split_plan
+
+
+def _build_holdout_race_split_plan(groups: pd.Series) -> list[dict[str, object]]:
+    unique_groups = sorted(groups.astype(str).dropna().unique().tolist())
+    if len(unique_groups) < 2:
+        raise ValueError("holdout_race split requires at least 2 distinct races")
+
+    split_plan: list[dict[str, object]] = []
+    for holdout_race in unique_groups:
+        train_mask = (groups.astype(str) != holdout_race).to_numpy()
+        test_mask = (groups.astype(str) == holdout_race).to_numpy()
+        if not np.any(train_mask) or not np.any(test_mask):
+            continue
+
+        split_plan.append(
+            {
+                "fold": int(len(split_plan) + 1),
+                "split_label": f"holdout_race_test_{holdout_race}",
+                "train_idx": np.flatnonzero(train_mask),
+                "test_idx": np.flatnonzero(test_mask),
+                "train_year_start": None,
+                "train_year_end": None,
+                "test_year": None,
+            }
+        )
+
+    if not split_plan:
+        raise ValueError("holdout_race split produced no valid folds")
+    return split_plan
+
+
+def _build_rolling_year_split_plan(
+    source_year: pd.Series,
+    min_train_years: int,
+) -> list[dict[str, object]]:
+    years = sorted(source_year.dropna().astype(int).unique().tolist())
+    if len(years) < 2:
+        raise ValueError(
+            "rolling_year split requires at least 2 distinct source years in dataset"
+        )
+
+    split_plan: list[dict[str, object]] = []
+
+    for test_year in years:
+        train_years = [year for year in years if year < test_year]
+        if len(train_years) < min_train_years:
+            continue
+
+        train_mask = source_year.isin(train_years).to_numpy()
+        test_mask = (source_year == test_year).to_numpy()
+        if not np.any(train_mask) or not np.any(test_mask):
+            continue
+
+        split_plan.append(
+            {
+                "fold": int(len(split_plan) + 1),
+                "split_label": (
+                    f"rolling_year_train_{train_years[0]}_{train_years[-1]}"
+                    f"_test_{test_year}"
+                ),
+                "train_idx": np.flatnonzero(train_mask),
+                "test_idx": np.flatnonzero(test_mask),
+                "train_year_start": int(train_years[0]),
+                "train_year_end": int(train_years[-1]),
+                "test_year": int(test_year),
+            }
+        )
+
+    if not split_plan:
+        raise ValueError(
+            "rolling_year split produced no valid folds; "
+            f"years={years}, min_train_years={min_train_years}"
+        )
+
+    return split_plan
+
+
+def _build_split_plan(
+    split_protocol: str,
+    X: pd.DataFrame,
+    y: pd.Series,
+    groups: pd.Series,
+    source_year: pd.Series,
+    folds: int,
+    rolling_min_train_years: int,
+) -> list[dict[str, object]]:
+    if split_protocol == "grouped_race":
+        return _build_grouped_race_split_plan(X, y, groups, folds)
+    if split_protocol == "holdout_race":
+        return _build_holdout_race_split_plan(groups)
+    if split_protocol == "rolling_year":
+        return _build_rolling_year_split_plan(source_year, rolling_min_train_years)
+    raise ValueError(f"unsupported split protocol: {split_protocol}")
+
+
 def _run_grouped_cv_for_config(
     X: pd.DataFrame,
     y: pd.Series,
     groups: pd.Series,
     meta: pd.DataFrame,
-    folds: int,
+    split_protocol: str,
+    split_plan: list[dict[str, object]],
     threshold_grid: np.ndarray,
     baseline_threshold: float,
     precision_floor: float,
@@ -437,13 +588,32 @@ def _run_grouped_cv_for_config(
     collect_oof: bool,
     config_id: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    gkf = GroupKFold(n_splits=folds)
-    fold_rows: list[dict[str, float | int | str]] = []
+    fold_rows: list[dict[str, object]] = []
     oof_rows: list[dict[str, object]] = []
 
-    for fold_idx, (train_idx, test_idx) in enumerate(
-        gkf.split(X, y, groups=groups), start=1
-    ):
+    for split_spec in split_plan:
+        fold_idx = int(cast(int, split_spec["fold"]))
+        split_label = str(cast(str, split_spec["split_label"]))
+        train_idx = np.asarray(cast(np.ndarray, split_spec["train_idx"]), dtype=int)
+        test_idx = np.asarray(cast(np.ndarray, split_spec["test_idx"]), dtype=int)
+        train_year_start = split_spec.get("train_year_start")
+        train_year_end = split_spec.get("train_year_end")
+        test_year = split_spec.get("test_year")
+
+        train_year_start_value = (
+            int(train_year_start)
+            if isinstance(train_year_start, (int, np.integer))
+            else np.nan
+        )
+        train_year_end_value = (
+            int(train_year_end)
+            if isinstance(train_year_end, (int, np.integer))
+            else np.nan
+        )
+        test_year_value = (
+            int(test_year) if isinstance(test_year, (int, np.integer)) else np.nan
+        )
+
         X_train = X.iloc[train_idx]
         X_test = X.iloc[test_idx]
         y_train = y.iloc[train_idx]
@@ -566,8 +736,13 @@ def _run_grouped_cv_for_config(
             )
         )
 
-        row: dict[str, float | int | str] = {
+        row: dict[str, object] = {
             "fold": fold_idx,
+            "split_protocol": split_protocol,
+            "split_label": split_label,
+            "train_year_start": train_year_start_value,
+            "train_year_end": train_year_end_value,
+            "test_year": test_year_value,
             "test_rows": int(len(test_idx)),
             "test_positives": int((y_test == 1).sum()),
             "calibration_rows": int(len(calib_rel_idx)),
@@ -616,9 +791,14 @@ def _run_grouped_cv_for_config(
                 {
                     "config_id": int(config_id),
                     "fold": int(fold_idx),
+                    "split_protocol": str(split_protocol),
+                    "split_label": str(split_label),
                     "race": str(race),
                     "driver": str(driver),
                     "lapNumber": int(lap_number) if pd.notna(lap_number) else pd.NA,
+                    "source_year": int(source_year)
+                    if pd.notna(source_year)
+                    else pd.NA,
                     "target_y": int(target_value),
                     "raw_proba": float(raw_score),
                     "calibrated_proba": float(cal_score),
@@ -631,10 +811,11 @@ def _run_grouped_cv_for_config(
                     "constrained_mode": str(constrained_mode),
                     "calibration_method_used": str(calibrator_label),
                 }
-                for race, driver, lap_number, target_value, raw_score, cal_score in zip(
+                for race, driver, lap_number, source_year, target_value, raw_score, cal_score in zip(
                     meta_test["race"],
                     meta_test["driver"],
                     meta_test["lapNumber"],
+                    meta_test["source_year"],
                     y_test,
                     raw_proba,
                     proba,
@@ -642,13 +823,14 @@ def _run_grouped_cv_for_config(
             )
 
         print(
-            "fold {fold}: test_rows={test_rows}, pos={test_positives}, calib_rows={cal_rows}, "
+            "fold {fold} [{split_label}]: test_rows={test_rows}, pos={test_positives}, calib_rows={cal_rows}, "
             "calib_pos={cal_pos}, spw={spw:.4f}, "
             "pr_auc_raw={pr:.4f}, pr_auc_lift={lift:.4f}, brier={brier:.4f}, "
             "baseline(f1={bf1:.4f}, p={bp:.4f}, r={br:.4f}), "
             "unconstrained(t={uthr:.4f}, f1={uf1:.4f}, p={up:.4f}, r={ur:.4f}), "
             "constrained[{mode}](t={cthr:.4f}, f1={cf1:.4f}, p={cp:.4f}, r={cr:.4f}, reach={reach:.2f}, util={util:.2f}, cal={cal})".format(
                 fold=fold_idx,
+                split_label=split_label,
                 test_rows=row["test_rows"],
                 test_positives=row["test_positives"],
                 cal_rows=row["calibration_rows"],
@@ -777,6 +959,18 @@ def parse_args() -> argparse.Namespace:
         "--folds", type=int, default=DEFAULT_FOLDS, help="number of group folds"
     )
     parser.add_argument(
+        "--split-protocol",
+        choices=["grouped_race", "holdout_race", "rolling_year"],
+        default=DEFAULT_SPLIT_PROTOCOL,
+        help="cross-validation protocol: grouped K-fold, holdout each race, or rolling holdout by source year",
+    )
+    parser.add_argument(
+        "--rolling-min-train-years",
+        type=int,
+        default=DEFAULT_ROLLING_MIN_TRAIN_YEARS,
+        help="minimum number of prior years required to create a rolling-year fold",
+    )
+    parser.add_argument(
         "--threshold",
         type=float,
         default=DEFAULT_PROBA_THRESHOLD,
@@ -895,8 +1089,10 @@ def main() -> None:
     args = parse_args()
     dataset_path = Path(args.dataset)
 
-    if args.folds < 2:
-        raise ValueError("--folds must be at least 2")
+    if args.split_protocol == "grouped_race" and args.folds < 2:
+        raise ValueError("--folds must be at least 2 when --split-protocol=grouped_race")
+    if args.rolling_min_train_years < 1:
+        raise ValueError("--rolling-min-train-years must be at least 1")
     if not (0.0 < args.threshold < 1.0):
         raise ValueError("--threshold must be between 0 and 1")
     if not (0.0 < args.sweep_min < args.sweep_max < 1.0):
@@ -954,12 +1150,22 @@ def main() -> None:
         raise RuntimeError("ablation grid is empty")
 
     df = _load_dataset(dataset_path)
-    X, y, groups, meta = _prepare_matrix(df)
+    X, y, groups, source_year, meta = _prepare_matrix(df)
 
-    if groups.nunique() < args.folds:
+    if args.split_protocol == "grouped_race" and groups.nunique() < args.folds:
         raise ValueError(
             f"--folds={args.folds} exceeds available unique races ({groups.nunique()}) in dataset"
         )
+
+    split_plan = _build_split_plan(
+        split_protocol=args.split_protocol,
+        X=X,
+        y=y,
+        groups=groups,
+        source_year=source_year,
+        folds=args.folds,
+        rolling_min_train_years=args.rolling_min_train_years,
+    )
 
     positives = int((y == 1).sum())
     negatives = int((y == 0).sum())
@@ -976,9 +1182,16 @@ def main() -> None:
     print(f"usable rows             : {len(y)}")
     print(f"feature columns         : {X.shape[1]}")
     print(f"groups (races)          : {groups.nunique()}")
+    print(f"source years            : {sorted(source_year.unique().tolist())}")
     print(f"class y=1               : {positives}")
     print(f"class y=0               : {negatives}")
     print(f"global scale_pos_weight : {global_spw:.6f}")
+    print(f"split protocol          : {args.split_protocol}")
+    if args.split_protocol == "grouped_race":
+        print(f"grouped folds           : {args.folds}")
+    else:
+        print(f"rolling min train years : {args.rolling_min_train_years}")
+    print(f"effective splits        : {len(split_plan)}")
     print(f"baseline threshold      : {args.threshold:.4f}")
     print(
         f"sweep range             : [{args.sweep_min:.2f}, {args.sweep_max:.2f}] with {args.sweep_points} points"
@@ -1028,7 +1241,8 @@ def main() -> None:
             y=y,
             groups=groups,
             meta=meta,
-            folds=args.folds,
+            split_protocol=args.split_protocol,
+            split_plan=split_plan,
             threshold_grid=threshold_grid,
             baseline_threshold=args.threshold,
             precision_floor=args.precision_floor,

@@ -4,11 +4,11 @@ ML comparator : data_lake/reports/ml_comparator_2022_2025_merged.csv
 
 precision summaries
 SDE: scored=1020, tp=749, fp=271, precision=0.734314, wilson95=[0.706365, 0.760504]
-ML : scored=522, tp=501, fp=21, precision=0.959770, wilson95=[0.939284, 0.973539]
-precision delta (ML minus SDE): +0.225456
+ML : scored=505, tp=485, fp=20, precision=0.960396, wilson95=[0.939622, 0.974218]
+precision delta (ML minus SDE): +0.226082
 
 hypothesis tests
-two proportion z: z=10.692854, p=0
+two proportion z: z=10.574095, p=0
 mcnemar overlap: overlap_n=89, discordant=0, chi2_cc=0.000000, p_asymptotic=1, p_exact=1
 
 interpretation note

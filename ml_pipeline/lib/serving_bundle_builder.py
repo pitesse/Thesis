@@ -102,7 +102,7 @@ def main() -> None:
     output_path = Path(args.output)
 
     df = _load_dataset(dataset_path)
-    X, y, _, _ = _prepare_matrix(df)
+    X, y, _, _ , _= _prepare_matrix(df)
 
     if args.scale_pos_weight_mode == "auto":
         spw = _compute_scale_pos_weight(y)
