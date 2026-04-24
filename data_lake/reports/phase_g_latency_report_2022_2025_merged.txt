@@ -8,9 +8,9 @@ failed events          : 0
 warmup excluded        : 50
 
 latency gate
-p50 total latency ms   : 3.106348
-p95 total latency ms   : 5.615486
-p99 total latency ms   : 13.903771
+p50 total latency ms   : 3.114034
+p95 total latency ms   : 6.002564
+p99 total latency ms   : 19.006378
 latency budget ms      : 500.000000
 latency gate status    : PASS
 

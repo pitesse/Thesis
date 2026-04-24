@@ -1,6 +1,6 @@
 # Dedicated SDE vs ML Comparison Report
 
-Generated at (UTC): 2026-04-24T15:24:47.695744+00:00
+Generated at (UTC): 2026-04-24T16:42:13.908801+00:00
 
 ## Scope
 - Purpose: meeting-ready, fairness-locked SDE vs ML comparison summary.
