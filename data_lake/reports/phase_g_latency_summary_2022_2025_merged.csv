@@ -1,4 +1,4 @@
 check,status,value,threshold,note
-latency_p95_total_ms,PASS,5.615486000078816,500.0,"warmup_excluded=50, p50=3.106348, p99=13.903771"
+latency_p95_total_ms,PASS,6.002563999390986,500.0,"warmup_excluded=50, p50=3.114034, p99=19.006378"
 availability_pct,PASS,100.0,99.0,"ok=3000, failed=0, total=3000"
 phase_g_overall_gate,PASS,1.0,1.0,requires latency and availability gate pass

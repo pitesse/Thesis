@@ -191,7 +191,7 @@ def main() -> None:
     drop_zone_lookup = _build_drop_zone_lookup(drop_zones_path)
     offline_features = _prepare_features(ml_features, drop_zones)
 
-    training_matrix, _, _, _ = _prepare_matrix(dataset)
+    training_matrix, _, _, _, _ = _prepare_matrix(dataset)
     training_feature_columns = list(training_matrix.columns)
     bundle_feature_columns = list(bundle.get("feature_columns", []))
 

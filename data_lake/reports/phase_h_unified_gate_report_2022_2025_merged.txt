@@ -1,5 +1,5 @@
 === PHASE H INTEGRATED GATE REPORT ===
-timestamp                 : 2026-04-16T09:43:02.159981+00:00
+timestamp                 : 2026-04-24T16:45:17.434270+00:00
 decision                  : GO
 confidence                : HIGH
 decision_note             : all integrated gates passed
@@ -12,15 +12,15 @@ phase status
 - phase G: PASS
 
 key metrics
-- phase b precision delta (ml-sde): 0.225456
+- phase b precision delta (ml-sde): 0.226082
 - phase b p-value (two proportion): 0.000000e+00
-- phase c threshold 0.1000 precision: 0.868714
-- phase c no-match dominance rate: 0.971099
-- phase d constrained precision: 0.807556
-- phase d reachability ratio: 0.981818
+- phase c threshold 0.1000 precision: 0.862519
+- phase c no-match dominance rate: 0.969103
+- phase d constrained precision: 0.787363
+- phase d reachability ratio: 0.987058
 - phase d fallback rate: 0.000000
 - phase f parity score: 1.000000
-- phase g latency p95 (ms): 5.615486
+- phase g latency p95 (ms): 6.002564
 - phase g availability (%): 100.000000
 - phase g failed events: 0
 
