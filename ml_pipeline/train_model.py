@@ -34,6 +34,8 @@ from lib.model_training_cv import (
     DEFAULT_MIN_CALIBRATION_POSITIVES,
     DEFAULT_PRECISION_FLOOR,
     DEFAULT_PROBA_THRESHOLD,
+    DEFAULT_ROLLING_MIN_TRAIN_YEARS,
+    DEFAULT_SPLIT_PROTOCOL,
     DEFAULT_SWEEP_MAX,
     DEFAULT_SWEEP_MIN,
     DEFAULT_SWEEP_POINTS,
@@ -110,6 +112,18 @@ def parse_args() -> argparse.Namespace:
     parser.set_defaults(prepare_data=True)
 
     parser.add_argument("--folds", type=int, default=DEFAULT_FOLDS)
+    parser.add_argument(
+        "--split-protocol",
+        choices=["grouped_race", "holdout_race", "rolling_year"],
+        default=DEFAULT_SPLIT_PROTOCOL,
+        help="cross-validation protocol used during model selection",
+    )
+    parser.add_argument(
+        "--rolling-min-train-years",
+        type=int,
+        default=DEFAULT_ROLLING_MIN_TRAIN_YEARS,
+        help="minimum history years required for each rolling-year split",
+    )
     parser.add_argument("--threshold", type=float, default=DEFAULT_PROBA_THRESHOLD)
     parser.add_argument("--sweep-min", type=float, default=DEFAULT_SWEEP_MIN)
     parser.add_argument("--sweep-max", type=float, default=DEFAULT_SWEEP_MAX)
@@ -208,6 +222,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    if args.rolling_min_train_years < 1:
+        raise ValueError("--rolling-min-train-years must be at least 1")
+
     if any(value <= 0 for value in args.grid_max_depth):
         raise ValueError("--grid-max-depth values must be >= 1")
     if any(value <= 0.0 or value > 1.0 for value in args.grid_learning_rate):
@@ -264,6 +281,10 @@ def main() -> None:
         str(dataset_path),
         "--folds",
         str(args.folds),
+        "--split-protocol",
+        args.split_protocol,
+        "--rolling-min-train-years",
+        str(args.rolling_min_train_years),
         "--threshold",
         str(args.threshold),
         "--sweep-min",

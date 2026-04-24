@@ -1,0 +1,2 @@
+split_protocol,unique_races,unique_years,rows,positives,global_constrained_fire_rate,global_unconstrained_fire_rate,global_baseline_fire_rate
+holdout_race,96,4,124136,8296,0.006629825352838822,0.09494425468840627,0.025770123090803634

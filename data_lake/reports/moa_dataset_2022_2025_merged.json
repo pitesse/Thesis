@@ -1,0 +1,62 @@
+{
+  "relation": "moa_pit_strategy",
+  "input_dataset": "data_lake/ml_training_dataset_2022_2025_merged.parquet",
+  "csv_output": "data_lake/reports/moa_dataset_2022_2025_merged.csv",
+  "arff_output": "data_lake/reports/moa_dataset_2022_2025_merged.arff",
+  "target_column": "target_y",
+  "target_labels": [
+    0,
+    1
+  ],
+  "row_count": 124136,
+  "feature_count": 35,
+  "feature_columns": [
+    "position",
+    "tyreLife",
+    "trackTemp",
+    "airTemp",
+    "humidity",
+    "rainfall",
+    "speedTrap",
+    "gapAhead",
+    "gapBehind",
+    "lapTime",
+    "pitLoss",
+    "_source_year",
+    "hasGapAhead",
+    "hasGapBehind",
+    "positions_lost",
+    "gap_to_physical_car",
+    "has_drop_zone_data",
+    "pace_drop_ratio",
+    "tire_life_ratio",
+    "pace_trend",
+    "gapAhead_trend",
+    "team_Alfa Romeo",
+    "team_AlphaTauri",
+    "team_Alpine",
+    "team_Aston Martin",
+    "team_Ferrari",
+    "team_Haas F1 Team",
+    "team_Kick Sauber",
+    "team_McLaren",
+    "team_Mercedes",
+    "team_RB",
+    "team_Racing Bulls",
+    "team_Red Bull Racing",
+    "team_Williams",
+    "team_nan"
+  ],
+  "source_years": [
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "input_schema_contract": {
+    "race_prefix_year": true,
+    "identifiers_removed_from_moa_matrix": true,
+    "one_hot_encoding": true,
+    "numeric_only_matrix": true
+  }
+}
