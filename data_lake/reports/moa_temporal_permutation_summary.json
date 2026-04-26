@@ -1,0 +1,42 @@
+{
+  "summary": {
+    "dataset_csv": "data_lake/reports/moa_dataset_2022_2025_merged.csv",
+    "predictions_file": "data_lake/reports/moa_arf_predictions_2022_2025_merged.pred",
+    "rows_used": 123118,
+    "decoded_unknown_prediction_rows": 1018,
+    "known_positive_rate": 0.0346496856674085,
+    "fidelity_accuracy": 0.8349577647823262,
+    "fidelity_f1": 0.18784972022382093,
+    "window_count_used": 12,
+    "top_features": "tire_life_ratio;gapBehind;_source_year;position;speedTrap;trackTemp;gapAhead_trend;humidity;lapTime;gap_to_physical_car",
+    "notes": "Permutation importance computed on surrogate predictions of MOA-decoded labels"
+  },
+  "decode_diagnostics": {
+    "rows_aligned": 124136,
+    "code_map": {
+      "2.0": 0,
+      "3.0": 1
+    },
+    "code_map_purity": {
+      "2.0": 1.0,
+      "3.0": 1.0
+    },
+    "unknown_prediction_rows": 1018,
+    "known_prediction_rows": 123118,
+    "known_positive_rate": 0.0346496856674085,
+    "known_negative_rate": 0.9653503143325916,
+    "rows_used_after_known_filter": 123118
+  },
+  "shap_top_features": [
+    "tire_life_ratio",
+    "tyreLife",
+    "gapBehind"
+  ],
+  "artifacts": [
+    "data_lake/reports/moa_temporal_permutation_summary.csv",
+    "data_lake/reports/moa_temporal_permutation_global.csv",
+    "data_lake/reports/moa_temporal_permutation_by_window.csv",
+    "data_lake/reports/moa_temporal_permutation_shap_agreement.csv",
+    "data_lake/reports/moa_temporal_permutation_heatmap.pdf"
+  ]
+}
