@@ -546,6 +546,101 @@ def _build_rolling_year_split_plan(
     return split_plan
 
 
+def _build_expanding_race_split_plan(
+    data: pd.DataFrame,
+    rolling_min_train_years: int,
+) -> list[dict[str, object]]:
+    required_columns = {"source_year", "race"}
+    missing = required_columns.difference(data.columns)
+    if missing:
+        raise ValueError(f"expanding_race split requires columns: {sorted(missing)}")
+
+    if rolling_min_train_years < 1:
+        raise ValueError("rolling_min_train_years must be at least 1")
+
+    work = data.copy()
+    work["source_year"] = pd.to_numeric(work["source_year"], errors="coerce")
+    work = work.dropna(subset=["source_year", "race"]).copy()
+    if work.empty:
+        raise ValueError("expanding_race split received no valid rows")
+
+    work["source_year"] = work["source_year"].astype(int)
+    work["race"] = work["race"].astype(str)
+
+    # Preserve chronological order exactly as rows appear in the already-sorted dataset.
+    ordered_pairs: list[tuple[int, str]] = []
+    seen_pairs: set[tuple[int, str]] = set()
+    for year, race in zip(work["source_year"], work["race"]):
+        pair = (int(year), str(race))
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        ordered_pairs.append(pair)
+
+    if len(ordered_pairs) < 2:
+        raise ValueError(
+            "expanding_race split requires at least 2 distinct (source_year, race) tuples"
+        )
+
+    ordered_years: list[int] = []
+    seen_years: set[int] = set()
+    for year, _ in ordered_pairs:
+        if year in seen_years:
+            continue
+        seen_years.add(year)
+        ordered_years.append(year)
+
+    if len(ordered_years) <= rolling_min_train_years:
+        raise ValueError(
+            "expanding_race split produced no valid folds; "
+            f"years={ordered_years}, rolling_min_train_years={rolling_min_train_years}"
+        )
+
+    initial_train_years = set(ordered_years[:rolling_min_train_years])
+    first_test_pos = next(
+        (idx for idx, (year, _) in enumerate(ordered_pairs) if year not in initial_train_years),
+        len(ordered_pairs),
+    )
+
+    if first_test_pos >= len(ordered_pairs):
+        raise ValueError(
+            "expanding_race split produced no valid folds after initial training window"
+        )
+
+    row_pairs = list(zip(work["source_year"].tolist(), work["race"].tolist()))
+
+    split_plan: list[dict[str, object]] = []
+    for test_pos in range(first_test_pos, len(ordered_pairs)):
+        test_pair = ordered_pairs[test_pos]
+        train_pair_set = set(ordered_pairs[:test_pos])
+
+        train_mask = np.asarray([pair in train_pair_set for pair in row_pairs], dtype=bool)
+        test_mask = np.asarray([pair == test_pair for pair in row_pairs], dtype=bool)
+        if not np.any(train_mask) or not np.any(test_mask):
+            continue
+
+        train_years = [year for year, _ in ordered_pairs[:test_pos]]
+        split_plan.append(
+            {
+                "fold": int(len(split_plan) + 1),
+                "split_label": f"expanding_race_test_{test_pair[0]} :: {test_pair[1]}",
+                "train_idx": np.flatnonzero(train_mask),
+                "test_idx": np.flatnonzero(test_mask),
+                "train_year_start": int(train_years[0]),
+                "train_year_end": int(train_years[-1]),
+                "test_year": int(test_pair[0]),
+            }
+        )
+
+    if not split_plan:
+        raise ValueError(
+            "expanding_race split produced no valid folds; "
+            f"years={ordered_years}, rolling_min_train_years={rolling_min_train_years}"
+        )
+
+    return split_plan
+
+
 def _build_split_plan(
     split_protocol: str,
     X: pd.DataFrame,
@@ -561,6 +656,17 @@ def _build_split_plan(
         return _build_holdout_race_split_plan(groups)
     if split_protocol == "rolling_year":
         return _build_rolling_year_split_plan(source_year, rolling_min_train_years)
+    if split_protocol == "expanding_race":
+        split_data = pd.DataFrame(
+            {
+                "source_year": source_year.values,
+                "race": groups.astype(str).values,
+            }
+        )
+        return _build_expanding_race_split_plan(
+            split_data,
+            rolling_min_train_years,
+        )
     raise ValueError(f"unsupported split protocol: {split_protocol}")
 
 
@@ -960,9 +1066,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--split-protocol",
-        choices=["grouped_race", "holdout_race", "rolling_year"],
+        choices=["grouped_race", "holdout_race", "rolling_year", "expanding_race"],
         default=DEFAULT_SPLIT_PROTOCOL,
-        help="cross-validation protocol: grouped K-fold, holdout each race, or rolling holdout by source year",
+        help="cross-validation protocol: grouped K-fold, holdout each race, rolling holdout by source year, or expanding window by race",
     )
     parser.add_argument(
         "--rolling-min-train-years",
