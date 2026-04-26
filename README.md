@@ -299,7 +299,46 @@ Optional data-quality audit for raw stream outputs:
 python season_data_audit.py
 ```
 
-### 5) Start Flink + ML Predictions Together
+### 5) Thesis Analysis Scripts (temporal, trust, explainability, synthesis)
+
+After running training, MOA baseline, and unified evaluation, generate thesis-focused analysis artifacts with:
+
+```bash
+python ml_pipeline/plot_temporal_dynamics.py
+python ml_pipeline/plot_trust_diagnostics.py
+python ml_pipeline/explain_moa_temporal_permutation.py --years 2022 2023 2024 2025 --season-tag season
+python ml_pipeline/build_thesis_synthesis.py --suffix 2022_2025_merged
+```
+
+What these scripts represent:
+1. `plot_temporal_dynamics.py`: rolling local Accuracy/Kappa over timeline for Streaming ML vs Batch constrained policy vs Batch best-threshold policy.
+2. `plot_trust_diagnostics.py`: calibration reliability and latency stability figures used for the trust/readiness discussion.
+3. `explain_moa_temporal_permutation.py`: second explainability method for MOA (temporal permutation importance), complementary to surrogate SHAP.
+4. `build_thesis_synthesis.py`: final claim matrix + correctness audit that consolidates SDE, Batch (two policies), MOA, and methodological checks.
+
+Primary figure artifacts:
+
+| Figure | Path | Produced by |
+|---|---|---|
+| Temporal Accuracy | `data_lake/reports/paper_fig0_accuracy_over_time_real.pdf` | `plot_temporal_dynamics.py` |
+| Temporal Kappa | `data_lake/reports/paper_fig1_kappa_over_time_real.pdf` | `plot_temporal_dynamics.py` |
+| Calibration Reliability Curve | `data_lake/reports/paper_fig2_calibration_reliability_2022_2025_merged.pdf` | `plot_trust_diagnostics.py` |
+| Calibration Gap by Bin | `data_lake/reports/paper_fig3_calibration_gap_2022_2025_merged.pdf` | `plot_trust_diagnostics.py` |
+| Latency p95 by Year | `data_lake/reports/paper_fig4_latency_by_year_p95_2022_2025_merged.pdf` | `plot_trust_diagnostics.py` |
+| Latency Component Breakdown | `data_lake/reports/paper_fig5_latency_components_2022_2025_merged.pdf` | `plot_trust_diagnostics.py` |
+| MOA Temporal Permutation Heatmap | `data_lake/reports/moa_temporal_permutation_heatmap.pdf` | `explain_moa_temporal_permutation.py` |
+
+Primary synthesis artifacts:
+1. `data_lake/reports/thesis_synthesis_2022_2025_merged.csv`
+2. `data_lake/reports/thesis_synthesis_checks_2022_2025_merged.csv`
+3. `data_lake/reports/thesis_synthesis_2022_2025_merged.md`
+
+Notes for interpretation:
+1. Use Batch **best-threshold** for competitive-capability comparison and Batch **constrained** for deployment-readiness claims.
+2. Treat MOA explainability outputs as behavioral/proxy explanations (surrogate SHAP + permutation), not direct internal attributions.
+3. Keep `thesis_synthesis_checks_...csv` as the canonical pass/fail checklist when reporting final results.
+
+### 6) Start Flink + ML Predictions Together
 
 #### Automated single race with live ML inference
 
@@ -392,6 +431,10 @@ Dashboard: `http://localhost:8501`
 │   ├── prep_data.py
 │   ├── train_model.py
 │   ├── evaluate_model.py
+│   ├── plot_temporal_dynamics.py
+│   ├── plot_trust_diagnostics.py
+│   ├── explain_moa_temporal_permutation.py
+│   ├── build_thesis_synthesis.py
 │   ├── serve_model.py
 │   └── pipeline_config.py
 └── report/
