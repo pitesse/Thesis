@@ -1,0 +1,2 @@
+dataset_csv,predictions_file,rows_used,decoded_unknown_prediction_rows,known_positive_rate,fidelity_accuracy,fidelity_f1,window_count_used,top_features,notes
+data_lake/reports/moa_dataset_2022_2025_merged.csv,data_lake/reports/moa_arf_predictions_2022_2025_merged.pred,123118,1018,0.0346496856674085,0.8349577647823262,0.18784972022382093,12,tire_life_ratio;gapBehind;_source_year;position;speedTrap;trackTemp;gapAhead_trend;humidity;lapTime;gap_to_physical_car,Permutation importance computed on surrogate predictions of MOA-decoded labels
