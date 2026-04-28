@@ -114,7 +114,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--folds", type=int, default=DEFAULT_FOLDS)
     parser.add_argument(
         "--split-protocol",
-        choices=["grouped_race", "holdout_race", "rolling_year", "expanding_race"],
+        choices=[
+            "grouped_race",
+            "holdout_race",
+            "rolling_year",
+            "expanding_race",
+            "expanding_race_sequential",
+        ],
         default=DEFAULT_SPLIT_PROTOCOL,
         help="cross-validation protocol used during model selection",
     )

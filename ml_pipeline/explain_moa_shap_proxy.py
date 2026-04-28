@@ -135,6 +135,24 @@ def _save_shap_artifacts(
     return outputs
 
 
+def _build_feature_importance_table(shap_matrix: np.ndarray, X_sample: pd.DataFrame) -> pd.DataFrame:
+    if shap_matrix.ndim != 2 or shap_matrix.shape[1] != X_sample.shape[1]:
+        raise ValueError("unexpected SHAP matrix shape for feature importance export")
+
+    mean_abs = np.mean(np.abs(shap_matrix), axis=0)
+    mean_signed = np.mean(shap_matrix, axis=0)
+    frame = pd.DataFrame(
+        {
+            "feature": list(X_sample.columns),
+            "mean_abs_shap": mean_abs,
+            "mean_signed_shap": mean_signed,
+        }
+    )
+    frame = frame.sort_values("mean_abs_shap", ascending=False).reset_index(drop=True)
+    frame.insert(0, "rank", np.arange(1, len(frame) + 1))
+    return frame
+
+
 def main() -> None:
     args = parse_args()
     if args.sample_rows < 1:

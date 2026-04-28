@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import cast
 
@@ -129,6 +130,28 @@ def _save_dependence_plots(
     return outputs
 
 
+def _build_feature_importance_table(
+    shap_matrix: np.ndarray,
+    X_sample: pd.DataFrame,
+) -> pd.DataFrame:
+    if shap_matrix.ndim != 2 or shap_matrix.shape[1] != X_sample.shape[1]:
+        raise ValueError("shap matrix shape does not match sampled feature matrix")
+
+    return (
+        pd.DataFrame(
+            {
+                "feature": X_sample.columns,
+                "mean_abs_shap": np.mean(np.abs(shap_matrix), axis=0),
+                "mean_shap": np.mean(shap_matrix, axis=0),
+                "std_shap": np.std(shap_matrix, axis=0, ddof=0),
+                "mean_feature_value": X_sample.mean(axis=0).to_numpy(),
+            }
+        )
+        .sort_values("mean_abs_shap", ascending=False)
+        .reset_index(drop=True)
+    )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -155,6 +178,7 @@ def main() -> None:
     explainer = shap.TreeExplainer(model)
     shap_obj = explainer(X_sample)
     shap_matrix = _to_shap_matrix(shap_obj)
+    feature_importance = _build_feature_importance_table(shap_matrix, X_sample)
 
     global_bar_path = args.reports_dir / "shap_global_bar.png"
     beeswarm_path = args.reports_dir / "shap_beeswarm.png"
@@ -169,6 +193,48 @@ def main() -> None:
     )
     dep_outputs = _save_dependence_plots(dep_features, shap_matrix, X_sample, args.reports_dir)
 
+    summary_csv = args.reports_dir / "shap_summary.csv"
+    summary_json = args.reports_dir / "shap_summary.json"
+    feature_importance_csv = args.reports_dir / "shap_feature_importance.csv"
+
+    feature_importance.to_csv(feature_importance_csv, index=False)
+    pd.DataFrame(
+        [
+            {
+                "dataset": str(args.dataset),
+                "model": str(args.model),
+                "sample_rows": int(len(X_sample)),
+                "feature_count": int(X_sample.shape[1]),
+                "top_dependence_features": ";".join(dep_features),
+                "feature_importance_csv": str(feature_importance_csv),
+                "global_bar": str(global_bar_path),
+                "beeswarm": str(beeswarm_path),
+            }
+        ]
+    ).to_csv(summary_csv, index=False)
+    summary_json.write_text(
+        json.dumps(
+            {
+                "dataset": str(args.dataset),
+                "model": str(args.model),
+                "sample_rows": int(len(X_sample)),
+                "feature_count": int(X_sample.shape[1]),
+                "top_dependence_features": dep_features,
+                "feature_importance_csv": str(feature_importance_csv),
+                "artifacts": [
+                    str(global_bar_path),
+                    str(beeswarm_path),
+                    *[str(path) for path in dep_outputs],
+                    str(feature_importance_csv),
+                ],
+            },
+            indent=2,
+            ensure_ascii=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     print("=== SHAP ARTIFACT SUMMARY ===")
     print(f"dataset: {args.dataset}")
     print(f"model: {args.model}")
@@ -176,6 +242,9 @@ def main() -> None:
     print(f"global_bar: {global_bar_path}")
     print(f"beeswarm: {beeswarm_path}")
     print(f"dependence_features: {dep_features}")
+    print(f"summary csv: {summary_csv}")
+    print(f"summary json: {summary_json}")
+    print(f"feature_importance csv: {feature_importance_csv}")
     for path in dep_outputs:
         print(f"dependence_plot: {path}")
     print("caveat: SHAP explains model behavior, not causal race dynamics")

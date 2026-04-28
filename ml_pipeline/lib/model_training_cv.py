@@ -641,6 +641,71 @@ def _build_expanding_race_split_plan(
     return split_plan
 
 
+def _build_expanding_race_sequential_split_plan(
+    data: pd.DataFrame,
+) -> list[dict[str, object]]:
+    required_columns = {"source_year", "race"}
+    missing = required_columns.difference(data.columns)
+    if missing:
+        raise ValueError(
+            f"expanding_race_sequential split requires columns: {sorted(missing)}"
+        )
+
+    work = data.copy()
+    work["source_year"] = pd.to_numeric(work["source_year"], errors="coerce")
+    work = work.dropna(subset=["source_year", "race"]).copy()
+    if work.empty:
+        raise ValueError("expanding_race_sequential split received no valid rows")
+
+    work["source_year"] = work["source_year"].astype(int)
+    work["race"] = work["race"].astype(str)
+
+    # Preserve chronological order exactly as rows appear in the already-sorted dataset.
+    ordered_pairs: list[tuple[int, str]] = []
+    seen_pairs: set[tuple[int, str]] = set()
+    for year, race in zip(work["source_year"], work["race"]):
+        pair = (int(year), str(race))
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        ordered_pairs.append(pair)
+
+    if len(ordered_pairs) < 2:
+        raise ValueError(
+            "expanding_race_sequential split requires at least 2 distinct (source_year, race) tuples"
+        )
+
+    row_pairs = list(zip(work["source_year"].tolist(), work["race"].tolist()))
+
+    split_plan: list[dict[str, object]] = []
+    for test_pos in range(1, len(ordered_pairs)):
+        test_pair = ordered_pairs[test_pos]
+        train_pair_set = set(ordered_pairs[:test_pos])
+
+        train_mask = np.asarray([pair in train_pair_set for pair in row_pairs], dtype=bool)
+        test_mask = np.asarray([pair == test_pair for pair in row_pairs], dtype=bool)
+        if not np.any(train_mask) or not np.any(test_mask):
+            continue
+
+        train_years = [year for year, _ in ordered_pairs[:test_pos]]
+        split_plan.append(
+            {
+                "fold": int(len(split_plan) + 1),
+                "split_label": f"expanding_race_sequential_test_{test_pair[0]} :: {test_pair[1]}",
+                "train_idx": np.flatnonzero(train_mask),
+                "test_idx": np.flatnonzero(test_mask),
+                "train_year_start": int(train_years[0]),
+                "train_year_end": int(train_years[-1]),
+                "test_year": int(test_pair[0]),
+            }
+        )
+
+    if not split_plan:
+        raise ValueError("expanding_race_sequential split produced no valid folds")
+
+    return split_plan
+
+
 def _build_split_plan(
     split_protocol: str,
     X: pd.DataFrame,
@@ -667,6 +732,14 @@ def _build_split_plan(
             split_data,
             rolling_min_train_years,
         )
+    if split_protocol == "expanding_race_sequential":
+        split_data = pd.DataFrame(
+            {
+                "source_year": source_year.values,
+                "race": groups.astype(str).values,
+            }
+        )
+        return _build_expanding_race_sequential_split_plan(split_data)
     raise ValueError(f"unsupported split protocol: {split_protocol}")
 
 
@@ -734,17 +807,19 @@ def _run_grouped_cv_for_config(
                 f"group leakage detected in fold {fold_idx}: {sorted(overlap)}"
             )
 
+        calibration_split_mode = "inner_group_split"
         inner_splits = min(4, groups_train.nunique())
         if inner_splits < 2:
-            raise RuntimeError(
-                f"insufficient inner groups for calibration in fold {fold_idx}: {groups_train.nunique()}"
+            # the first sequential fold only has one race, so use that prefix as the calibration window.
+            calibration_split_mode = "single_group_fallback"
+            fit_rel_idx = np.arange(len(X_train), dtype=int)
+            calib_rel_idx = np.arange(len(X_train), dtype=int)
+        else:
+            inner_gkf = GroupKFold(n_splits=inner_splits)
+            # fit model on one inner block and reserve the other for honest calibration/threshold tuning.
+            fit_rel_idx, calib_rel_idx = next(
+                inner_gkf.split(X_train, y_train, groups=groups_train)
             )
-
-        inner_gkf = GroupKFold(n_splits=inner_splits)
-        # fit model on one inner block and reserve the other for honest calibration/threshold tuning.
-        fit_rel_idx, calib_rel_idx = next(
-            inner_gkf.split(X_train, y_train, groups=groups_train)
-        )
 
         X_fit = X_train.iloc[fit_rel_idx]
         y_fit = y_train.iloc[fit_rel_idx]
@@ -854,6 +929,7 @@ def _run_grouped_cv_for_config(
             "calibration_rows": int(len(calib_rel_idx)),
             "calibration_positives": int((y_calib == 1).sum()),
             "calibration_method_used": calibrator_label,
+            "calibration_split_mode": calibration_split_mode,
             "calibration_policy": calibration_policy,
             "scale_pos_weight": float(fold_spw),
             "scale_pos_weight_mode": scale_pos_weight_mode,
@@ -916,6 +992,7 @@ def _run_grouped_cv_for_config(
                     "constrained_pred": int(cal_score >= constrained_threshold),
                     "constrained_mode": str(constrained_mode),
                     "calibration_method_used": str(calibrator_label),
+                    "calibration_split_mode": calibration_split_mode,
                 }
                 for race, driver, lap_number, source_year, target_value, raw_score, cal_score in zip(
                     meta_test["race"],
@@ -1066,9 +1143,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--split-protocol",
-        choices=["grouped_race", "holdout_race", "rolling_year", "expanding_race"],
+        choices=[
+            "grouped_race",
+            "holdout_race",
+            "rolling_year",
+            "expanding_race",
+            "expanding_race_sequential",
+        ],
         default=DEFAULT_SPLIT_PROTOCOL,
-        help="cross-validation protocol: grouped K-fold, holdout each race, rolling holdout by source year, or expanding window by race",
+        help=(
+            "cross-validation protocol: grouped K-fold, holdout each race, rolling holdout by source year, "
+            "expanding window by race after a year warmup, or pure race-by-race expanding window"
+        ),
     )
     parser.add_argument(
         "--rolling-min-train-years",
@@ -1295,6 +1381,8 @@ def main() -> None:
     print(f"split protocol          : {args.split_protocol}")
     if args.split_protocol == "grouped_race":
         print(f"grouped folds           : {args.folds}")
+    elif args.split_protocol == "expanding_race_sequential":
+        print("race warmup pairs       : 1")
     else:
         print(f"rolling min train years : {args.rolling_min_train_years}")
     print(f"effective splits        : {len(split_plan)}")

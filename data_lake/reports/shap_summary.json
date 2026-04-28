@@ -1,0 +1,20 @@
+{
+  "dataset": "../data_lake/ml_training_dataset_2022_2025_merged.parquet",
+  "model": "../data_lake/models/pit_strategy_serving_bundle.joblib",
+  "sample_rows": 5000,
+  "feature_count": 35,
+  "top_dependence_features": [
+    "_source_year",
+    "tire_life_ratio",
+    "trackTemp"
+  ],
+  "feature_importance_csv": "../data_lake/reports/shap_feature_importance.csv",
+  "artifacts": [
+    "../data_lake/reports/shap_global_bar.png",
+    "../data_lake/reports/shap_beeswarm.png",
+    "../data_lake/reports/shap_dependence__source_year.png",
+    "../data_lake/reports/shap_dependence_tire_life_ratio.png",
+    "../data_lake/reports/shap_dependence_trackTemp.png",
+    "../data_lake/reports/shap_feature_importance.csv"
+  ]
+}

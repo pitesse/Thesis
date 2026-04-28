@@ -6,9 +6,9 @@ Season tag: merged
 | Paradigm | Mode | Actionable | Scored | Excluded | TP | FP | Precision | Eval instances | Accuracy % | Kappa % |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | SDE | full_h2_actionable_one_to_one | 6323 | 1020 | 5303 | 749 | 271 | 0.734314 | N/A | N/A | N/A |
-| ML_BATCH | full_h2_actionable_one_to_one | 823 | 505 | 318 | 485 | 20 | 0.960396 | N/A | N/A | N/A |
-| MOA_ARF_DECISION | full_h2_actionable_one_to_one | 4266 | 1160 | 3106 | 1062 | 98 | 0.915517 | N/A | N/A | N/A |
-| MOA_ARF | prequential_stream_baseline | N/A | N/A | N/A | N/A | N/A | N/A | 124136 | 90.868080 | 14.295677 |
+| ML_BATCH | full_h2_actionable_one_to_one | 1016 | 595 | 421 | 561 | 34 | 0.942857 | N/A | N/A | N/A |
+| MOA_ARF_DECISION | full_h2_actionable_one_to_one | 6453 | 1430 | 5023 | 1293 | 137 | 0.904196 | N/A | N/A | N/A |
+| MOA_ARF | prequential_stream_baseline | N/A | N/A | N/A | N/A | N/A | N/A | 124136 | 89.447058 | 13.696910 |
 
 ## Caveats
 - SDE, batch ML, and MOA decision rows are directly comparable under the fixed H=2 comparator contract.

@@ -264,6 +264,10 @@ def _fmt(value: object, digits: int = 6) -> str:
         return "N/A"
     return f"{number:.{digits}f}"
 
+def _fmt_int_or_na(value: Any) -> str:
+    if pd.isna(value):
+        return "N/A"
+    return str(int(value))
 
 def _fmt_p_value(value: object) -> str:
     number = _to_float(value)
@@ -364,15 +368,16 @@ def _build_markdown(
         )
         lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
         for _, row in by_year_table.iterrows():
+            year_value = _fmt_int_or_na(row["year"])
             lines.append(
                 "| {year} | {sde_scored} | {sde_precision} | {ml_scored} | {ml_precision} | {delta_precision} | {delta_scored} |".format(
-                    year=int(row["year"]),
-                    sde_scored=int(row["sde_scored"]),
+                    year=year_value,
+                    sde_scored=_fmt_int_or_na(row["sde_scored"]),
                     sde_precision=_fmt(row["sde_precision"], 6),
-                    ml_scored=int(row["ml_scored"]),
+                    ml_scored=_fmt_int_or_na(row["ml_scored"]),
                     ml_precision=_fmt(row["ml_precision"], 6),
                     delta_precision=_fmt(row["delta_precision_ml_minus_sde"], 6),
-                    delta_scored=int(row["delta_scored_ml_minus_sde"]),
+                    delta_scored=_fmt_int_or_na(row["delta_scored_ml_minus_sde"]),
                 )
             )
 
