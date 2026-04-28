@@ -1,6 +1,4 @@
-# Real-Time F1 Strategy Operations
-
-Optional project of the [Streaming Data Analytics](https://emanueledellavalle.org/teaching/streaming-data-analytics-2025-26/) course (Politecnico di Milano).
+# Real-Time F1 Strategy Operations Thesis Repository
 
 Student: **Pietro Pizzoccheri**
 
@@ -53,9 +51,6 @@ From current `data_lake/reports` artifacts:
 - ML-racewise-extended: precision `0.834143` (`TP=3264`, `FP=649`, `scored=3913`).
 - MOA: precision `0.904196` (`TP=1293`, `FP=137`, `scored=1430`).
 
-### Unified gate status
-- Integrated decision (`H1`): **`NO_GO`**.
-- Main failing checks: `D2` (reachability ratio below threshold) and `J1` (split-integrity overall).
 
 Canonical source files:
 - `data_lake/reports/model_evaluation_2022_2025_merged.csv`
@@ -127,11 +122,7 @@ Single race:
 
 Full season(s):
 ```bash
-./simulate_season.sh --year 2022 --speed 50
-./simulate_season.sh --year 2023 --speed 50
-./simulate_season.sh --year 2024 --speed 50
-./simulate_season.sh --year 2025 --speed 50
-```
+./simulate_season.sh --speed 50
 
 ### B) Build dataset + train Batch ML + serving bundle
 ```bash
