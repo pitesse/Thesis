@@ -28,6 +28,49 @@ from lib.data_preparation import (
     _write_dataset,
 )
 
+# F1 calendar order (chronological 2022-2025 for expanding_race protocol temporal integrity)
+F1_CALENDAR = {
+    2022: [
+        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
+        "Emilia Romagna Grand Prix", "Miami Grand Prix", "Spanish Grand Prix",
+        "Monaco Grand Prix", "Azerbaijan Grand Prix", "Canadian Grand Prix",
+        "British Grand Prix", "Austrian Grand Prix", "French Grand Prix",
+        "Hungarian Grand Prix", "Belgian Grand Prix", "Dutch Grand Prix",
+        "Italian Grand Prix", "Singapore Grand Prix", "Japanese Grand Prix",
+        "United States Grand Prix", "Mexico City Grand Prix", "São Paulo Grand Prix",
+        "Abu Dhabi Grand Prix"
+    ],
+    2023: [
+        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
+        "Azerbaijan Grand Prix", "Miami Grand Prix", "Monaco Grand Prix",
+        "Spanish Grand Prix", "Canadian Grand Prix", "Austrian Grand Prix",
+        "British Grand Prix", "Hungarian Grand Prix", "Belgian Grand Prix",
+        "Dutch Grand Prix", "Italian Grand Prix", "Singapore Grand Prix",
+        "Japanese Grand Prix", "Qatar Grand Prix", "United States Grand Prix",
+        "Mexico City Grand Prix", "São Paulo Grand Prix", "Abu Dhabi Grand Prix"
+    ],
+    2024: [
+        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
+        "Japanese Grand Prix", "Chinese Grand Prix", "Miami Grand Prix",
+        "Emilia Romagna Grand Prix", "Monaco Grand Prix", "Canadian Grand Prix",
+        "Spanish Grand Prix", "Austrian Grand Prix", "British Grand Prix",
+        "Hungarian Grand Prix", "Belgian Grand Prix", "Dutch Grand Prix",
+        "Italian Grand Prix", "Azerbaijan Grand Prix", "Singapore Grand Prix",
+        "United States Grand Prix", "Mexico City Grand Prix", "São Paulo Grand Prix",
+        "Abu Dhabi Grand Prix"
+    ],
+    2025: [
+        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
+        "Japanese Grand Prix", "Shanghai Grand Prix", "Miami Grand Prix",
+        "Monaco Grand Prix", "Canadian Grand Prix", "Spanish Grand Prix",
+        "Austrian Grand Prix", "British Grand Prix", "Hungarian Grand Prix",
+        "Belgian Grand Prix", "Dutch Grand Prix", "Italian Grand Prix",
+        "Monza Grand Prix", "Baku Grand Prix", "Singapore Grand Prix",
+        "United States Grand Prix", "Mexico City Grand Prix", "Brazil Grand Prix",
+        "Abu Dhabi Grand Prix"
+    ]
+}
+
 
 @dataclass(frozen=True)
 class PreparedSeason:
@@ -94,8 +137,34 @@ def _prepare_one_season(
 def _merge_seasons(prepared: list[PreparedSeason]) -> pd.DataFrame:
     frames = [item.dataset for item in prepared]
     merged = pd.concat(frames, ignore_index=True)
-    # stable sort order keeps downstream hashes and grouped cv splits deterministic across reruns.
-    merged.sort_values(by=["race", "driver", "lapNumber"], inplace=True)
+    
+    # extract year and race name for calendar ordering
+    merged["_extracted_year"] = merged["race"].str.extract(r"^(\d{4})")
+    merged["_extracted_year"] = pd.to_numeric(merged["_extracted_year"], errors="coerce").astype("Int64")
+    merged["_extracted_race"] = merged["race"].str.replace(r"^\d{4}\s::\s", "", regex=True)
+    
+    # add calendar order index for chronological sorting (fixes temporal leakage in expanding_race)
+    def _get_calendar_order(year: int | float, race_name: str) -> int:
+        if pd.isna(year):
+            return 999999
+        year_int = int(year)
+        calendar = F1_CALENDAR.get(year_int, [])
+        try:
+            return calendar.index(race_name)
+        except (ValueError, KeyError):
+            return 999998  # unknown race, sort last
+    
+    merged["_calendar_order"] = merged.apply(
+        lambda row: _get_calendar_order(row["_extracted_year"], row["_extracted_race"]),
+        axis=1
+    )
+    
+    # sort chronologically by year then calendar order, then driver/lap for stability
+    merged.sort_values(
+        by=["_extracted_year", "_calendar_order", "driver", "lapNumber"],
+        inplace=True
+    )
+    merged.drop(columns=["_extracted_year", "_extracted_race", "_calendar_order"], inplace=True)
     merged.reset_index(drop=True, inplace=True)
     return merged
 
