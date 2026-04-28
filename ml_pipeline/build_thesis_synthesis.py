@@ -200,12 +200,12 @@ def _build_check_rows(
     else:
         phase_h_status = str(phase_h_gate.iloc[0]["status"])
     add_check(
-        "phase_h_unified_gate_go",
+        "integrated_gate_go",
         phase_h_status in {"GO", "PASS"},
         f"phase_h_status={phase_h_status}",
     )
 
-    phase_f_status = str(phase_f_parity[phase_f_parity["check"] == "phase_f_overall_gate"].iloc[0]["status"])
+    phase_f_status = str(phase_f_parity[phase_f_parity["check"] == "feature_parity_overall_gate"].iloc[0]["status"])
     add_check(
         "phase_f_parity_gate",
         phase_f_status == "PASS",
@@ -214,10 +214,10 @@ def _build_check_rows(
 
     # 6) Residual risk visibility: split-integrity currently flags fold-count mismatch.
     split_overall = str(
-        phase_j_split[phase_j_split["check"] == "phase_j_split_integrity_overall"].iloc[0]["status"]
+        phase_j_split[phase_j_split["check"] == "split_integrity_overall"].iloc[0]["status"]
     )
     add_check(
-        "phase_j_split_integrity_overall",
+        "split_integrity_overall",
         split_overall == "PASS",
         f"phase_j_split_status={split_overall}",
     )
@@ -336,15 +336,15 @@ def main() -> None:
         "ml_cmp": reports_dir / f"ml_comparator_{suffix}.csv",
         "ml_best_cmp": reports_dir / f"ml_comparator_best_threshold_{suffix}.csv",
         "moa_cmp": reports_dir / f"moa_comparator_{suffix}.csv",
-        "phase_b_summary": reports_dir / f"phase_b_sde_ml_comparison_summary_{suffix}.csv",
-        "phase_c_sweep": reports_dir / f"phase_c_threshold_sweep_{suffix}.csv",
-        "phase_d_summary": reports_dir / f"phase_d_calibration_policy_summary_{suffix}.csv",
-        "phase_d_bins": reports_dir / f"phase_d_calibration_reliability_bins_{suffix}.csv",
-        "phase_f_parity": reports_dir / f"phase_f_parity_summary_{suffix}.csv",
-        "phase_g_summary": reports_dir / f"phase_g_latency_summary_{suffix}.csv",
-        "phase_g_details": reports_dir / f"phase_g_latency_details_{suffix}.csv",
-        "phase_h_gate": reports_dir / f"phase_h_unified_gate_{suffix}.csv",
-        "phase_j_split": reports_dir / f"phase_j_split_integrity_summary_{suffix}.csv",
+        "phase_b_summary": reports_dir / f"sde_ml_comparison_summary_{suffix}.csv",
+        "phase_c_sweep": reports_dir / f"threshold_frontier_{suffix}.csv",
+        "phase_d_summary": reports_dir / f"calibration_policy_summary_{suffix}.csv",
+        "phase_d_bins": reports_dir / f"calibration_reliability_bins_{suffix}.csv",
+        "phase_f_parity": reports_dir / f"feature_parity_summary_{suffix}.csv",
+        "phase_g_summary": reports_dir / f"live_latency_summary_{suffix}.csv",
+        "phase_g_details": reports_dir / f"live_latency_details_{suffix}.csv",
+        "phase_h_gate": reports_dir / f"integrated_gate_{suffix}.csv",
+        "phase_j_split": reports_dir / f"split_integrity_summary_{suffix}.csv",
         "moa_perm_summary": reports_dir / "moa_temporal_permutation_summary.csv",
         "moa_arf_summary": reports_dir / f"moa_arf_summary_{suffix}.csv",
     }

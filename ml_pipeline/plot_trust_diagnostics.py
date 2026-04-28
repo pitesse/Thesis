@@ -42,11 +42,11 @@ def parse_args() -> argparse.Namespace:
 
 def _load_inputs(reports_dir: Path, suffix: str) -> dict[str, pd.DataFrame]:
     paths = {
-        "phase_d_bins": reports_dir / f"phase_d_calibration_reliability_bins_{suffix}.csv",
-        "phase_d_summary": reports_dir / f"phase_d_calibration_policy_summary_{suffix}.csv",
-        "phase_g_details": reports_dir / f"phase_g_latency_details_{suffix}.csv",
-        "phase_g_by_year": reports_dir / f"phase_g_latency_by_year_{suffix}.csv",
-        "phase_g_summary": reports_dir / f"phase_g_latency_summary_{suffix}.csv",
+        "phase_d_bins": reports_dir / f"calibration_reliability_bins_{suffix}.csv",
+        "phase_d_summary": reports_dir / f"calibration_policy_summary_{suffix}.csv",
+        "phase_g_details": reports_dir / f"live_latency_details_{suffix}.csv",
+        "phase_g_by_year": reports_dir / f"live_latency_by_year_{suffix}.csv",
+        "phase_g_summary": reports_dir / f"live_latency_summary_{suffix}.csv",
     }
 
     for label, path in paths.items():
@@ -113,7 +113,7 @@ def _validate_correctness(inputs: dict[str, pd.DataFrame]) -> None:
 
     if not np.isclose(latency_p95_details, latency_p95_summary, atol=1e-9):
         raise ValueError(
-            "latency p95 mismatch between phase_g_latency_details and phase_g_latency_summary"
+            "latency p95 mismatch between live_latency_details and live_latency_summary"
         )
 
 

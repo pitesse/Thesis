@@ -1,0 +1,30 @@
+=== FEATURE PARITY AUDIT REPORT ===
+dataset            : data_lake/ml_training_dataset_2022_2025_merged.parquet
+bundle             : data_lake/models/pit_strategy_serving_bundle.joblib
+ml_features        : data_lake/ml_features_9999_merged_20260416_083104.jsonl
+drop_zones         : data_lake/drop_zones_9999_merged_20260416_083104.jsonl
+sample_size        : 3000
+float_atol         : 1e-06
+
+check summary
+- schema_bundle_training_exact: PASS (1)
+  note: order-sensitive exact column match
+- schema_live_payload_required_fields: PASS (1)
+  note: missing=
+- point_in_time_pace_trend_lag2: PASS (1.0)
+  note: mismatch_rows=0, initial_rows_violation=0
+- point_in_time_gapAhead_trend_lag2: PASS (1.0)
+  note: mismatch_rows=0, initial_rows_violation=0
+- schema_serving_transform_feature_coverage: PASS (1.0)
+  note: missing=
+- offline_live_parity_overall: PASS (1.0)
+  note: sample_rows=3000, features=22, threshold=0.9500
+- feature_parity_overall_gate: PASS (1)
+  note: all schema, PIT, and parity checks must pass
+
+overall_gate       : PASS
+
+artifacts
+summary csv        : data_lake/reports/feature_parity_summary_2022_2025_merged.csv
+details csv        : data_lake/reports/feature_parity_details_2022_2025_merged.csv
+report txt         : data_lake/reports/feature_parity_report_2022_2025_merged.txt

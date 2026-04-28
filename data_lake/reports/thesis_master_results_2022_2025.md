@@ -1,8 +1,8 @@
 # Thesis Master Results Table (2022-2025)
 
-Generated at (UTC): 2026-04-28T11:16:44.843609+00:00
+Generated at (UTC): 2026-04-28T12:16:24.259520+00:00
 
-No new training runs were executed for this report, all numbers are computed from existing artifacts in `data_lake/reports`.
+No new training runs were executed for this report; all numbers are computed from existing artifacts in `data_lake/reports`.
 
 ## 1) Master Comparison Table
 
@@ -10,7 +10,7 @@ No new training runs were executed for this report, all numbers are computed fro
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | SDE | 6,323 | 1,020 | 749 | 271 | 0.734314 | 0.161316 | Deterministic stream baseline, fixed H=2 comparator |
 | ML-pretrain-base | 1,016 | 595 | 561 | 34 | 0.942857 | 0.585630 | Batch ML, expanding_race (year warmup before race-level expansion) |
-| ML-pretrain-extended | 39,671 | 4,486 | 3,766 | 720 | 0.839501 | 0.113080 | Batch ML, expanding_race + threshold frontier selection |
+| ML-pretrain-extended | 33,386 | 3,734 | 3,151 | 583 | 0.843867 | 0.111843 | Batch ML, expanding_race + threshold frontier selection |
 | ML-racewise-base | 2,400 | 653 | 597 | 56 | 0.914242 | 0.272083 | Batch ML, expanding_race_sequential (no year pretrain) |
 | ML-racewise-extended | 36,873 | 3,913 | 3,264 | 649 | 0.834143 | 0.106121 | Batch ML, expanding_race_sequential + threshold frontier selection |
 | MOA | 6,453 | 1,430 | 1,293 | 137 | 0.904196 | 0.221602 | Streaming ML (MOA ARF) decision-mapped comparator |
@@ -40,7 +40,7 @@ Key inferential evidence (SDE vs ML pretrain-base comparator):
 - SDE precision: 0.734314, ML precision: 0.942857, delta: 0.208543
 - Two-proportion z statistic: 10.328940, p-value: <1e-16 (underflow)
 - McNemar cc statistic: 0.500000, p-value: 0.479500
-- Source files: `data_lake/reports/phase_b_significance_summary_2022_2025_merged.csv`, `data_lake/reports/phase_b_significance_tests_2022_2025_merged.csv`
+- Source files: `data_lake/reports/significance_summary_2022_2025_merged.csv`, `data_lake/reports/significance_tests_2022_2025_merged.csv`
 
 ## 3) Batch ML Protocol Differentiation (Pretrain-Year vs Pure Racewise)
 
@@ -49,35 +49,34 @@ Key inferential evidence (SDE vs ML pretrain-base comparator):
 | ML-pretrain-base | 103,015 | expanding_race | 74 | 2023, 2024, 2025 | 0.50 |
 | ML-racewise-base | 123,129 | expanding_race_sequential | 95 | 2022, 2023, 2024, 2025 | 0.50 |
 
-Extended reachability (Phase C threshold frontier, no retraining):
+Extended reachability (threshold frontier, no retraining):
 | Variant | Selected Threshold | Reference Threshold | Selected Precision | Reference Precision | Sweep Report |
 | --- | ---: | ---: | ---: | ---: | --- |
-| ML-pretrain-extended | 0.050 | 0.100 | 0.839501 | 0.862519 | `data_lake/reports/phase_c_threshold_sweep_report_2022_2025_merged.txt` |
-| ML-racewise-extended | 0.050 | 0.500 | 0.834143 | 0.930616 | `data_lake/reports/phase_c_threshold_sweep_report_2022_2025_racewise.txt` |
+| ML-pretrain-extended | 0.050 | 0.100 | 0.843867 | 0.877658 | `data_lake/reports/threshold_frontier_report_2022_2025_merged.txt` |
+| ML-racewise-extended | N/A | N/A | 0.834143 | 0.914242 | `not available (no racewise sweep artifact)` |
 
 ## 4) Per-Year Comparison Across the Three Paradigms (plus Batch ML variants)
 
 | Year | Method | Actionable | Scored | TP | FP | Precision | Coverage |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2022 | ML-pretrain-extended | 1,610 | 203 | 147 | 56 | 0.724138 | 0.126087 |
 | 2022 | ML-racewise-base | 1,384 | 58 | 36 | 22 | 0.620690 | 0.041908 |
 | 2022 | ML-racewise-extended | 3,487 | 179 | 113 | 66 | 0.631285 | 0.051334 |
 | 2022 | MOA | 435 | 107 | 95 | 12 | 0.887850 | 0.245977 |
 | 2022 | SDE | 1,398 | 155 | 100 | 55 | 0.645161 | 0.110873 |
 | 2023 | ML-pretrain-base | 91 | 52 | 51 | 1 | 0.980769 | 0.571429 |
-| 2023 | ML-pretrain-extended | 6,929 | 842 | 702 | 140 | 0.833729 | 0.121518 |
+| 2023 | ML-pretrain-extended | 5,651 | 528 | 425 | 103 | 0.804924 | 0.093435 |
 | 2023 | ML-racewise-base | 91 | 52 | 51 | 1 | 0.980769 | 0.571429 |
 | 2023 | ML-racewise-extended | 5,651 | 528 | 425 | 103 | 0.804924 | 0.093435 |
 | 2023 | MOA | 1,407 | 285 | 256 | 29 | 0.898246 | 0.202559 |
 | 2023 | SDE | 1,572 | 226 | 163 | 63 | 0.721239 | 0.143766 |
 | 2024 | ML-pretrain-base | 235 | 155 | 148 | 7 | 0.954839 | 0.659574 |
-| 2024 | ML-pretrain-extended | 14,187 | 1,544 | 1,308 | 236 | 0.847150 | 0.108832 |
+| 2024 | ML-pretrain-extended | 12,520 | 1,324 | 1,117 | 207 | 0.843656 | 0.105751 |
 | 2024 | ML-racewise-base | 235 | 155 | 148 | 7 | 0.954839 | 0.659574 |
 | 2024 | ML-racewise-extended | 12,520 | 1,324 | 1,117 | 207 | 0.843656 | 0.105751 |
 | 2024 | MOA | 1,584 | 352 | 325 | 27 | 0.923295 | 0.222222 |
 | 2024 | SDE | 1,647 | 299 | 227 | 72 | 0.759197 | 0.181542 |
 | 2025 | ML-pretrain-base | 690 | 388 | 362 | 26 | 0.932990 | 0.562319 |
-| 2025 | ML-pretrain-extended | 16,945 | 1,897 | 1,609 | 288 | 0.848181 | 0.111950 |
+| 2025 | ML-pretrain-extended | 15,215 | 1,882 | 1,609 | 273 | 0.854942 | 0.123694 |
 | 2025 | ML-racewise-base | 690 | 388 | 362 | 26 | 0.932990 | 0.562319 |
 | 2025 | ML-racewise-extended | 15,215 | 1,882 | 1,609 | 273 | 0.854942 | 0.123694 |
 | 2025 | MOA | 3,027 | 686 | 617 | 69 | 0.899417 | 0.226627 |
@@ -89,7 +88,7 @@ Extended reachability (Phase C threshold frontier, no retraining):
 | --- | ---: | --- |
 | SDE | 96 | `data_lake/reports/heuristic_comparator_2022_2025_merged.csv` |
 | ML-pretrain-base | 60 | `data_lake/reports/ml_comparator_2022_2025_merged.csv` |
-| ML-pretrain-extended | 94 | `data_lake/reports/ml_comparator_best_threshold_2022_2025_merged.csv` |
+| ML-pretrain-extended | 74 | `data_lake/reports/ml_comparator_best_threshold_2022_2025_merged.csv` |
 | ML-racewise-base | 73 | `data_lake/reports/ml_comparator_2022_2025_racewise.csv` |
 | ML-racewise-extended | 93 | `data_lake/reports/ml_comparator_best_threshold_2022_2025_racewise.csv` |
 | MOA | 95 | `data_lake/reports/moa_comparator_2022_2025_merged.csv` |
@@ -173,50 +172,40 @@ MOA SHAP proxy:
 MOA temporal permutation heatmap:
 - [moa_temporal_permutation_heatmap.pdf](moa_temporal_permutation_heatmap.pdf)
 
-Comparison figure gallery (generated from existing artifacts):
-![Local accuracy over time](paper_fig0_accuracy_over_time_2022_2025.png)
-![Local kappa over time](paper_fig1_kappa_over_time_2022_2025.png)
-![Rolling evaluation coverage](paper_fig2_coverage_over_time_2022_2025.png)
-![Precision vs coverage](paper_fig3_precision_vs_coverage_2022_2025.png)
-![TP FP counts](paper_fig4_tp_fp_counts_2022_2025.png)
-![Per-year precision](paper_fig5_precision_by_year_2022_2025.png)
-![Threshold frontier](paper_fig6_threshold_frontier_2022_2025.png)
-![Kappa distribution boxplot](paper_fig7_kappa_boxplot_2022_2025.png)
-
 ## 7) Deployment-Readiness and Validity Gates (Current Artifact Snapshot)
 
 | Test ID | Name | Status | Metric | Value | Threshold | Artifact |
 | --- | --- | --- | --- | ---: | ---: | --- |
-| B1 | ML precision delta vs SDE | PASS | precision_delta | 0.226082 | 0.000000 | data_lake/reports/phase_b_significance_summary_2022_2025_merged.csv |
-| B2 | Two-proportion z significance | PASS | p_value | 0.000000 | 0.050000 | data_lake/reports/phase_b_significance_tests_2022_2025_merged.csv |
-| C1 | Reference precision floor | PASS | reference_precision | 0.862519 | 0.734314 | data_lake/reports/phase_c_threshold_sweep_2022_2025_merged.csv |
-| C2 | Lookahead no-match dominance | PASS | no_match_rate | 0.969103 | 0.900000 | data_lake/reports/phase_c_threshold_sweep_2022_2025_merged.csv |
-| D1 | Constrained precision | PASS | constrained_precision | 0.787363 | 0.600000 | data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv |
-| D2 | Precision-floor reachability | PASS | reachability_ratio | 0.987058 | 0.900000 | data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv |
-| D3 | Fallback rate | PASS | fallback_rate | 0.000000 | 0.100000 | data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv |
-| F1 | Training-serving parity gate | PASS | phase_f_overall_gate | 1.000000 | 1.000000 | data_lake/reports/phase_f_parity_summary_2022_2025_merged.csv |
-| G1 | Latency gate | PASS | latency_p95_total_ms | 6.002564 | 500.000000 | data_lake/reports/phase_g_latency_summary_2022_2025_merged.csv |
-| G2 | Availability gate | PASS | availability_pct | 100.000000 | 99.000000 | data_lake/reports/phase_g_latency_summary_2022_2025_merged.csv |
-| H1 | Integrated deployment decision | GO | phase_h_decision | N/A | N/A | data_lake/reports/phase_h_unified_gate_2022_2025_merged.csv |
-| J1 | Split-integrity gate | FAIL | phase_j_split_integrity_overall | 0.000000 | 1.000000 | data_lake/reports/phase_j_split_integrity_summary_2022_2025_merged.csv |
-| J2 | Comparator-invariance gate | PASS | phase_j_comparator_invariance_overall | 1.000000 | 1.000000 | data_lake/reports/phase_j_comparator_invariance_summary_2022_2025_merged.csv |
+| B1 | ML precision delta vs SDE | PASS | precision_delta | 0.208543 | 0.000000 | data_lake/reports/significance_summary_2022_2025_merged.csv |
+| B2 | Two-proportion z significance | PASS | p_value | 0.000000 | 0.050000 | data_lake/reports/significance_tests_2022_2025_merged.csv |
+| C1 | Reference precision floor | PASS | reference_precision | 0.877658 | 0.734314 | data_lake/reports/threshold_frontier_2022_2025_merged.csv |
+| C2 | Lookahead no-match dominance | PASS | no_match_rate | 0.968374 | 0.900000 | data_lake/reports/threshold_frontier_2022_2025_merged.csv |
+| D1 | Constrained precision | PASS | constrained_precision | 0.803150 | 0.600000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
+| D2 | Precision-floor reachability | FAIL | reachability_ratio | 0.899672 | 0.900000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
+| D3 | Fallback rate | PASS | fallback_rate | 0.000000 | 0.100000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
+| F1 | Training-serving parity gate | PASS | feature_parity_overall_gate | 1.000000 | 1.000000 | data_lake/reports/feature_parity_summary_2022_2025_merged.csv |
+| G1 | Latency gate | PASS | latency_p95_total_ms | 10.268393 | 500.000000 | data_lake/reports/live_latency_summary_2022_2025_merged.csv |
+| G2 | Availability gate | PASS | availability_pct | 100.000000 | 99.000000 | data_lake/reports/live_latency_summary_2022_2025_merged.csv |
+| H1 | Integrated deployment decision | NO_GO | integrated_gate_decision | N/A | N/A | data_lake/reports/integrated_gate_2022_2025_merged.csv |
+| J1 | Split-integrity gate | FAIL | split_integrity_overall | 0.000000 | 1.000000 | data_lake/reports/split_integrity_summary_2022_2025_merged.csv |
+| J2 | Comparator-invariance gate | PASS | comparator_invariance_overall | 1.000000 | 1.000000 | data_lake/reports/comparator_invariance_summary_2022_2025_merged.csv |
 
-Caveat on Phase J split-integrity: the `oof_fold_count_match` check assumes grouped-kfold fold cardinality and will fail for expanding protocols with many sequential test folds, despite race-overlap and coverage checks passing.
+Caveat on split-integrity: `oof_fold_count_match` assumes grouped-kfold fold cardinality and will fail for expanding protocols with many sequential test folds, despite race-overlap checks passing.
 
-## 8) Professor-Friendly Renaming of Phase Files and Generators
+## 8) Professor-Friendly Naming Guide
 
-| Current Phase | Current Generator / Report Family | Simple Name for Discussion | One-Sentence Explanation |
-| --- | --- | --- | --- |
-| Phase B | `phase_b_significance*`, `phase_b_sde_ml_comparison*` | Comparative Precision Significance | Checks whether ML truly beats SDE under the same decision contract and whether that gain is statistically credible. |
-| Phase C | `phase_c_threshold_sweep*` | Threshold Reachability Frontier | Shows precision-versus-coverage tradeoff when relaxing threshold to increase actionable reach. |
-| Phase D | `phase_d_calibration_policy*` | Calibration and Policy Reliability | Verifies probability quality and constrained-policy stability under precision-floor constraints. |
-| Phase F | `phase_f_parity*` | Train-Serve Feature Parity | Confirms online feature pipeline matches offline training features to avoid hidden skew. |
-| Phase G | `phase_g_latency*`, `phase_g_availability*` | Real-Time Runtime Feasibility | Quantifies latency and availability to verify operational viability. |
-| Phase H | `phase_h_unified_gate*` | Integrated Go/No-Go Decision | Aggregates evidence from B/C/D/F/G into a single deployment-readiness decision. |
-| Phase J | `phase_j_split_integrity*`, `phase_j_comparator_invariance*` | Protocol Closure Audits | Final audit that checks split integrity and comparator fairness invariants before thesis claims. |
+| Current Generator / Report Family | Simple Name for Discussion | One-Sentence Explanation |
+| --- | --- | --- |
+| `significance*`, `sde_ml_comparison*` | Comparative Precision Significance | Checks whether ML truly beats SDE under the same decision contract and whether that gain is statistically credible. |
+| `threshold_frontier*` | Threshold Reachability Frontier | Shows precision-versus-coverage tradeoff when relaxing threshold to increase actionable reach. |
+| `calibration_policy*` | Calibration and Policy Reliability | Verifies probability quality and constrained-policy stability under precision-floor constraints. |
+| `feature_parity*` | Train-Serve Feature Parity | Confirms online feature pipeline matches offline training features to avoid hidden skew. |
+| `live_latency*`, `live_availability*`, `live_overhead*` | Real-Time Runtime Feasibility | Quantifies latency and availability to verify operational viability. |
+| `integrated_gate*` | Integrated Go/No-Go Decision | Aggregates evidence from significance/threshold/calibration/parity/runtime into one deployment-readiness decision. |
+| `split_integrity*`, `comparator_invariance*` | Protocol Closure Audits | Final audit that checks split integrity and comparator fairness invariants before thesis claims. |
 
-Plain-language explanation of Phase B for your professor:
-- "Phase B is the statistical fairness check: SDE and ML are scored under the exact same matching rules, then we test whether the precision difference is real or just noise."
+Plain-language explanation of comparative significance for your professor:
+- "This is the statistical fairness check: SDE and ML are scored under the exact same matching rules, then we test whether the precision difference is real or just noise."
 
 ## 9) Recommended Citation Anchors in Thesis Narrative
 
@@ -224,3 +213,4 @@ Plain-language explanation of Phase B for your professor:
 - Imbalance-aware precision-first evaluation: Elkan (2001), Saito and Rehmsmeier (2015), Davis and Goadrich (2006).
 - Comparative test rigor and uncertainty framing: Dietterich (1998), Walters (2022).
 - Calibration reporting and probability validity framing: Brier (1950), Platt (1999), Guo et al. (2017), Kull et al. (2017).
+

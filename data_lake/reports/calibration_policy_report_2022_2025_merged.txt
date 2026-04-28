@@ -1,0 +1,34 @@
+=== CALIBRATION AND DECISION-POLICY REPORT ===
+OOF input           : data_lake/reports/ml_oof_winner_2022_2025_merged.csv
+ablation input      : data_lake/reports/ml_ablation_phase31c_2022_2025_merged.csv
+rows                : 103015
+prevalence          : 0.074989
+
+reliability summary
+raw brier           : 0.165266
+calibrated brier    : 0.056149
+raw ece             : 0.261434
+calibrated ece      : 0.006690
+raw mce             : 0.561550
+calibrated mce      : 0.099173
+
+constrained policy
+positive rate       : 0.009863
+precision           : 0.803150
+recall              : 0.105631
+f1                  : 0.186706
+threshold mean/min/max: 0.791168/0.110000/0.990000
+
+winner diagnostics from ablation
+reachability ratio  : 0.899672
+fallback folds      : 0/74
+fallback rate       : 0.000000
+margin to floor     : 0.641473
+calibration mix     : isotonic:74
+
+artifacts
+summary csv         : data_lake/reports/calibration_policy_summary_2022_2025_merged.csv
+reliability bins csv: data_lake/reports/calibration_reliability_bins_2022_2025_merged.csv
+by-year csv         : data_lake/reports/calibration_policy_by_year_2022_2025_merged.csv
+by-fold csv         : data_lake/reports/calibration_policy_by_fold_2022_2025_merged.csv
+reference csv       : data_lake/reports/calibration_policy_reference_thresholds_2022_2025_merged.csv

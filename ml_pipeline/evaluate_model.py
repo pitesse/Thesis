@@ -15,6 +15,7 @@ import pandas as pd
 from pipeline_config import (
     DEFAULT_DATA_LAKE,
     DEFAULT_HORIZON,
+    DEFAULT_MERGED_SEASON_TAG,
     DEFAULT_SEASON_TAG,
     DEFAULT_YEARS,
     comparator_source_year_and_tag,
@@ -316,11 +317,21 @@ def main() -> None:
     if len(years) > 1:
         merge_stamp = pd.Timestamp.utcnow().strftime("%Y%m%d_%H%M%S")
         for stream in ("pit_suggestions", "pit_evals", "ml_features", "drop_zones"):
+            # for merged-tag runs, prefer existing merged streams and only rebuild from per-year season streams if missing.
+            if args.season_tag == DEFAULT_MERGED_SEASON_TAG:
+                existing_merged = _latest_jsonl_or_none(data_lake, stream, comparator_year, comparator_tag)
+                if existing_merged is not None:
+                    ensured_merged[stream] = existing_merged
+                    continue
+                source_tag = DEFAULT_SEASON_TAG
+            else:
+                source_tag = args.season_tag
+
             ensured_merged[stream] = _ensure_merged_jsonl(
                 data_lake=data_lake,
                 stream=stream,
                 years=years,
-                season_tag=args.season_tag,
+                season_tag=source_tag,
                 merged_year=comparator_year,
                 merged_tag=comparator_tag,
                 merge_stamp=merge_stamp,
@@ -340,47 +351,47 @@ def main() -> None:
     heuristic_comparator = reports / f"heuristic_comparator_{suffix}.csv"
     ml_comparator = reports / f"ml_comparator_{suffix}.csv"
 
-    phase_b_summary = reports / f"phase_b_significance_summary_{suffix}.csv"
-    phase_b_tests = reports / f"phase_b_significance_tests_{suffix}.csv"
-    phase_b_report = reports / f"phase_b_significance_report_{suffix}.txt"
-    phase_b_meeting_report = reports / f"phase_b_sde_ml_comparison_{suffix}.md"
-    phase_b_meeting_summary = reports / f"phase_b_sde_ml_comparison_summary_{suffix}.csv"
-    phase_b_meeting_by_year = reports / f"phase_b_sde_ml_comparison_by_year_{suffix}.csv"
+    phase_b_summary = reports / f"significance_summary_{suffix}.csv"
+    phase_b_tests = reports / f"significance_tests_{suffix}.csv"
+    phase_b_report = reports / f"significance_report_{suffix}.txt"
+    phase_b_meeting_report = reports / f"sde_ml_comparison_{suffix}.md"
+    phase_b_meeting_summary = reports / f"sde_ml_comparison_summary_{suffix}.csv"
+    phase_b_meeting_by_year = reports / f"sde_ml_comparison_by_year_{suffix}.csv"
 
-    phase_c_sweep = reports / f"phase_c_threshold_sweep_{suffix}.csv"
-    phase_c_by_year = reports / f"phase_c_threshold_sweep_by_year_{suffix}.csv"
+    phase_c_sweep = reports / f"threshold_frontier_{suffix}.csv"
+    phase_c_by_year = reports / f"threshold_frontier_by_year_{suffix}.csv"
     phase_c_best_comparator = reports / f"ml_comparator_best_threshold_{suffix}.csv"
-    phase_c_report = reports / f"phase_c_threshold_sweep_report_{suffix}.txt"
+    phase_c_report = reports / f"threshold_frontier_report_{suffix}.txt"
 
-    phase_d_summary = reports / f"phase_d_calibration_policy_summary_{suffix}.csv"
-    phase_d_reliability = reports / f"phase_d_calibration_reliability_bins_{suffix}.csv"
-    phase_d_by_year = reports / f"phase_d_policy_by_year_{suffix}.csv"
-    phase_d_by_fold = reports / f"phase_d_policy_by_fold_{suffix}.csv"
-    phase_d_reference = reports / f"phase_d_policy_reference_thresholds_{suffix}.csv"
-    phase_d_report = reports / f"phase_d_calibration_policy_report_{suffix}.txt"
+    phase_d_summary = reports / f"calibration_policy_summary_{suffix}.csv"
+    phase_d_reliability = reports / f"calibration_reliability_bins_{suffix}.csv"
+    phase_d_by_year = reports / f"calibration_policy_by_year_{suffix}.csv"
+    phase_d_by_fold = reports / f"calibration_policy_by_fold_{suffix}.csv"
+    phase_d_reference = reports / f"calibration_policy_reference_thresholds_{suffix}.csv"
+    phase_d_report = reports / f"calibration_policy_report_{suffix}.txt"
 
-    phase_f_summary = reports / f"phase_f_parity_summary_{suffix}.csv"
-    phase_f_details = reports / f"phase_f_parity_details_{suffix}.csv"
-    phase_f_report = reports / f"phase_f_parity_report_{suffix}.txt"
+    phase_f_summary = reports / f"feature_parity_summary_{suffix}.csv"
+    phase_f_details = reports / f"feature_parity_details_{suffix}.csv"
+    phase_f_report = reports / f"feature_parity_report_{suffix}.txt"
 
-    phase_g_summary = reports / f"phase_g_latency_summary_{suffix}.csv"
-    phase_g_details = reports / f"phase_g_latency_details_{suffix}.csv"
-    phase_g_by_year = reports / f"phase_g_latency_by_year_{suffix}.csv"
-    phase_g_availability = reports / f"phase_g_availability_summary_{suffix}.csv"
-    phase_g_overhead = reports / f"phase_g_overhead_comparison_{suffix}.csv"
-    phase_g_report = reports / f"phase_g_latency_report_{suffix}.txt"
+    phase_g_summary = reports / f"live_latency_summary_{suffix}.csv"
+    phase_g_details = reports / f"live_latency_details_{suffix}.csv"
+    phase_g_by_year = reports / f"live_latency_by_year_{suffix}.csv"
+    phase_g_availability = reports / f"live_availability_summary_{suffix}.csv"
+    phase_g_overhead = reports / f"live_overhead_comparison_{suffix}.csv"
+    phase_g_report = reports / f"live_latency_report_{suffix}.txt"
 
-    phase_h_unified = reports / f"phase_h_unified_gate_{suffix}.csv"
-    phase_h_by_layer = reports / f"phase_h_unified_gate_by_layer_{suffix}.csv"
-    phase_h_report = reports / f"phase_h_unified_gate_report_{suffix}.txt"
+    phase_h_unified = reports / f"integrated_gate_{suffix}.csv"
+    phase_h_by_layer = reports / f"integrated_gate_by_layer_{suffix}.csv"
+    phase_h_report = reports / f"integrated_gate_report_{suffix}.txt"
 
-    phase_j_split_summary = reports / f"phase_j_split_integrity_summary_{suffix}.csv"
-    phase_j_split_details = reports / f"phase_j_split_integrity_details_{suffix}.csv"
-    phase_j_split_report = reports / f"phase_j_split_integrity_report_{suffix}.txt"
+    phase_j_split_summary = reports / f"split_integrity_summary_{suffix}.csv"
+    phase_j_split_details = reports / f"split_integrity_details_{suffix}.csv"
+    phase_j_split_report = reports / f"split_integrity_report_{suffix}.txt"
 
-    phase_j_comp_summary = reports / f"phase_j_comparator_invariance_summary_{suffix}.csv"
-    phase_j_comp_details = reports / f"phase_j_comparator_invariance_details_{suffix}.csv"
-    phase_j_comp_report = reports / f"phase_j_comparator_invariance_report_{suffix}.txt"
+    phase_j_comp_summary = reports / f"comparator_invariance_summary_{suffix}.csv"
+    phase_j_comp_details = reports / f"comparator_invariance_details_{suffix}.csv"
+    phase_j_comp_report = reports / f"comparator_invariance_report_{suffix}.txt"
 
     evaluation_summary_output = (
         Path(args.evaluation_summary_output)
@@ -437,10 +448,10 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase B significance",
+        "Significance evaluation",
         [
             sys.executable,
-            pipeline_script("phase_b_significance.py"),
+            pipeline_script("evaluate_significance.py"),
             "--sde-comparator",
             str(heuristic_comparator),
             "--ml-comparator",
@@ -455,13 +466,13 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase B dedicated SDE vs ML meeting report",
+        "Dedicated SDE vs ML report",
         [
             sys.executable,
-            pipeline_script("phase_b_sde_ml_comparison_report.py"),
-            "--phase-b-summary",
+            pipeline_script("report_sde_ml_comparison.py"),
+            "--significance-summary",
             str(phase_b_summary),
-            "--phase-b-tests",
+            "--significance-tests",
             str(phase_b_tests),
             "--heuristic-comparator",
             str(heuristic_comparator),
@@ -477,10 +488,10 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase C threshold sweep",
+        "Threshold frontier sweep",
         [
             sys.executable,
-            pipeline_script("phase_c_threshold_frontier.py"),
+            pipeline_script("evaluate_threshold_frontier.py"),
             "--decisions",
             str(oof_input),
             "--data-lake",
@@ -507,10 +518,10 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase D calibration and policy",
+        "Calibration and policy evaluation",
         [
             sys.executable,
-            pipeline_script("phase_d_calibration_policy.py"),
+            pipeline_script("evaluate_calibration_policy.py"),
             "--oof",
             str(oof_input),
             "--ablation",
@@ -531,10 +542,10 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase F feature parity",
+        "Feature parity audit",
         [
             sys.executable,
-            pipeline_script("phase_f_feature_parity.py"),
+            pipeline_script("evaluate_feature_parity.py"),
             "--dataset",
             str(dataset_path),
             "--bundle",
@@ -553,10 +564,10 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase G latency and availability",
+        "Latency and availability audit",
         [
             sys.executable,
-            pipeline_script("phase_g_live_latency.py"),
+            pipeline_script("evaluate_live_latency.py"),
             "--ml-features",
             str(ml_features_path),
             "--drop-zones",
@@ -583,23 +594,23 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase H integrated gate",
+        "Integrated gate",
         [
             sys.executable,
-            pipeline_script("phase_h_integrated_gate.py"),
-            "--phase-b-summary",
+            pipeline_script("evaluate_integrated_gate.py"),
+            "--significance-summary",
             str(phase_b_summary),
-            "--phase-b-tests",
+            "--significance-tests",
             str(phase_b_tests),
-            "--phase-c-sweep",
+            "--threshold-frontier",
             str(phase_c_sweep),
-            "--phase-d-summary",
+            "--calibration-summary",
             str(phase_d_summary),
-            "--phase-f-summary",
+            "--feature-parity-summary",
             str(phase_f_summary),
-            "--phase-g-summary",
+            "--latency-summary",
             str(phase_g_summary),
-            "--phase-g-availability",
+            "--availability-summary",
             str(phase_g_availability),
             "--reference-threshold",
             str(args.reference_threshold),
@@ -613,10 +624,10 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase J split-integrity",
+        "Split-integrity audit",
         [
             sys.executable,
-            pipeline_script("phase_j_split_integrity.py"),
+            pipeline_script("audit_split_integrity.py"),
             "--dataset",
             str(dataset_path),
             "--oof",
@@ -631,10 +642,10 @@ def main() -> None:
     )
 
     _run_step(
-        "Phase J comparator invariance",
+        "Comparator-invariance audit",
         [
             sys.executable,
-            pipeline_script("phase_j_comparator_invariance.py"),
+            pipeline_script("audit_comparator_invariance.py"),
             "--heuristic",
             str(heuristic_comparator),
             "--ml",
@@ -675,14 +686,14 @@ def main() -> None:
 
     d_row = d_summary.iloc[0]
 
-    f_gate = f_summary[f_summary["check"] == "phase_f_overall_gate"].iloc[0]
+    f_gate = f_summary[f_summary["check"] == "feature_parity_overall_gate"].iloc[0]
     g_latency = g_summary[g_summary["check"] == "latency_p95_total_ms"].iloc[0]
     g_availability = g_summary[g_summary["check"] == "availability_pct"].iloc[0]
 
     h_decision = h_unified[h_unified["phase"] == "PHASE_H_DECISION"].iloc[0]
 
-    j_split_gate = j_split[j_split["check"] == "phase_j_split_integrity_overall"].iloc[0]
-    j_comp_gate = j_comp[j_comp["check"] == "phase_j_comparator_invariance_overall"].iloc[0]
+    j_split_gate = j_split[j_split["check"] == "split_integrity_overall"].iloc[0]
+    j_comp_gate = j_comp[j_comp["check"] == "comparator_invariance_overall"].iloc[0]
 
     summary_rows = [
         {
@@ -760,7 +771,7 @@ def main() -> None:
             "test_name": "Training-serving parity gate",
             "why_this_test": "Guards against feature/schema skew between offline training and live serving.",
             "status": _safe_status(f_gate["status"]),
-            "metric": "phase_f_overall_gate",
+            "metric": "feature_parity_overall_gate",
             "value": _safe_float(f_gate["value"]),
             "threshold": 1.0,
             "artifact": str(phase_f_summary),
@@ -790,7 +801,7 @@ def main() -> None:
             "test_name": "Integrated deployment decision",
             "why_this_test": "Combines B/C/D/F/G evidence into one actionable readiness decision.",
             "status": _safe_status(h_decision["status"]),
-            "metric": "phase_h_decision",
+            "metric": "integrated_gate_decision",
             "value": float("nan"),
             "threshold": float("nan"),
             "artifact": str(phase_h_unified),
@@ -800,7 +811,7 @@ def main() -> None:
             "test_name": "Split-integrity gate",
             "why_this_test": "Verifies grouped race CV and OOF coverage assumptions are preserved.",
             "status": _safe_status(j_split_gate["status"]),
-            "metric": "phase_j_split_integrity_overall",
+            "metric": "split_integrity_overall",
             "value": _safe_float(j_split_gate["value"]),
             "threshold": _safe_float(j_split_gate["threshold"]),
             "artifact": str(phase_j_split_summary),
@@ -810,7 +821,7 @@ def main() -> None:
             "test_name": "Comparator-invariance gate",
             "why_this_test": "Ensures fairness contract (actionable-only, fixed horizon, one-to-one matching) stays frozen.",
             "status": _safe_status(j_comp_gate["status"]),
-            "metric": "phase_j_comparator_invariance_overall",
+            "metric": "comparator_invariance_overall",
             "value": _safe_float(j_comp_gate["value"]),
             "threshold": _safe_float(j_comp_gate["threshold"]),
             "artifact": str(phase_j_comp_summary),
@@ -870,10 +881,10 @@ def main() -> None:
             "",
             "## Core Artifacts",
             f"- Unified summary CSV: {evaluation_summary_output}",
-            f"- Phase H report: {phase_h_report}",
-            f"- Phase B dedicated comparison report: {phase_b_meeting_report}",
-            f"- Phase B dedicated comparison summary: {phase_b_meeting_summary}",
-            f"- Phase B dedicated comparison by year: {phase_b_meeting_by_year}",
+            f"- Integrated gate report: {phase_h_report}",
+            f"- Dedicated SDE vs ML report: {phase_b_meeting_report}",
+            f"- Dedicated SDE vs ML summary: {phase_b_meeting_summary}",
+            f"- Dedicated SDE vs ML by year: {phase_b_meeting_by_year}",
             f"- Comparator files: {heuristic_comparator}, {ml_comparator}",
             f"- Threshold sweep report: {phase_c_report}",
             f"- Calibration report: {phase_d_report}",
@@ -892,10 +903,10 @@ def main() -> None:
     print(f"decision note       : {decision_note}")
     print(f"summary csv         : {evaluation_summary_output}")
     print(f"markdown report     : {evaluation_markdown_output}")
-    print(f"phase h report      : {phase_h_report}")
-    print(f"phase b meeting md  : {phase_b_meeting_report}")
-    print(f"phase b meeting csv : {phase_b_meeting_summary}")
-    print(f"phase b meeting yr  : {phase_b_meeting_by_year}")
+    print(f"integrated gate rpt : {phase_h_report}")
+    print(f"sde ml report md    : {phase_b_meeting_report}")
+    print(f"sde ml summary csv  : {phase_b_meeting_summary}")
+    print(f"sde ml by year csv  : {phase_b_meeting_by_year}")
 
 
 if __name__ == "__main__":

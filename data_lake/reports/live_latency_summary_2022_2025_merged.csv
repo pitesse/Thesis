@@ -1,0 +1,4 @@
+check,status,value,threshold,note
+latency_p95_total_ms,PASS,10.268393499427475,500.0,"warmup_excluded=50, p50=3.370330, p99=20.823178"
+availability_pct,PASS,100.0,99.0,"ok=3000, failed=0, total=3000"
+live_latency_overall_gate,PASS,1.0,1.0,requires latency and availability gate pass

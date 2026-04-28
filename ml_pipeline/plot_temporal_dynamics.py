@@ -262,8 +262,8 @@ def main() -> None:
         "ml_oof_pretrain": reports_dir / "ml_oof_winner_2022_2025_merged.csv",
         "ml_oof_racewise": reports_dir / "ml_oof_winner_2022_2025_racewise.csv",
         "moa_pred": reports_dir / "moa_arf_predictions_2022_2025_merged.pred",
-        "phase_c_merged": reports_dir / "phase_c_threshold_sweep_2022_2025_merged.csv",
-        "phase_c_racewise": reports_dir / "phase_c_threshold_sweep_2022_2025_racewise.csv",
+        "phase_c_merged": reports_dir / "threshold_frontier_2022_2025_merged.csv",
+        "phase_c_racewise": reports_dir / "threshold_frontier_2022_2025_racewise.csv",
     }
     for name, path in paths.items():
         if not path.exists():

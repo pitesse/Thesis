@@ -1,14 +1,14 @@
 test_id,test_name,why_this_test,status,metric,value,threshold,artifact
-B1,ML precision delta vs SDE,Checks if ML improves precision under the same comparator semantics.,PASS,precision_delta,0.2260823141137643,0.0,data_lake/reports/phase_b_significance_summary_2022_2025_merged.csv
-B2,Two-proportion z significance,Tests whether observed precision difference is statistically significant.,PASS,p_value,0.0,0.05,data_lake/reports/phase_b_significance_tests_2022_2025_merged.csv
-C1,Reference precision floor,Verifies threshold policy remains at or above the SDE precision floor.,PASS,reference_precision,0.8625192012288786,0.734313725490196,data_lake/reports/phase_c_threshold_sweep_2022_2025_merged.csv
-C2,Lookahead no-match dominance,"Checks that most exclusions are horizon-related, supporting comparator interpretation.",PASS,no_match_rate,0.9691029404447984,0.9,data_lake/reports/phase_c_threshold_sweep_2022_2025_merged.csv
-D1,Constrained precision,Ensures calibrated constrained policy is precise enough for strategy actions.,PASS,constrained_precision,0.787363304981774,0.6,data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv
-D2,Precision-floor reachability,Measures whether candidate thresholds can reliably satisfy precision constraints.,PASS,reachability_ratio,0.9870580808080808,0.9,data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv
-D3,Fallback rate,Checks constrained policy stability when precision floor is hard to satisfy.,PASS,fallback_rate,0.0,0.1,data_lake/reports/phase_d_calibration_policy_summary_2022_2025_merged.csv
-F1,Training-serving parity gate,Guards against feature/schema skew between offline training and live serving.,PASS,phase_f_overall_gate,1.0,1.0,data_lake/reports/phase_f_parity_summary_2022_2025_merged.csv
-G1,Latency gate,Checks p95 end-to-end inference latency against operational budget.,PASS,latency_p95_total_ms,6.002563999390986,500.0,data_lake/reports/phase_g_latency_summary_2022_2025_merged.csv
-G2,Availability gate,Ensures prediction path remains available across replayed events.,PASS,availability_pct,100.0,99.0,data_lake/reports/phase_g_latency_summary_2022_2025_merged.csv
-H1,Integrated deployment decision,Combines B/C/D/F/G evidence into one actionable readiness decision.,GO,phase_h_decision,,,data_lake/reports/phase_h_unified_gate_2022_2025_merged.csv
-J1,Split-integrity gate,Verifies grouped race CV and OOF coverage assumptions are preserved.,FAIL,phase_j_split_integrity_overall,0.0,1.0,data_lake/reports/phase_j_split_integrity_summary_2022_2025_merged.csv
-J2,Comparator-invariance gate,"Ensures fairness contract (actionable-only, fixed horizon, one-to-one matching) stays frozen.",PASS,phase_j_comparator_invariance_overall,1.0,1.0,data_lake/reports/phase_j_comparator_invariance_summary_2022_2025_merged.csv
+B1,ML precision delta vs SDE,Checks if ML improves precision under the same comparator semantics.,PASS,precision_delta,0.2085434173669468,0.0,data_lake/reports/significance_summary_2022_2025_merged.csv
+B2,Two-proportion z significance,Tests whether observed precision difference is statistically significant.,PASS,p_value,0.0,0.05,data_lake/reports/significance_tests_2022_2025_merged.csv
+C1,Reference precision floor,Verifies threshold policy remains at or above the SDE precision floor.,PASS,reference_precision,0.8776577204600906,0.734313725490196,data_lake/reports/threshold_frontier_2022_2025_merged.csv
+C2,Lookahead no-match dominance,"Checks that most exclusions are horizon-related, supporting comparator interpretation.",PASS,no_match_rate,0.9683743444937476,0.9,data_lake/reports/threshold_frontier_2022_2025_merged.csv
+D1,Constrained precision,Ensures calibrated constrained policy is precise enough for strategy actions.,PASS,constrained_precision,0.8031496062992126,0.6,data_lake/reports/calibration_policy_summary_2022_2025_merged.csv
+D2,Precision-floor reachability,Measures whether candidate thresholds can reliably satisfy precision constraints.,FAIL,reachability_ratio,0.8996723996723996,0.9,data_lake/reports/calibration_policy_summary_2022_2025_merged.csv
+D3,Fallback rate,Checks constrained policy stability when precision floor is hard to satisfy.,PASS,fallback_rate,0.0,0.1,data_lake/reports/calibration_policy_summary_2022_2025_merged.csv
+F1,Training-serving parity gate,Guards against feature/schema skew between offline training and live serving.,PASS,feature_parity_overall_gate,1.0,1.0,data_lake/reports/feature_parity_summary_2022_2025_merged.csv
+G1,Latency gate,Checks p95 end-to-end inference latency against operational budget.,PASS,latency_p95_total_ms,10.268393499427477,500.0,data_lake/reports/live_latency_summary_2022_2025_merged.csv
+G2,Availability gate,Ensures prediction path remains available across replayed events.,PASS,availability_pct,100.0,99.0,data_lake/reports/live_latency_summary_2022_2025_merged.csv
+H1,Integrated deployment decision,Combines B/C/D/F/G evidence into one actionable readiness decision.,NO_GO,integrated_gate_decision,,,data_lake/reports/integrated_gate_2022_2025_merged.csv
+J1,Split-integrity gate,Verifies grouped race CV and OOF coverage assumptions are preserved.,FAIL,split_integrity_overall,0.0,1.0,data_lake/reports/split_integrity_summary_2022_2025_merged.csv
+J2,Comparator-invariance gate,"Ensures fairness contract (actionable-only, fixed horizon, one-to-one matching) stays frozen.",PASS,comparator_invariance_overall,1.0,1.0,data_lake/reports/comparator_invariance_summary_2022_2025_merged.csv

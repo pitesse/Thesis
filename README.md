@@ -288,10 +288,10 @@ This checks correctness across all major aspects:
 Primary summary artifacts:
 1. `data_lake/reports/model_evaluation_2022_2025_merged.csv`
 2. `data_lake/reports/model_evaluation_2022_2025_merged.md`
-3. `data_lake/reports/phase_h_unified_gate_2022_2025_merged.csv`
-4. `data_lake/reports/phase_h_unified_gate_report_2022_2025_merged.txt`
-5. `data_lake/reports/phase_b_sde_ml_comparison_2022_2025_merged.md`
-6. `data_lake/reports/phase_b_sde_ml_comparison_summary_2022_2025_merged.csv`
+3. `data_lake/reports/integrated_gate_2022_2025_merged.csv`
+4. `data_lake/reports/integrated_gate_report_2022_2025_merged.txt`
+5. `data_lake/reports/sde_ml_comparison_2022_2025_merged.md`
+6. `data_lake/reports/sde_ml_comparison_summary_2022_2025_merged.csv`
 
 Optional data-quality audit for raw stream outputs:
 

@@ -1,9 +1,0 @@
-check,status,value,threshold,note
-race_key_prefix_format,PASS,1.0,1.0,invalid_prefix_rows=0
-source_year_prefix_consistency,PASS,1.0,1.0,mismatch_rows=0
-grouped_kfold_no_race_overlap,PASS,1.0,1.0,"overlap_folds=0, overlap_races=0"
-oof_fold_uniqueness_per_race,PASS,1.0,1.0,races_in_multiple_folds=0
-oof_row_coverage_vs_dataset,PASS,1.0,1.0,"oof_rows=124136, dataset_rows=124136"
-oof_race_universe_match,PASS,1.0,1.0,"missing_in_oof=0,extra_in_oof=0,sample_missing=,sample_extra="
-oof_fold_count_match,FAIL,19.2,1.0,"observed_folds=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96]"
-phase_j_split_integrity_overall,FAIL,0.0,1.0,all split-integrity checks must pass
