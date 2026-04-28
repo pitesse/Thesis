@@ -1,223 +1,131 @@
-# Real-time F1 Strategy Operations
+# Real-Time F1 Strategy Operations
 
-Optional project of the [Streaming Data Analytics](https://emanueledellavalle.org/teaching/streaming-data-analytics-2025-26/) course provided by [Politecnico di Milano](https://www11.ceda.polimi.it/schedaincarico/schedaincarico/controller/scheda_pubblica/SchedaPublic.do?&evn_default=evento&c_classe=837284&__pj0=0&__pj1=36cd41e96fcd065c47b49d18e46e3110).
+Optional project of the [Streaming Data Analytics](https://emanueledellavalle.org/teaching/streaming-data-analytics-2025-26/) course (Politecnico di Milano).
 
 Student: **Pietro Pizzoccheri**
 
-## Project Overview
+## 1) Executive Summary
 
-This project designs and implements a real-time pit wall simulation for Formula 1 strategy operations.
-Historical races are replayed as event streams, processed through Apache Kafka and Apache Flink, and transformed into both:
+This repository implements and evaluates an end-to-end real-time Formula 1 pit-strategy pipeline:
 
-- real-time strategic alerts (for dashboard monitoring), and
-- high-quality, labeled JSONL datasets for downstream machine learning.
+1. Event-time race replay (`fastf1` -> Kafka -> Flink).
+2. Deterministic strategy/event operators (SDE baseline + labeled outcomes).
+3. Batch ML pipeline (dataset preparation, grouped CV training, calibration, policy constraints, serving bundle).
+4. Streaming ML baseline (MOA Adaptive Random Forest).
+5. Methodological evaluation and thesis-ready synthesis artifacts.
 
-The project idea and architecture were proposed specifically for this work, with a strong focus on engineering rigor, reproducibility, and domain-aligned strategy logic.
+The thesis objective is a defensible comparison among:
+- **SDE deterministic baseline**,
+- **Batch ML**,
+- **Streaming ML (MOA)**,
+under fixed comparison invariants:
+- horizon `H=2`,
+- actionable-only matching,
+- one-to-one pit consumption,
+- split/leakage integrity checks,
+- integrated validity gates.
 
-## Background
+## 2) Scientific Scope and Evaluation Contract
 
-F1 strategy decisions require continuous reasoning over heterogeneous signals:
+### Core research question
+Under a fixed decision contract, how do SDE, Batch ML, and Streaming ML compare in predictive utility, decision quality, and operational feasibility?
 
-- high-frequency telemetry (speed, throttle, brake, gear),
-- lap-level timing and tire state,
-- global track incidents (yellow/VSC/SC),
-- dynamic traffic and rival gaps.
+### Non-negotiable protocol constraints
+- Comparator contract: `H=2`, actionable-only, one-to-one target consumption.
+- Validation rigor: grouped race-level logic and explicit split-integrity audits.
+- Deployment rigor: calibration checks, train-serve parity, and runtime feasibility gates.
 
-Traditional post-race analysis is mostly offline and manual. This project addresses the gap by building a deterministic stream-processing architecture that can replay races at different speeds while preserving event-time correctness.
+### Methodological grounding
+- Leakage/split validity: Roberts et al. (2017), Brookshire et al. (2024).
+- Imbalance-aware precision focus: Elkan (2001), Saito & Rehmsmeier (2015), Davis & Goadrich (2006).
+- Comparative significance framing: Dietterich (1998), Walters (2022).
+- Calibration validity: Brier (1950), Platt (1999), Guo et al. (2017), Kull et al. (2017).
 
-## Goals and Objectives
+## 3) Latest Validated Snapshot (April 28, 2026)
 
-### 1. Event-Time Streaming Architecture (Core Goal)
+From current `data_lake/reports` artifacts:
 
-Build an end-to-end producer-broker-consumer pipeline:
+### Master comparison (2022-2025)
+- SDE: precision `0.734314` (`TP=749`, `FP=271`, `scored=1020`).
+- ML-pretrain-base: precision `0.942857` (`TP=561`, `FP=34`, `scored=595`).
+- ML-pretrain-extended: precision `0.843867` (`TP=3151`, `FP=583`, `scored=3734`).
+- ML-racewise-base: precision `0.914242` (`TP=597`, `FP=56`, `scored=653`).
+- ML-racewise-extended: precision `0.834143` (`TP=3264`, `FP=649`, `scored=3913`).
+- MOA: precision `0.904196` (`TP=1293`, `FP=137`, `scored=1430`).
 
-- Producer: Python + fastf1 replay with original inter-event timing.
-- Broker: Kafka three-topic decoupling.
-- Consumer: Flink 1.20 stateful/event-time processing.
+### Unified gate status
+- Integrated decision (`H1`): **`NO_GO`**.
+- Main failing checks: `D2` (reachability ratio below threshold) and `J1` (split-integrity overall).
 
-### 2. Context-Aware Race Understanding (Module A)
+Canonical source files:
+- `data_lake/reports/model_evaluation_2022_2025_merged.csv`
+- `data_lake/reports/thesis_master_results_2022_2025.md`
 
-Implement operators for:
+## 4) Repository Architecture
 
-- track status enrichment via broadcast state,
-- rival identification per driver/lap,
-- DRS train detection from contiguous sub-1s gaps.
-
-### 3. Ground Truth Generation (Module B)
-
-Implement a pit-cycle evaluator that labels historical pit outcomes with strategy-aware logic:
-
-- dual-rival cluster tracking (ahead + behind),
-- offset strategy handling,
-- track-agnostic normalization via gap delta percentage.
-
-### 4. Real-Time Alerting (Module C)
-
-Implement real-time strategy signals for:
-
-- lift-and-coast detection via CEP,
-- tire drop alerts using rolling averages,
-- drop-zone emergence position analysis,
-- fuzzy-logic pit suggestion scoring with broadcast SC/VSC urgency path.
-
-### 5. ML-Oriented Data Lake (Key Deliverable)
-
-Persist all outputs as JSON Lines for reproducible ML workflows:
-
-- pit evaluations,
-- tire drops,
-- lift & coast,
-- drop zones,
-- pit suggestions,
-- per-lap ML features,
-- consolidated debug alerts.
-
-## Architecture
-
-```
-                        Kafka                    Flink 1.20 (Java 17)
-                    ┌──────────────┐
- Python Producer    │f1-telemetry  │──► Track Status Enrichment (broadcast state)
- (fastf1 replay)───►│ ~4 Hz/driver │──► Lift & Coast Detection (CEP)
-                    ├──────────────┤
-                    │f1-laps       │──► Rival Identification ──► DRS Train Detection
-                    │~1/80s/driver │──► Drop Zone Evaluator (leader-driven)
-                    │              │──► Tire Drop Detector
-                    ├──────────────┤──► Pit Stop Evaluator (ground truth)
-                    │f1-track-status│──► Pit Strategy Evaluator (broadcast + fuzzy logic)
-                    │~1-5/race     │
-                    └──────────────┘
-                                          │
-                          ┌───────────────┼───────────────┐
-                          ▼               ▼               ▼
-                    FileSink JSONL    KafkaSink      Streamlit Dashboard
-                     (data_lake/)     (f1-alerts)     (localhost:8501)
-
-                    Additional ML live path (Phase 3.1):
-                    f1-ml-features (Kafka) -> ml consumer -> f1-ml-predictions (Kafka)
+```text
+.
+├── run_simulation.sh                  # single-race full stack runner (Docker)
+├── simulate_season.sh                 # full-season replay runner (Docker)
+├── season_data_audit.py               # raw stream-level quality audit
+├── f1-telemetry-producer/
+│   └── src/
+│       ├── prepare_race.py            # stage-1 fastf1 extraction/enrichment
+│       └── stream_race.py             # stage-2 event-time replay to Kafka
+├── f1-telemetry-processor/            # Flink Java operators
+├── ml_pipeline/
+│   ├── prep_data.py
+│   ├── train_model.py
+│   ├── export_moa_dataset.py
+│   ├── run_moa_arf.py
+│   ├── build_three_way_comparator.py
+│   ├── evaluate_model.py
+│   ├── build_thesis_synthesis.py
+│   ├── generate_thesis_master_results.py
+│   ├── explain_shap.py
+│   ├── explain_moa_shap_proxy.py
+│   ├── explain_moa_temporal_permutation.py
+│   ├── plot_temporal_dynamics.py
+│   ├── plot_trust_diagnostics.py
+│   ├── serve_model.py
+│   └── lib/                           # granular comparator/audit/evaluation modules
+└── data_lake/                         # generated artifacts and reports
 ```
 
-### Two-Stage Python Producer
+## 5) Environment and Setup
 
-1. **prepare_race.py**
-   - Extracts telemetry/laps/track status from fastf1.
-   - Merges and enriches data (gaps, weather, track-specific pit loss values).
-   - Writes a replay-ready Parquet snapshot.
+### Python environment
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-2. **stream_race.py**
-   - Replays Parquet rows to Kafka using event-time-aware pacing.
-   - Supports `--speed` and `--start-lap` for controlled experiments.
-
-## Flink Modules
-
-### Module A: Context Awareness
-
-- `TrackStatusEnricher`
-- `RivalIdentificationFunction`
-- `DrsTrainDetector`
-
-### Module B: Ground Truth
-
-- `PitStopEvaluator`
-
-Labels include:
-
-- `SUCCESS_UNDERCUT`
-- `SUCCESS_OVERCUT`
-- `SUCCESS_DEFEND`
-- `SUCCESS_FREE_STOP`
-- `OFFSET_ADVANTAGE`
-- `OFFSET_DISADVANTAGE`
-- `FAILURE_PACE_DEFICIT`
-- `FAILURE_TRAFFIC`
-- `WEATHER_SURVIVAL_STOP`
-- `UNRESOLVED_MISSING_RIVAL`
-- `UNRESOLVED_MISSING_PRE_GAP`
-- `UNRESOLVED_MISSING_POST_GAP`
-- `UNRESOLVED_INVALID_BASELINE`
-- `UNRESOLVED_INCIDENT_FILTER`
-- `UNRESOLVED_INSUFFICIENT_DATA`
-
-### Module C: Real-Time Alerts
-
-- `LiftCoastDetector`
-- `TireDropDetector`
-- `DropZoneEvaluator`
-- `PitStrategyEvaluator`
-
-## Data Lake Outputs
-
-All streams are persisted as JSONL (`.jsonl`) through Flink `FileSink.forRowFormat` and periodic checkpointing.
-
-| Output | Path | Purpose |
-|---|---|---|
-| Pit Evaluations | `data_lake/pit_evals/` | Labeled pit outcome ground truth |
-| Tire Drops | `data_lake/tire_drops/` | Tire degradation alerts |
-| Lift & Coast | `data_lake/lift_coast/` | Fuel-saving pattern detections |
-| Drop Zones | `data_lake/drop_zones/` | Physical emergence position analysis |
-| Pit Suggestions | `data_lake/pit_suggestions/` | Continuous strategy scoring alerts |
-| ML Features | `data_lake/ml_features/` | Denormalized lap-level ML features |
-| Debug Alerts | `data_lake/debug_alerts/` | Unified debug stream of all alerts |
-
-## Live ML Topics (Phase 3.1)
-
-The pipeline now exposes a dedicated feature topic for online ML serving.
-
-| Topic | Producer | Consumer | Purpose |
-|---|---|---|---|
-| `f1-ml-features` | Flink (`RivalIdentificationFunction` side output) | Python ML consumer | Feature payload parity between offline training and live serving |
-| `f1-ml-predictions` | Python ML consumer | Dashboard/analysis tools | Real-time prediction stream for heuristic vs ML comparison |
-
-## Data Quality Contracts
-
-The pipeline enforces explicit output contracts to keep downstream ML behavior stable and reproducible.
-
-1. `ml_features.gapAhead` and `ml_features.gapBehind` are exported as non-negative magnitudes.
-2. `tire_drops` includes `trackStatus` for context-aware filtering.
-3. Pit stops on warm-up laps (`lapNumber <= 2`) are explicitly marked as `UNRESOLVED_MISSING_PRE_GAP` via `EARLY_LAP_FILTER`.
-4. Pit-cycle classification uses strict guardrails (`SETTLE_LAPS`, incident thresholding, safety timer) and a conservative pace-shift recovery path (`RIVAL_PIT_PACE_SHIFT`, `SAFETY_TIMER_PACE_SHIFT`) when post-gap is missing; if pace evidence is insufficient, the cycle remains unresolved.
-5. Lift/coast timestamp audits use mixed-format ISO-8601 parsing with normalization fallback (`Z`, fractional seconds, and explicit timezone offsets).
-
-## Audit Workflow
-
-The canonical season audit entrypoint is:
-
-1. `season_data_audit.py`: unified quality-contract + stream-health + forensic diagnostics across all six JSONL outputs.
-
-Example run after a full-season replay:
+### Java/Flink/Kafka stack
+Use Docker Compose for infrastructure and Flink job lifecycle.
 
 ```bash
-python season_data_audit.py
-python season_data_audit.py --summary-only
-python season_data_audit.py --json-out data_lake/audits/season_audit_2023.json
+docker compose up -d
 ```
 
-Recent validation highlights (latest full 2023 run):
+If you need MOA baseline runs, place the jar at:
+- `data_lake/tools/moa.jar`
 
-1. Full season coverage: 22/22 races in both `ml_features` and `pit_evals`.
-2. Gap contract satisfied: negative gap rows in `ml_features` are 0.
-3. `tire_drops` now includes track status context.
-4. `EARLY_LAP_FILTER` path is active for opening-lap pit-stop noise suppression.
+Example:
+```bash
+mkdir -p data_lake/tools
+curl -fL https://repo1.maven.org/maven2/nz/ac/waikato/cms/moa/moa/2024.07.0/moa-2024.07.0.jar -o data_lake/tools/moa.jar
+```
 
-## Tech Stack
+## 6) Quickstart by Objective
 
-| Component | Version |
-|---|---|
-| Java | 17 |
-| Apache Flink | 1.20.0 |
-| flink-connector-kafka | 3.3.0-1.20 |
-| Python | 3.10+ |
-| fastf1 | latest |
-| Apache Kafka | 7.7.1 |
-| Jackson | 2.17.2 |
+### A) Freeze streaming data from race replay
+Single race:
+```bash
+./run_simulation.sh --year 2023 --race "Italian Grand Prix" --session R --speed 100 --start-lap 1
+```
 
-## How to Run
-
-### 1) Freeze Four Seasons (2022-2025, recommended lower-speed replay)
-
-For final data freezing, replay each season at a lower speed to reduce runtime pressure and keep artifacts consistent.
-Recommended speed for freeze runs: `50`.
-
+Full season(s):
 ```bash
 ./simulate_season.sh --year 2022 --speed 50
 ./simulate_season.sh --year 2023 --speed 50
@@ -225,218 +133,160 @@ Recommended speed for freeze runs: `50`.
 ./simulate_season.sh --year 2025 --speed 50
 ```
 
-After each run, the season artifacts are written under `data_lake/` with timestamped JSONL files.
-
-### 2) Train the Model (consolidated pipeline)
-
-This command prepares merged training data, runs grouped-CV training and policy selection, exports winner OOF, and builds the serving bundle.
-
+### B) Build dataset + train Batch ML + serving bundle
 ```bash
 python ml_pipeline/train_model.py --years 2022 2023 2024 2025 --season-tag season
 ```
 
-Main artifacts:
-1. `data_lake/ml_training_dataset_2022_2025_merged.parquet`
-2. `data_lake/reports/ml_ablation_phase31c_2022_2025_merged.csv`
-3. `data_lake/reports/ml_oof_winner_2022_2025_merged.csv`
-4. `data_lake/models/pit_strategy_serving_bundle.joblib`
+Main outputs:
+- `data_lake/ml_training_dataset_2022_2025_merged.parquet`
+- `data_lake/reports/ml_ablation_phase31c_2022_2025_merged.csv`
+- `data_lake/reports/ml_oof_winner_2022_2025_merged.csv`
+- `data_lake/models/pit_strategy_serving_bundle.joblib`
 
-### 3) Run MOA ARF Baseline (apples-to-apples ARFF input)
-
-Install MOA jar to the default local path used by the runner:
-
-```bash
-mkdir -p data_lake/tools
-curl -fL https://repo1.maven.org/maven2/nz/ac/waikato/cms/moa/moa/2024.07.0/moa-2024.07.0.jar -o data_lake/tools/moa.jar
-```
-
-Export the MOA matrix and run the ARF baseline:
-
+### C) Run streaming ML baseline (MOA ARF)
 ```bash
 python ml_pipeline/export_moa_dataset.py --years 2022 2023 2024 2025 --season-tag season --skip-prepare-data
 python ml_pipeline/run_moa_arf.py --years 2022 2023 2024 2025 --season-tag season
 python ml_pipeline/build_three_way_comparator.py --years 2022 2023 2024 2025 --season-tag season
-python ml_pipeline/explain_moa_shap_proxy.py --years 2022 2023 2024 2025 --season-tag season
 ```
 
-Main artifacts:
-1. `data_lake/reports/moa_dataset_2022_2025_merged.arff`
-2. `data_lake/reports/moa_arf_learning_curve_2022_2025_merged.csv`
-3. `data_lake/reports/moa_arf_summary_2022_2025_merged.csv`
-4. `data_lake/reports/moa_arf_run_2022_2023_2024_2025_season.json`
-5. `data_lake/reports/three_way_comparator_2022_2025_merged.csv`
-6. `data_lake/reports/three_way_comparator_2022_2025_merged.md`
-7. `data_lake/reports/moa_shap_proxy_summary.csv`
-
-### 4) Assess Correctness End-to-End (all methodological gates)
-
-Run unified evaluation to produce Phase B, C, D, F, G, H, and J outputs in one pass:
-
+### D) Run integrated methodological evaluation
 ```bash
-python ml_pipeline/evaluate_model.py --years 2022 2023 2024 2025 --season-tag season
+python ml_pipeline/evaluate_model.py --years 2022 2023 2024 2025 --season-tag merged
 ```
 
-This checks correctness across all major aspects:
-1. Statistical significance and uncertainty (Phase B)
-2. Threshold frontier and lookahead diagnostics (Phase C)
-3. Calibration and constrained-policy behavior (Phase D)
-4. Training-serving parity and point-in-time legality (Phase F)
-5. Latency and availability feasibility (Phase G)
-6. Integrated GO/HOLD/NO_GO synthesis (Phase H)
-7. Split integrity and comparator invariance closure audits (Phase J)
+Primary outputs:
+- `data_lake/reports/model_evaluation_2022_2025_merged.csv`
+- `data_lake/reports/model_evaluation_2022_2025_merged.md`
+- `data_lake/reports/integrated_gate_2022_2025_merged.csv`
+- `data_lake/reports/integrated_gate_report_2022_2025_merged.txt`
 
-Primary summary artifacts:
-1. `data_lake/reports/model_evaluation_2022_2025_merged.csv`
-2. `data_lake/reports/model_evaluation_2022_2025_merged.md`
-3. `data_lake/reports/integrated_gate_2022_2025_merged.csv`
-4. `data_lake/reports/integrated_gate_report_2022_2025_merged.txt`
-5. `data_lake/reports/sde_ml_comparison_2022_2025_merged.md`
-6. `data_lake/reports/sde_ml_comparison_summary_2022_2025_merged.csv`
-
-Optional data-quality audit for raw stream outputs:
-
+### E) Generate thesis synthesis reports
 ```bash
-python season_data_audit.py
+python ml_pipeline/build_thesis_synthesis.py --suffix 2022_2025_merged
+python ml_pipeline/generate_thesis_master_results.py --suffix 2022_2025_merged --racewise-suffix 2022_2025_racewise
 ```
 
-### 5) Thesis Analysis Scripts (temporal, trust, explainability, synthesis)
+Primary outputs:
+- `data_lake/reports/thesis_synthesis_2022_2025_merged.csv`
+- `data_lake/reports/thesis_synthesis_checks_2022_2025_merged.csv`
+- `data_lake/reports/thesis_synthesis_2022_2025_merged.md`
+- `data_lake/reports/thesis_master_results_2022_2025.md`
 
-After running training, MOA baseline, and unified evaluation, generate thesis-focused analysis artifacts with:
-
+### F) Generate explainability + figures
 ```bash
+python ml_pipeline/explain_shap.py
+python ml_pipeline/explain_moa_shap_proxy.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data_lake/reports/moa_dataset_2022_2025_merged.csv --moa-predictions data_lake/reports/moa_arf_predictions_2022_2025_merged.pred --reports-dir data_lake/reports
+python ml_pipeline/explain_moa_temporal_permutation.py --years 2022 2023 2024 2025 --season-tag season
 python ml_pipeline/plot_temporal_dynamics.py
 python ml_pipeline/plot_trust_diagnostics.py
-python ml_pipeline/explain_moa_temporal_permutation.py --years 2022 2023 2024 2025 --season-tag season
-python ml_pipeline/build_thesis_synthesis.py --suffix 2022_2025_merged
 ```
 
-What these scripts represent:
-1. `plot_temporal_dynamics.py`: rolling local Accuracy/Kappa over timeline for Streaming ML vs Batch constrained policy vs Batch best-threshold policy.
-2. `plot_trust_diagnostics.py`: calibration reliability and latency stability figures used for the trust/readiness discussion.
-3. `explain_moa_temporal_permutation.py`: second explainability method for MOA (temporal permutation importance), complementary to surrogate SHAP.
-4. `build_thesis_synthesis.py`: final claim matrix + correctness audit that consolidates SDE, Batch (two policies), MOA, and methodological checks.
-
-Primary figure artifacts:
-
-| Figure | Path | Produced by |
-|---|---|---|
-| Temporal Accuracy | `data_lake/reports/paper_fig0_accuracy_over_time_real.pdf` | `plot_temporal_dynamics.py` |
-| Temporal Kappa | `data_lake/reports/paper_fig1_kappa_over_time_real.pdf` | `plot_temporal_dynamics.py` |
-| Calibration Reliability Curve | `data_lake/reports/paper_fig2_calibration_reliability_2022_2025_merged.pdf` | `plot_trust_diagnostics.py` |
-| Calibration Gap by Bin | `data_lake/reports/paper_fig3_calibration_gap_2022_2025_merged.pdf` | `plot_trust_diagnostics.py` |
-| Latency p95 by Year | `data_lake/reports/paper_fig4_latency_by_year_p95_2022_2025_merged.pdf` | `plot_trust_diagnostics.py` |
-| Latency Component Breakdown | `data_lake/reports/paper_fig5_latency_components_2022_2025_merged.pdf` | `plot_trust_diagnostics.py` |
-| MOA Temporal Permutation Heatmap | `data_lake/reports/moa_temporal_permutation_heatmap.pdf` | `explain_moa_temporal_permutation.py` |
-
-Primary synthesis artifacts:
-1. `data_lake/reports/thesis_synthesis_2022_2025_merged.csv`
-2. `data_lake/reports/thesis_synthesis_checks_2022_2025_merged.csv`
-3. `data_lake/reports/thesis_synthesis_2022_2025_merged.md`
-
-Notes for interpretation:
-1. Use Batch **best-threshold** for competitive-capability comparison and Batch **constrained** for deployment-readiness claims.
-2. Treat MOA explainability outputs as behavioral/proxy explanations (surrogate SHAP + permutation), not direct internal attributions.
-3. Keep `thesis_synthesis_checks_...csv` as the canonical pass/fail checklist when reporting final results.
-
-### 6) Start Flink + ML Predictions Together
-
-#### Automated single race with live ML inference
-
-```bash
-./run_simulation.sh --year 2023 --race "Italian Grand Prix" --session R --speed 100 --start-lap 1 --with-ml-inference
-```
-
-#### Automated full season with live ML inference
-
-```bash
-./simulate_season.sh --year 2023 --speed 100 --with-ml-inference
-```
-
-#### Manual startup (infrastructure + Flink + producer stream + ML service)
-
-```bash
-# 1) Start infrastructure including optional ml-inference service
-docker compose --profile inference up -d
-
-# 2) Build Flink processor
-cd f1-telemetry-processor && mvn clean package -DskipTests && cd ..
-
-# 3) Submit Flink job
-docker cp f1-telemetry-processor/target/f1-telemetry-processor-1.0-SNAPSHOT.jar flink-jobmanager:/opt/flink/usrlib/
-docker exec flink-jobmanager flink run -d /opt/flink/usrlib/f1-telemetry-processor-1.0-SNAPSHOT.jar
-
-# 4) Prepare and stream a race
-python f1-telemetry-producer/src/prepare_race.py --year 2023 --race "Italian Grand Prix" --session R
-python f1-telemetry-producer/src/stream_race.py --year 2023 --race "Italian Grand Prix" --session R --speed 100
-```
-
-Optional local ML consumer (outside Docker profile):
-
+### G) Run live ML consumer on Kafka stream
 ```bash
 python ml_pipeline/serve_model.py --bootstrap localhost:9092 --model-bundle data_lake/models/pit_strategy_serving_bundle.joblib
 ```
 
-Troubleshooting `NoBrokersAvailable`:
+## 7) Tool-by-Tool Runbook
 
-1. `serve_model.py` defaults to `kafka:29092`, which is correct only for container-to-container traffic.
-2. If you run the script from the host shell, always pass `--bootstrap localhost:9092`.
-3. If you want Docker-native inference (where `kafka:29092` is valid), run:
+This is the practical reference for all major tools in the repository.
 
+### 7.1 Infrastructure and replay tools
+
+| Tool | Purpose | Typical command | Main outputs |
+|---|---|---|---|
+| `run_simulation.sh` | End-to-end single-race run (build stack, submit Flink, replay race). | `./run_simulation.sh --year 2023 --race "Italian Grand Prix" --speed 100` | JSONL sinks in `data_lake/` + Kafka topics |
+| `simulate_season.sh` | Bulk replay for one or multiple full seasons. | `./simulate_season.sh --year 2024 --speed 50` | Season-level merged JSONL artifacts |
+| `season_data_audit.py` | Data-contract and stream-health audit on raw JSONL outputs. | `python season_data_audit.py --year 2023` | Audit summary (console, optional JSON) |
+| `f1-telemetry-producer/src/prepare_race.py` | Build enriched replay-ready parquet snapshot. | `python .../prepare_race.py --year 2023 --race "Italian Grand Prix" --session R` | Prepared parquet in `data/` |
+| `f1-telemetry-producer/src/stream_race.py` | Event-time replay of prepared race into Kafka. | `python .../stream_race.py --year 2023 --race "Italian Grand Prix" --session R --speed 100` | Kafka events |
+
+### 7.2 ML pipeline tools (top-level)
+
+| Tool | Role | Command skeleton | Main artifacts |
+|---|---|---|---|
+| `ml_pipeline/prep_data.py` | Build leakage-safe training dataset from JSONL streams. | `python ml_pipeline/prep_data.py --years ... --season-tag ...` | `ml_training_dataset_*.parquet` |
+| `ml_pipeline/train_model.py` | Train grouped-CV batch model, policy selection, winner OOF export. | `python ml_pipeline/train_model.py --years ... --season-tag ...` | `ml_ablation_*.csv`, `ml_oof_winner_*.csv`, serving bundle |
+| `ml_pipeline/export_moa_dataset.py` | Export MOA-ready matrix + schema contract. | `python ml_pipeline/export_moa_dataset.py --years ... --season-tag ...` | `moa_dataset_*.csv/.arff/.json` |
+| `ml_pipeline/run_moa_arf.py` | Execute MOA ARF prequential baseline. | `python ml_pipeline/run_moa_arf.py --years ... --season-tag ...` | `moa_arf_*` reports |
+| `ml_pipeline/build_three_way_comparator.py` | Build compact SDE vs Batch vs MOA comparison. | `python ml_pipeline/build_three_way_comparator.py --years ... --season-tag ...` | `three_way_comparator_*.csv/.md` |
+| `ml_pipeline/evaluate_model.py` | Unified evaluation orchestration (significance, threshold, calibration, parity, runtime, integrated gate, closure audits). | `python ml_pipeline/evaluate_model.py --years ... --season-tag ...` | `model_evaluation_*.csv/.md` + all gate artifacts |
+| `ml_pipeline/build_thesis_synthesis.py` | Build thesis-level claim matrix + correctness checks. | `python ml_pipeline/build_thesis_synthesis.py --suffix ...` | `thesis_synthesis_*.csv/.md`, checks csv |
+| `ml_pipeline/generate_thesis_master_results.py` | Build comprehensive thesis master markdown from current artifacts. | `python ml_pipeline/generate_thesis_master_results.py --suffix ... --racewise-suffix ...` | `thesis_master_results_*.md` |
+| `ml_pipeline/explain_shap.py` | Batch model TreeSHAP artifacts. | `python ml_pipeline/explain_shap.py` | `shap_*` plots/tables |
+| `ml_pipeline/explain_moa_shap_proxy.py` | Surrogate SHAP for MOA predictions. | `python ml_pipeline/explain_moa_shap_proxy.py --years ...` | `moa_shap_proxy_*` plots/tables |
+| `ml_pipeline/explain_moa_temporal_permutation.py` | Temporal permutation explainability for MOA. | `python ml_pipeline/explain_moa_temporal_permutation.py --years ...` | `moa_temporal_permutation_*` artifacts |
+| `ml_pipeline/plot_temporal_dynamics.py` | Temporal accuracy/kappa and comparator dynamics plots. | `python ml_pipeline/plot_temporal_dynamics.py` | `paper_fig0..` time-series figures |
+| `ml_pipeline/plot_trust_diagnostics.py` | Calibration + latency trust diagnostics plots. | `python ml_pipeline/plot_trust_diagnostics.py` | `paper_fig2..paper_fig5` |
+| `ml_pipeline/serve_model.py` | Live Kafka inference consumer for online predictions. | `python ml_pipeline/serve_model.py --bootstrap localhost:9092 --model-bundle ...` | `f1-ml-predictions` topic payloads |
+
+### 7.3 Advanced granular evaluation tools (`ml_pipeline/lib`)
+
+Use these directly when you need only one methodological block instead of the full `evaluate_model.py` orchestration.
+
+| Tool | Focus |
+|---|---|
+| `evaluate_significance.py` | SDE vs ML significance tests |
+| `report_sde_ml_comparison.py` | dedicated SDE/ML meeting markdown + summary tables |
+| `evaluate_threshold_frontier.py` | threshold sweep + selected threshold comparator |
+| `evaluate_calibration_policy.py` | reliability + constrained-policy diagnostics |
+| `evaluate_feature_parity.py` | train-serve schema/PIT/parity audits |
+| `evaluate_live_latency.py` | replay latency/availability/overhead audit |
+| `evaluate_integrated_gate.py` | integrated GO/HOLD/NO_GO synthesis |
+| `audit_split_integrity.py` | split protocol and OOF integrity closure checks |
+| `audit_comparator_invariance.py` | comparator fairness/invariance closure checks |
+| `comparator_heuristic.py`, `comparator_ml.py`, `comparator_moa.py` | comparator construction under fixed contract |
+
+## 8) Artifact Navigation (Where to Look for What)
+
+| Question | Primary artifact |
+|---|---|
+| Final thesis master table | `data_lake/reports/thesis_master_results_2022_2025.md` |
+| Unified pass/fail methodological status | `data_lake/reports/model_evaluation_2022_2025_merged.csv` |
+| Integrated deployment decision | `data_lake/reports/integrated_gate_2022_2025_merged.csv` |
+| Statistical significance details | `data_lake/reports/significance_summary_2022_2025_merged.csv`, `.../significance_tests_2022_2025_merged.csv` |
+| Threshold trade-off frontier | `data_lake/reports/threshold_frontier_2022_2025_merged.csv` |
+| Calibration + constrained policy | `data_lake/reports/calibration_policy_summary_2022_2025_merged.csv` |
+| Train-serve feature parity | `data_lake/reports/feature_parity_summary_2022_2025_merged.csv` |
+| Runtime feasibility | `data_lake/reports/live_latency_summary_2022_2025_merged.csv` |
+| Split integrity closure audit | `data_lake/reports/split_integrity_summary_2022_2025_merged.csv` |
+| Comparator invariance closure audit | `data_lake/reports/comparator_invariance_summary_2022_2025_merged.csv` |
+| Batch SHAP explanations | `data_lake/reports/shap_summary.csv`, `shap_feature_importance.csv`, `shap_*.png` |
+| MOA proxy explainability | `data_lake/reports/moa_shap_proxy_summary.csv`, `moa_temporal_permutation_summary.csv` |
+
+## 9) Troubleshooting
+
+### `ModuleNotFoundError: pandas` (or similar)
+Ensure virtualenv is active before running tools:
 ```bash
-docker compose --profile inference up -d ml-inference
+source .venv/bin/activate
+python <script>.py ...
 ```
 
-If `serve_model.py` runs but appears idle, check whether `f1-ml-features` currently has events:
+### `NoBrokersAvailable` in `serve_model.py`
+- Host shell: use `--bootstrap localhost:9092`.
+- Container-to-container traffic: `kafka:29092`.
 
-```bash
-docker exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic f1-ml-features --from-beginning --max-messages 5
-```
+### MOA run fails (`moa.jar` missing)
+Ensure:
+- `data_lake/tools/moa.jar` exists,
+- Java is available in your runtime path (or use containerized flow).
 
-Optional prediction-topic probe:
+### Integrated gate returns `NO_GO`
+Check first:
+- `data_lake/reports/model_evaluation_2022_2025_merged.csv`
+- failing rows (`status=FAIL`) and linked artifact paths.
 
-```bash
-docker exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic f1-ml-predictions --from-beginning --max-messages 5
-```
+## 10) UI Endpoints
 
-Flink UI: `http://localhost:8081`  
-Dashboard: `http://localhost:8501`
+- Flink UI: `http://localhost:8081`
+- Dashboard: `http://localhost:8501`
 
-## Project Structure
+## 11) Citation Anchors for Thesis Writing
 
-```
-.
-├── docker-compose.yml
-├── run_simulation.sh
-├── simulate_season.sh
-├── dashboard/
-│   └── app.py
-├── f1-telemetry-producer/
-│   └── src/
-│       ├── prepare_race.py
-│       └── stream_race.py
-├── f1-telemetry-processor/
-│   └── src/main/java/com/polimi/f1/
-│       ├── F1StreamingJob.java
-│       ├── model/
-│       │   ├── input/
-│       │   └── output/
-│       ├── operators/
-│       │   ├── context/
-│       │   ├── groundtruth/
-│       │   └── realtime/
-│       ├── state/
-│       └── utils/
-├── data_lake/
-├── ml_pipeline/
-│   ├── prep_data.py
-│   ├── train_model.py
-│   ├── evaluate_model.py
-│   ├── plot_temporal_dynamics.py
-│   ├── plot_trust_diagnostics.py
-│   ├── explain_moa_temporal_permutation.py
-│   ├── build_thesis_synthesis.py
-│   ├── serve_model.py
-│   └── pipeline_config.py
-└── report/
-    └── main.tex
-```
+Recommended anchors for methods section:
+- Roberts et al. (2017), Brookshire et al. (2024) for temporal/leakage-safe split protocol.
+- Elkan (2001), Saito & Rehmsmeier (2015), Davis & Goadrich (2006) for imbalance-aware precision-first evaluation.
+- Dietterich (1998), Walters (2022) for comparative test rigor.
+- Brier (1950), Platt (1999), Guo et al. (2017), Kull et al. (2017) for probability calibration interpretation.
