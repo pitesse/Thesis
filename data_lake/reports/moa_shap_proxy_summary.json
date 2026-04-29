@@ -1,6 +1,6 @@
 {
-  "dataset_csv": "/home/pitesse/Desktop/Thesis/data_lake/reports/moa_dataset_2022_2025_merged.csv",
-  "predictions_file": "/home/pitesse/Desktop/Thesis/data_lake/reports/moa_arf_predictions_2022_2025_merged.pred",
+  "dataset_csv": "data_lake/reports/moa_dataset_2022_2025_merged.csv",
+  "predictions_file": "data_lake/reports/moa_arf_predictions_2022_2025_merged.pred",
   "rows_aligned": 124136,
   "rows_used": 123213,
   "unknown_prediction_rows": 923,
@@ -29,7 +29,6 @@
     "/home/pitesse/Desktop/Thesis/data_lake/reports/moa_shap_proxy_beeswarm.png",
     "/home/pitesse/Desktop/Thesis/data_lake/reports/moa_shap_proxy_dependence__source_year.png",
     "/home/pitesse/Desktop/Thesis/data_lake/reports/moa_shap_proxy_dependence_speedTrap.png",
-    "/home/pitesse/Desktop/Thesis/data_lake/reports/moa_shap_proxy_dependence_gapBehind.png",
-    "/home/pitesse/Desktop/Thesis/data_lake/reports/moa_shap_proxy_feature_importance.csv"
+    "/home/pitesse/Desktop/Thesis/data_lake/reports/moa_shap_proxy_dependence_gapBehind.png"
   ]
 }

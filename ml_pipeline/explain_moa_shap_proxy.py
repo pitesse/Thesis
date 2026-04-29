@@ -106,16 +106,19 @@ def _save_shap_artifacts(
 ) -> list[Path]:
     outputs: list[Path] = []
 
+    if shap_matrix.ndim != 2 or shap_matrix.shape[1] != X_sample.shape[1]:
+        raise ValueError("unexpected SHAP matrix shape for summary plot export")
+
     bar_path = reports_dir / "moa_shap_proxy_global_bar.png"
     plt.figure(figsize=(11, 7))
-    shap.summary_plot(shap_obj, X_sample, plot_type="bar", show=False)
+    shap.summary_plot(shap_matrix, X_sample, plot_type="bar", show=False)
     plt.savefig(bar_path, bbox_inches="tight", dpi=300)
     plt.close()
     outputs.append(bar_path)
 
     beeswarm_path = reports_dir / "moa_shap_proxy_beeswarm.png"
     plt.figure(figsize=(11, 7))
-    shap.summary_plot(shap_obj, X_sample, show=False)
+    shap.summary_plot(shap_matrix, X_sample, show=False)
     plt.savefig(beeswarm_path, bbox_inches="tight", dpi=300)
     plt.close()
     outputs.append(beeswarm_path)
