@@ -94,6 +94,8 @@ Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikum
 	\item Raw telemetry branch is deferred to Phase 3.2, comparator semantics are not relaxed in Phase 3.1 claims.
 	\item Use one shared feature contract for training and first live serving comparison to reduce training-serving skew.
 	\item Treat decision threshold as an operating-point control variable, selected from a precision-coverage frontier under a predefined safety floor.
+	\item Keep OOF discrimination reporting explicit and separate from comparator precision (PR curves, PR-AUC, and threshold operating-point overlays).
+	\item For MOA explainability, use a model-agnostic global surrogate protocol with fixed candidate sweep and fidelity-based selection.
 	\item Report both predictive quality and operational behavior.
 	\item Predefine significance testing and uncertainty reporting.
 \end{itemize}

@@ -1,149 +1,68 @@
 \chapter{Implementation Experience}
 \label{ch:implementation_experience}
 
-\section{Engineering Stack and Environment}
+\section{Engineering Stack and Reproducibility Baseline}
 
-\textbf{Template intent.} Keep this section factual and reproducible.
-
-\begin{itemize}
-	\item Report runtime stack, versions, infrastructure, and packaging.
-	\item Document environment constraints and reproducibility notes.
-	\item Describe what is deterministic vs what can vary between runs.
-\end{itemize}
-
-\section{Pipeline Implementation}
-\subsection{Ingestion and Replay Components}
-
-\textbf{Template intent.} Describe implementation decisions that affect data fidelity.
+\textbf{Skeleton intent.} Keep this section factual and implementation-oriented.
 
 \begin{itemize}
-	\item Replay timing policy, topic schema, and serialization choices.
-	\item Error handling and idempotency notes.
+	\item Runtime stack: Python pipeline, Kafka/Flink replay infrastructure, and MOA baseline tooling.
+	\item Reproducibility policy: versioned scripts, fixed suffix conventions, and artifact-first reporting.
+	\item Determinism notes: what is deterministic by design and what may vary across runs.
 \end{itemize}
 
-\subsection{Flink Operators and Real-time Alerts}
+\section{Pipeline Implementation Overview}
 
-\textbf{Template intent.} Summarize operator responsibilities and state management.
+\subsection{Replay, Ingestion, and Stream Processing}
+
+\textbf{Skeleton intent.} Summarize only design decisions that affect data validity.
 
 \begin{itemize}
-	\item Per-operator responsibilities and key state variables.
-	\item Watermarks/checkpointing and practical trade-offs encountered.
+	\item Event-time replay and ingestion path.
+	\item Stateful operator responsibilities and sink contracts.
+	\item Data-quality checks and deterministic de-duplication assumptions.
 \end{itemize}
 
-\paragraph{PitStopEvaluator evolution (skeleton).}
-\begin{itemize}
-	\item Note the fallback hierarchy and where pace-shift recovery is used.
-	\item Record deterministic abstention behavior when post-pit evidence is incomplete.
-	\item Link rationale to lap-time decomposition and online optimization references.
-\end{itemize}
+\subsection{Offline Dataset and Batch ML Path}
 
-\paragraph{PitStrategyEvaluator evolution (skeleton).}
-\begin{itemize}
-	\item Record added timing-pressure context (pace and gap trends) at per-driver state level.
-	\item Capture actionability gate intent: avoid broad early actionable alerts in green conditions.
-	\item Emphasize deterministic bounded logic as a stable SDE baseline.
-\end{itemize}
-
-\paragraph{Replay-speed stress behavior (skeleton).}
-\begin{itemize}
-	\item Keep one concise note on 500x stress validation and season completion.
-	\item Mention duplicate-key artifacts as operational side effects, not comparator semantic changes.
-	\item State that comparator robustness relies on deterministic de-duplication before matching.
-\end{itemize}
-
-\subsection{Data Lake and Audit Layer}
-
-\textbf{Template intent.} Explain output contracts and quality checks.
+\textbf{Skeleton intent.} Keep this subsection focused on OOF and policy artifacts.
 
 \begin{itemize}
-	\item Sink layout, partitioning logic, and schema consistency policy.
-	\item Audit scripts and contract-validation process.
+	\item Dataset preparation flow and grouped temporal split implementation.
+	\item OOF generation and probability outputs used for discrimination analysis.
+	\item Threshold frontier and constrained policy outputs used for decision-level comparison.
 \end{itemize}
 
-\paragraph{Comparator diagnostics extension (skeleton).}
-\begin{itemize}
-	\item Note added timing-distance diagnostics for excluded and matched rows.
-	\item Explicitly state that matching semantics remain unchanged.
-	\item Use this subsection later for compact attribution of horizon misses vs unresolved outcomes.
-\end{itemize}
+\subsection{Streaming ML Path and MOA Explainability Tooling}
 
-\subsection{Post-Flink-Closure Multi-Season Protocol (Skeleton)}
-
-\textbf{Template intent.} Keep this subsection as a concise reproducibility log for the transition from closed Flink baseline to merged ML evaluation.
+\textbf{Skeleton intent.} Capture the explainability implementation decisions as reusable protocol.
 
 \begin{itemize}
-	\item Record race-key normalization for merged seasons (year-prefixed race identifier) to prevent cross-season collisions during grouped validation.
-	\item Record deterministic de-duplication of pit-eval keys \texttt{(race, driver, pitLapNumber)} before comparator matching.
-	\item Keep one-to-one matching and fixed $H=2$ horizon unchanged to preserve fairness against the locked SDE baseline.
-	\item Separate replay-speed robustness evidence from model-quality evidence to avoid mixing operational and predictive claims.
+	\item MOA decoded-prediction alignment workflow.
+	\item Global surrogate model sweep and selection rule implementation.
+	\item SHAP proxy and temporal permutation scripts sharing the same selected surrogate.
+	\item Key artifacts: \texttt{moa\_surrogate\_model\_sweep.csv}, \texttt{moa\_shap\_proxy\_summary.csv}, \texttt{moa\_temporal\_permutation\_summary.csv}.
 \end{itemize}
 
-Suggested references: \citep{akidau2015dataflow, carbone2015flink, brookshire2024leakage, roberts2017cvstructured, walters2022comparing}.
+\section{Reporting and Figure-Generation Layer}
 
-\section{Model Training Pipeline}
-
-\textbf{Template intent.} Keep this broad until final experiments stabilize.
+\textbf{Skeleton intent.} Keep reporting flow explicit so reviewers can map claims to files.
 
 \begin{itemize}
-	\item Training data extraction path and feature assembly overview.
-	\item Split strategy implementation and anti-leakage safeguards.
-	\item Hyperparameter search, calibration step, and model artifact versioning.
+	\item Unified methodological synthesis: \texttt{build\_thesis\_synthesis.py}.
+	\item Master comparison and explainability report: \texttt{generate\_thesis\_master\_results.py}.
+	\item New discrimination plotting stage: \texttt{plot\_discrimination\_curves.py}.
+	\item Output families: PR metrics/tables, PR figures, trust diagnostics, comparator summaries.
 \end{itemize}
 
-Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, platt1999probabilistic, guo2017calibration, kull2017beta}.
+\section{Implementation Notes for Reviewer-Facing Readability}
 
-\paragraph{Phase 3.1 offline feature pass (skeleton).}
-\begin{itemize}
-	\item Record deterministic merge of \texttt{drop\_zones} into lap-level ML features on (race, driver, lapNumber), with structural defaults for missing traffic context.
-	\item Record causal momentum extraction with lagged differences only (pace trend and gap-ahead trend), avoiding forward windows.
-	\item Record fixed regularization baseline used for first stability pass (\texttt{max\_delta\_step}, \texttt{subsample}, \texttt{colsample\_bytree}) before deferred ablation.
-\end{itemize}
-
-Suggested references: \citep{carrasco2023optimization, quiroga2024optimization, widanage2019indy500, heilmeier2020race, elkan2001costsensitive, brookshire2024leakage, roberts2017cvstructured}.
-
-\section{Real-time Inference Integration}
-
-\textbf{Template intent.} Describe integration options and chosen approach without overcommitting to one architecture in early drafts.
+\textbf{Skeleton intent.} Reserve this section for concise engineering notes in final writing.
 
 \begin{itemize}
-	\item Integration pattern selected (in-engine, service, or decoupled consumer).
-	\item Input contract, output topic/schema, and latency budget assumptions.
-	\item Fallback and observability strategy for inference failures.
+	\item Naming cleanup from internal phase codenames to descriptive script/report names.
+	\item Separation between decision-level comparator metrics and OOF row-level discrimination metrics.
+	\item Explicit caveat policy for surrogate-based explainability claims.
 \end{itemize}
 
-\subsection{Training-Serving Consistency Path (Option A Skeleton)}
-
-\textbf{Template intent.} Keep this subsection as the implementation and evidence checklist for the first live ML comparison phase.
-
-\begin{itemize}
-	\item Record one-feature-authority rule: Flink computes rolling/context features and emits both offline JSONL and online Kafka payloads.
-	\item Note decoupled ML inference consumer flow: \texttt{f1-ml-features} input to \texttt{f1-ml-predictions} output, independent from heuristic topic path.
-	\item Document serving bundle contract items (feature-column order, threshold metadata, model version tag) and verify order-sensitive equality with training matrix columns.
-	\item Session update (2026-04-14): serving transform now handles same-lap duplicates with keep-last semantics, so lag history is overwritten in-place instead of incorrectly advanced.
-	\item Session update (2026-04-14): parity replay now de-duplicates \texttt{ml\_features} on \texttt{(race, driver, lapNumber)} before stateful feature transform, with stable key sorting.
-	\item Session update (2026-04-14): merged evaluator now validates and regenerates de-duplicated \texttt{ml\_features} streams, matching the deterministic keep-last contract used for merged audits.
-	\item Session update (2026-04-14): integrated gate notes now report failing core phases dynamically, avoiding hardcoded failure attribution.
-	\item Phase F parity gate (merged 2022--2025) passed: schema parity pass, point-in-time lag legality pass, and offline-vs-live sampled parity pass ($3000$ sampled keys, $22$ audited serving features, overall parity $1.0000$).
-	\item Frozen parity artifacts: \texttt{phase\_f\_parity\_summary\_2022\_2025\_merged.csv}, \texttt{phase\_f\_parity\_details\_2022\_2025\_merged.csv}, \texttt{phase\_f\_parity\_report\_2022\_2025\_merged.txt}.
-\end{itemize}
-
-Suggested references: \citep{carbone2015flink, kreps2011kafka, brookshire2024leakage, roberts2017cvstructured}.
-
-\paragraph{Phase G latency and operational feasibility (merged).}
-\begin{itemize}
-	\item Phase G merged replay audit passed on $3000$ sampled feature-stream events using the frozen serving bundle and parity-aligned serving transform.
-	\item End-to-end feature-to-prediction latency remained far below the operational budget: $p50=3.216$ ms, $p95=5.625$ ms, $p99=17.227$ ms against a fixed $p95 < 500$ ms gate.
-	\item Prediction availability gate also passed with $100.0\%$ successful predictions ($3000/3000$, zero failed events) against the fixed $\geq 99\%$ floor.
-	\item Overhead attribution remained explicit: heuristic-proxy $p95=0.050$ ms, ML total-path $p95=5.625$ ms, ML-added overhead $p95=5.574$ ms, preventing model-cost and infrastructure-cost conflation.
-	\item Frozen operational artifacts: \texttt{phase\_g\_latency\_summary\_2022\_2025\_merged.csv}, \texttt{phase\_g\_latency\_details\_2022\_2025\_merged.csv}, \texttt{phase\_g\_latency\_by\_year\_2022\_2025\_merged.csv}, \texttt{phase\_g\_availability\_summary\_2022\_2025\_merged.csv}, \texttt{phase\_g\_overhead\_comparison\_2022\_2025\_merged.csv}, \texttt{phase\_g\_latency\_report\_2022\_2025\_merged.txt}.
-\end{itemize}
-
-\paragraph{Phase H integrated gate synthesis (merged).}
-\begin{itemize}
-	\item Phase H integrated gate combined significance (B), lookahead diagnostics (C), calibration-policy diagnostics (D), parity (F), and latency-availability (G) into one auditable readiness decision.
-	\item Integrated result was GO with high confidence, all $12/12$ by-layer checks passing under frozen comparator semantics.
-	\item Key margins remained positive across all layers: significance test reported $p=0.0$ (numerical underflow, interpreted as extremely small), reference-threshold precision $0.8687$ versus SDE floor $0.7343$, constrained precision $0.8076$ with reachability $0.9818$, parity $1.0000$, and latency margin $+494.375$ ms below the $500$ ms budget.
-	\item Frozen artifacts: \texttt{phase\_h\_unified\_gate\_2022\_2025\_merged.csv}, \texttt{phase\_h\_unified\_gate\_by\_layer\_2022\_2025\_merged.csv}, \texttt{phase\_h\_unified\_gate\_report\_2022\_2025\_merged.txt}.
-\end{itemize}
-
-Suggested references: \citep{widanage2019indy500, akidau2015dataflow, carbone2015flink, brookshire2024leakage, roberts2017cvstructured, walters2022comparing, dietterich1998approximate, nadeau2003inference, demsar2006statistical}.
+Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka, brookshire2024leakage, roberts2017cvstructured}.

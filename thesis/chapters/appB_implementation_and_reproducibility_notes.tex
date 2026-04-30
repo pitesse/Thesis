@@ -1,4 +1,50 @@
 \chapter{Appendix B, Implementation and Reproducibility Notes}
-\section{Configuration Parameters}
-\section{Execution Commands}
-\section{Data Availability Notes}
+
+\section{Configuration Parameters (Skeleton)}
+
+\textbf{Skeleton intent.} Record only the parameters required to rerun the frozen pipeline.
+
+\begin{itemize}
+	\item Evaluation suffix: \texttt{2022\_2025\_merged}.
+	\item Racewise suffix: \texttt{2022\_2025\_racewise}.
+	\item Comparator horizon: $H=2$.
+	\item PR plot suffix: \texttt{2022\_2025}.
+	\item Surrogate selection minimum gain: \texttt{min\_f1\_gain=0.01}.
+\end{itemize}
+
+\section{Execution Commands (Skeleton)}
+
+\textbf{Skeleton intent.} Keep this as a reproducible command checklist.
+
+\begin{itemize}
+	\item Core evaluation artifacts:
+	\begin{itemize}
+		\item \texttt{python ml\_pipeline/evaluate\_model.py --years 2022 2023 2024 2025 --season-tag merged}
+	\end{itemize}
+	\item Discrimination package (OOF PR evidence):
+	\begin{itemize}
+		\item \texttt{python ml\_pipeline/plot\_discrimination\_curves.py --reports-dir data\_lake/reports --formats pdf png --suffix 2022\_2025}
+	\end{itemize}
+	\item MOA explainability package with shared surrogate selection:
+	\begin{itemize}
+		\item \texttt{python ml\_pipeline/explain\_moa\_shap\_proxy.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data\_lake/reports/moa\_dataset\_2022\_2025\_merged.csv --moa-predictions data\_lake/reports/moa\_arf\_predictions\_2022\_2025\_merged.pred --reports-dir data\_lake/reports --min-f1-gain 0.01}
+		\item \texttt{python ml\_pipeline/explain\_moa\_temporal\_permutation.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data\_lake/reports/moa\_dataset\_2022\_2025\_merged.csv --moa-predictions data\_lake/reports/moa\_arf\_predictions\_2022\_2025\_merged.pred --reports-dir data\_lake/reports --min-f1-gain 0.01}
+	\end{itemize}
+	\item Trust diagnostics and synthesis refresh:
+	\begin{itemize}
+		\item \texttt{python ml\_pipeline/plot\_trust\_diagnostics.py --reports-dir data\_lake/reports --suffix 2022\_2025\_merged --save-format pdf}
+		\item \texttt{python ml\_pipeline/build\_thesis\_synthesis.py --suffix 2022\_2025\_merged}
+		\item \texttt{python ml\_pipeline/generate\_thesis\_master\_results.py --suffix 2022\_2025\_merged --racewise-suffix 2022\_2025\_racewise}
+	\end{itemize}
+\end{itemize}
+
+\section{Data and Artifact Availability Notes (Skeleton)}
+
+\textbf{Skeleton intent.} Map each claim family to concrete files.
+
+\begin{itemize}
+	\item Decision-level comparison and gates: \texttt{model\_evaluation\_*.csv}, \texttt{thesis\_synthesis\_*.csv}, \texttt{thesis\_master\_results\_*.md}.
+	\item OOF discrimination evidence: \texttt{pr\_metrics\_*.csv}, \texttt{pr\_operating\_points\_*.csv}, \texttt{pr\_curves\_*.pdf}.
+	\item MOA surrogate evidence: \texttt{moa\_surrogate\_model\_sweep.csv}, \texttt{moa\_shap\_proxy\_summary.csv}, \texttt{moa\_temporal\_permutation\_summary.csv}.
+	\item Explainability figures: \texttt{shap\_*.png}, \texttt{moa\_shap\_proxy\_*.png}, \texttt{moa\_temporal\_permutation\_heatmap.pdf}.
+\end{itemize}

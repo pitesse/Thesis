@@ -39,7 +39,7 @@ Under a fixed decision contract, how do SDE, Batch ML, and Streaming ML compare 
 - Comparative significance framing: Dietterich (1998), Walters (2022).
 - Calibration validity: Brier (1950), Platt (1999), Guo et al. (2017), Kull et al. (2017).
 
-## 3) Latest Validated Snapshot (April 28, 2026)
+## 3) Latest Validated Snapshot (April 30, 2026)
 
 From current `data_lake/reports` artifacts:
 
@@ -51,10 +51,16 @@ From current `data_lake/reports` artifacts:
 - ML-racewise-extended: precision `0.834143` (`TP=3264`, `FP=649`, `scored=3913`).
 - MOA: precision `0.904196` (`TP=1293`, `FP=137`, `scored=1430`).
 
+### Discrimination and explainability snapshot (OOF + MOA surrogate)
+- Calibrated PR-AUC/AP (OOF): pretrain `0.394339`, racewise `0.371696`.
+- MOA surrogate selected by fixed sweep: `rf_300_d12` with fidelity F1 `0.230091`.
+
 
 Canonical source files:
 - `data_lake/reports/model_evaluation_2022_2025_merged.csv`
 - `data_lake/reports/thesis_master_results_2022_2025.md`
+- `data_lake/reports/pr_metrics_2022_2025.csv`
+- `data_lake/reports/moa_surrogate_model_sweep.csv`
 
 ## 4) Repository Architecture
 
@@ -81,6 +87,7 @@ Canonical source files:
 │   ├── explain_moa_shap_proxy.py
 │   ├── explain_moa_temporal_permutation.py
 │   ├── plot_temporal_dynamics.py
+│   ├── plot_discrimination_curves.py
 │   ├── plot_trust_diagnostics.py
 │   ├── serve_model.py
 │   └── lib/                           # granular comparator/audit/evaluation modules
@@ -123,6 +130,7 @@ Single race:
 Full season(s):
 ```bash
 ./simulate_season.sh --speed 50
+```
 
 ### B) Build dataset + train Batch ML + serving bundle
 ```bash
@@ -168,9 +176,10 @@ Primary outputs:
 ### F) Generate explainability + figures
 ```bash
 python ml_pipeline/explain_shap.py
-python ml_pipeline/explain_moa_shap_proxy.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data_lake/reports/moa_dataset_2022_2025_merged.csv --moa-predictions data_lake/reports/moa_arf_predictions_2022_2025_merged.pred --reports-dir data_lake/reports
-python ml_pipeline/explain_moa_temporal_permutation.py --years 2022 2023 2024 2025 --season-tag season
+python ml_pipeline/explain_moa_shap_proxy.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data_lake/reports/moa_dataset_2022_2025_merged.csv --moa-predictions data_lake/reports/moa_arf_predictions_2022_2025_merged.pred --reports-dir data_lake/reports --min-f1-gain 0.01
+python ml_pipeline/explain_moa_temporal_permutation.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data_lake/reports/moa_dataset_2022_2025_merged.csv --moa-predictions data_lake/reports/moa_arf_predictions_2022_2025_merged.pred --reports-dir data_lake/reports --min-f1-gain 0.01
 python ml_pipeline/plot_temporal_dynamics.py
+python ml_pipeline/plot_discrimination_curves.py --reports-dir data_lake/reports --formats pdf png --suffix 2022_2025
 python ml_pipeline/plot_trust_diagnostics.py
 ```
 
@@ -209,6 +218,7 @@ This is the practical reference for all major tools in the repository.
 | `ml_pipeline/explain_moa_shap_proxy.py` | Surrogate SHAP for MOA predictions. | `python ml_pipeline/explain_moa_shap_proxy.py --years ...` | `moa_shap_proxy_*` plots/tables |
 | `ml_pipeline/explain_moa_temporal_permutation.py` | Temporal permutation explainability for MOA. | `python ml_pipeline/explain_moa_temporal_permutation.py --years ...` | `moa_temporal_permutation_*` artifacts |
 | `ml_pipeline/plot_temporal_dynamics.py` | Temporal accuracy/kappa and comparator dynamics plots. | `python ml_pipeline/plot_temporal_dynamics.py` | `paper_fig0..` time-series figures |
+| `ml_pipeline/plot_discrimination_curves.py` | PR curves, PR-AUC tables, and threshold operating points from OOF probabilities. | `python ml_pipeline/plot_discrimination_curves.py --reports-dir ... --suffix 2022_2025` | `pr_metrics_*`, `pr_operating_points_*`, `pr_curves_*` |
 | `ml_pipeline/plot_trust_diagnostics.py` | Calibration + latency trust diagnostics plots. | `python ml_pipeline/plot_trust_diagnostics.py` | `paper_fig2..paper_fig5` |
 | `ml_pipeline/serve_model.py` | Live Kafka inference consumer for online predictions. | `python ml_pipeline/serve_model.py --bootstrap localhost:9092 --model-bundle ...` | `f1-ml-predictions` topic payloads |
 
@@ -243,8 +253,10 @@ Use these directly when you need only one methodological block instead of the fu
 | Runtime feasibility | `data_lake/reports/live_latency_summary_2022_2025_merged.csv` |
 | Split integrity closure audit | `data_lake/reports/split_integrity_summary_2022_2025_merged.csv` |
 | Comparator invariance closure audit | `data_lake/reports/comparator_invariance_summary_2022_2025_merged.csv` |
+| OOF PR metrics and threshold points | `data_lake/reports/pr_metrics_2022_2025.csv`, `data_lake/reports/pr_operating_points_2022_2025.csv` |
+| OOF PR figures (overall/by-year/panel) | `data_lake/reports/pr_curves_overall_2022_2025.pdf`, `.../pr_curves_by_year_2022_2025.pdf`, `.../pr_curves_panel_2022_2025.pdf` |
 | Batch SHAP explanations | `data_lake/reports/shap_summary.csv`, `shap_feature_importance.csv`, `shap_*.png` |
-| MOA proxy explainability | `data_lake/reports/moa_shap_proxy_summary.csv`, `moa_temporal_permutation_summary.csv` |
+| MOA proxy explainability + model sweep | `data_lake/reports/moa_shap_proxy_summary.csv`, `moa_temporal_permutation_summary.csv`, `moa_surrogate_model_sweep.csv` |
 
 ## 9) Troubleshooting
 

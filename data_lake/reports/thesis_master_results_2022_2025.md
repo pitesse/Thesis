@@ -1,6 +1,6 @@
 # Thesis Master Results Table (2022-2025)
 
-Generated at (UTC): 2026-04-28T12:16:24.259520+00:00
+Generated at (UTC): 2026-04-30T10:32:31.987799+00:00
 
 No new training runs were executed for this report; all numbers are computed from existing artifacts in `data_lake/reports`.
 
@@ -49,11 +49,43 @@ Key inferential evidence (SDE vs ML pretrain-base comparator):
 | ML-pretrain-base | 103,015 | expanding_race | 74 | 2023, 2024, 2025 | 0.50 |
 | ML-racewise-base | 123,129 | expanding_race_sequential | 95 | 2022, 2023, 2024, 2025 | 0.50 |
 
+Protocol note: on current artifacts, pretrain and racewise OOF predictions are identical on 2023-2025 rows; racewise extends evaluation coverage by adding 2022.
+
 Extended reachability (threshold frontier, no retraining):
 | Variant | Selected Threshold | Reference Threshold | Selected Precision | Reference Precision | Sweep Report |
 | --- | ---: | ---: | ---: | ---: | --- |
 | ML-pretrain-extended | 0.050 | 0.100 | 0.843867 | 0.877658 | `data_lake/reports/threshold_frontier_report_2022_2025_merged.txt` |
 | ML-racewise-extended | N/A | N/A | 0.834143 | 0.914242 | `not available (no racewise sweep artifact)` |
+
+## 3.1) OOF Discrimination Evidence (PR Curves and PR-AUC)
+
+This section reports **OOF row-level classification discrimination** from probability outputs (`target_y` vs model probabilities).
+It is methodologically distinct from comparator precision tables, which evaluate decision-level matching under the fixed `H=2` contract.
+
+| Protocol | Score Type | PR-AUC (AP) | PR-AUC (Trapz) | Prevalence | Rows | Positives |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| ml_pretrain | calibrated_proba | 0.394339 | 0.396429 | 0.074989 | 103,015 | 7,725 |
+| ml_pretrain | raw_proba | 0.402136 | 0.402086 | 0.074989 | 103,015 | 7,725 |
+| ml_racewise | calibrated_proba | 0.371696 | 0.374134 | 0.067011 | 123,129 | 8,251 |
+| ml_racewise | raw_proba | 0.381090 | 0.381042 | 0.067011 | 123,129 | 8,251 |
+
+Per-year PR-AUC (calibrated probabilities):
+| Protocol | Year | PR-AUC (AP) | Prevalence | Rows | Positives |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ml_pretrain | 2023 | 0.205870 | 0.053499 | 29,907 | 1,600 |
+| ml_pretrain | 2024 | 0.400268 | 0.078612 | 33,239 | 2,613 |
+| ml_pretrain | 2025 | 0.465371 | 0.088088 | 39,869 | 3,512 |
+| ml_racewise | 2022 | 0.060514 | 0.026151 | 20,114 | 526 |
+| ml_racewise | 2023 | 0.205870 | 0.053499 | 29,907 | 1,600 |
+| ml_racewise | 2024 | 0.400268 | 0.078612 | 33,239 | 2,613 |
+| ml_racewise | 2025 | 0.465371 | 0.088088 | 39,869 | 3,512 |
+
+- PR metrics artifact: `data_lake/reports/pr_metrics_2022_2025.csv`
+- PR operating points artifact: `data_lake/reports/pr_operating_points_2022_2025.csv`
+
+![PR curves overall](pr_curves_overall_2022_2025.png)
+![PR curves by year](pr_curves_by_year_2022_2025.png)
+![PR curves panel](pr_curves_panel_2022_2025.png)
 
 ## 4) Per-Year Comparison Across the Three Paradigms (plus Batch ML variants)
 
@@ -110,6 +142,17 @@ Interpretability availability by paradigm:
 - Batch ML: direct TreeSHAP on serving-bundle gradient-boosted model.
 - MOA: surrogate explainability (SHAP proxy + temporal permutation) on decoded MOA decisions, with explicit fidelity caveat.
 
+MOA surrogate model sweep (fixed holdout protocol):
+| Rank | Model ID | Family | F1 | Accuracy | Precision | Recall | Balanced Accuracy | Selected |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | rf_300_d12 | RandomForestClassifier | 0.230091 | 0.776772 | 0.140417 | 0.636716 | 0.710615 | yes |
+| 2 | rf_100_d10 | RandomForestClassifier | 0.207288 | 0.728118 | 0.122329 | 0.678544 | 0.704701 | no |
+| 3 | extra_300_d12 | ExtraTreesClassifier | 0.200895 | 0.681045 | 0.115623 | 0.765298 | 0.720843 | no |
+| 4 | logreg_balanced | LogisticRegression+Imputer+Scaler | 0.153545 | 0.613440 | 0.086721 | 0.669249 | 0.639802 | no |
+| 5 | hgb_400_d8 | HistGradientBoostingClassifier | 0.097942 | 0.948423 | 0.584746 | 0.053447 | 0.525674 | no |
+
+- Surrogate sweep artifact: `data_lake/reports/moa_surrogate_model_sweep.csv`
+
 Batch ML SHAP top features (`shap_feature_importance.csv`):
 | Rank | Feature | Mean abs SHAP |
 | --- | --- | ---: |
@@ -127,34 +170,34 @@ Batch ML SHAP top features (`shap_feature_importance.csv`):
 MOA surrogate SHAP proxy top features (`moa_shap_proxy_feature_importance.csv`):
 | Rank | Feature | Mean abs SHAP |
 | --- | --- | ---: |
-| 1 | _source_year | 0.047576 |
-| 2 | speedTrap | 0.033431 |
-| 3 | gapBehind | 0.030912 |
-| 4 | gapAhead | 0.027007 |
-| 5 | tire_life_ratio | 0.020293 |
-| 6 | gap_to_physical_car | 0.018904 |
-| 7 | trackTemp | 0.017499 |
-| 8 | pace_drop_ratio | 0.015713 |
-| 9 | tyreLife | 0.014897 |
-| 10 | humidity | 0.012041 |
+| 1 | _source_year | 0.051279 |
+| 2 | speedTrap | 0.034801 |
+| 3 | gapBehind | 0.032626 |
+| 4 | gapAhead | 0.029397 |
+| 5 | trackTemp | 0.021724 |
+| 6 | tire_life_ratio | 0.019810 |
+| 7 | pace_drop_ratio | 0.018650 |
+| 8 | gap_to_physical_car | 0.018149 |
+| 9 | tyreLife | 0.016020 |
+| 10 | pitLoss | 0.013977 |
 
 MOA temporal permutation top features (`moa_temporal_permutation_global.csv`):
 | Rank | Feature | Mean F1 Drop |
 | --- | --- | ---: |
-| 1 | _source_year | 0.034677 |
-| 2 | speedTrap | 0.016086 |
-| 3 | gapBehind | 0.014093 |
-| 4 | gap_to_physical_car | 0.010775 |
-| 5 | trackTemp | 0.010094 |
-| 6 | gapAhead | 0.008477 |
-| 7 | lapTime | 0.007900 |
-| 8 | tyreLife | 0.007882 |
-| 9 | pace_drop_ratio | 0.006593 |
-| 10 | tire_life_ratio | 0.006283 |
+| 1 | _source_year | 0.035963 |
+| 2 | speedTrap | 0.016138 |
+| 3 | gapBehind | 0.015116 |
+| 4 | gap_to_physical_car | 0.011480 |
+| 5 | trackTemp | 0.011252 |
+| 6 | gapAhead | 0.009865 |
+| 7 | tyreLife | 0.009475 |
+| 8 | lapTime | 0.008448 |
+| 9 | pace_drop_ratio | 0.007115 |
+| 10 | tire_life_ratio | 0.006529 |
 
 MOA explainability fidelity diagnostics:
-- SHAP proxy fidelity accuracy: 0.728118, fidelity F1: 0.207288, rows used: 123,213
-- Temporal permutation surrogate fidelity accuracy: 0.777219, fidelity F1: 0.229366, rows used: 123,213
+- SHAP proxy fidelity accuracy: 0.776772, fidelity F1: 0.230091, rows used: 123,213
+- Temporal permutation surrogate fidelity accuracy: 0.776772, fidelity F1: 0.230091, rows used: 123,213
 - Top-10 overlap between MOA SHAP proxy and MOA permutation: _source_year, gapAhead, gapBehind, gap_to_physical_car, pace_drop_ratio, speedTrap, tire_life_ratio, trackTemp, tyreLife
 
 SHAP visual artifacts:
@@ -171,6 +214,18 @@ MOA SHAP proxy:
 
 MOA temporal permutation heatmap:
 - [moa_temporal_permutation_heatmap.pdf](moa_temporal_permutation_heatmap.pdf)
+
+## 6.1) `_source_year` Deployment Note (No Retraining)
+
+`_source_year` appears as a top-ranked feature in both Batch SHAP and MOA surrogate explainability artifacts.
+The current pipeline injects this feature both offline and online, and no retraining is required for this note.
+
+Technical validation from existing code and artifacts:
+- Offline feature construction: `_source_year` is generated in `ml_pipeline/lib/data_preparation.py` and persisted in datasets/OOF artifacts.
+- Online serving path: `_source_year` is derived from race metadata in `ml_pipeline/lib/live_kafka_inference.py` (`_source_year_from_race`).
+- Train-serve parity gate on current artifacts: `PASS` (value=1.000000, threshold=N/A).
+- Tree-based serving models accept unseen numeric year values at inference without invalidating rows; decisions follow learned split thresholds.
+- Future hardening option (deferred): replace absolute year with `years_since_2022` to make extrapolation semantics explicit.
 
 ## 7) Deployment-Readiness and Validity Gates (Current Artifact Snapshot)
 

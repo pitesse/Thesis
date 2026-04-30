@@ -1,75 +1,56 @@
 \chapter{Conclusion}
 \label{ch:conclusion}
 
-\section{Obtained Results}
+\section{Summary of Achieved Outcomes}
 
-\textbf{Template intent.} Keep this section high-level until final numbers are fixed.
+\textbf{Skeleton intent.} Keep this section claim-oriented and linked to frozen artifacts.
 
 \begin{itemize}
-	\item Delivered an end-to-end comparison pipeline under a fixed fairness contract ($H=2$, actionable-only, one-to-one matching) between deterministic SDE and engineered-feature ML.
-	\item Merged 2022--2025 evidence shows a precision gain at constrained ML operating policy: SDE precision $0.7343$ vs ML precision $0.9598$, with independent scored-row test reported as $p=0.0$ (numerical underflow).
-	\item Threshold frontier analysis confirms controllable precision-coverage tradeoff; threshold $0.10$ remains the balanced reporting point (precision $0.8687$, above the SDE floor $0.7343$).
-	\item Integrated readiness gate returned GO (high confidence): all core phases B/C/D/F/G passed, with $12/12$ by-layer checks passing, parity $1.0000$, latency $p95=5.625$ ms, and availability $100.0\%$.
-	\item Session-level hardening completed before this freeze: duplicate-lap keep-last serving semantics, pre-transform dedup in parity replay, merged \texttt{ml\_features} dedup validation in evaluator, and dynamic integrated gate note attribution.
+	\item Summarize the three-paradigm evaluation scope: SDE, Batch ML, and Streaming ML (MOA).
+	\item Separate decision-level comparator findings from OOF discrimination findings.
+	\item Report final integrated gate interpretation with explicit scope boundaries.
+\end{itemize}
+
+\section{Methodological Contributions}
+
+\textbf{Skeleton intent.} State contributions as reproducible protocol blocks.
+
+\begin{itemize}
+	\item Comparator fairness contract and closure audits.
+	\item OOF PR evidence package (overall, by-year, operating points).
+	\item MOA global surrogate protocol with model sweep, selection rule, SHAP proxy, and temporal permutation.
 \end{itemize}
 
 \section{Limitations}
 
-\textbf{Template intent.} Be explicit and concrete.
+\textbf{Skeleton intent.} Keep limitations concrete, test-linked, and non-defensive.
 
 \begin{itemize}
-	\item Comparator scope limitation: fixed $H=2$ fairness contract can under-credit decisions whose value appears beyond the horizon.
-	\item Label-policy limitation: unresolved and weather-sensitive contexts are conservatively excluded, improving purity but reducing effective coverage.
-	\item Statistical pairing limitation: McNemar overlap support is small, so paired significance interpretation is reported as sensitivity evidence.
-	\item Deployment limitation: integrated Phase H gate returned GO for the engineered-feature scope, but claims remain bounded to replay-protocol evidence and fixed fairness-contract assumptions.
-	\item Contract fragility limitation: parity depends on stable keep-last de-duplication order in merged feature streams; upstream key or ordering changes can re-introduce silent train-serve skew.
-	\item Operational limitation: drift/skew monitoring and long-horizon live fallback stress tests remain future hardening work beyond this cycle.
+	\item Horizon-constrained comparator semantics and no-match exclusions.
+	\item Surrogate explainability limits for MOA internal attribution.
+	\item Deployment boundary conditions from integrated gates and split-integrity residual risks.
+	\item Forward-year generalization caveat for \texttt{\_source\_year} handling.
 \end{itemize}
 
 \section{Future Work}
 
-\textbf{Template intent.} Propose realistic next steps tied to thesis findings.
+\textbf{Skeleton intent.} Keep future work directly actionable from current artifacts.
 
 \begin{itemize}
-	\item Drift-aware extension: add season-shift monitoring, recalibration policy triggers, and sustained fallback stress testing under live operations.
-	\item Comparator robustness extension: institutionalize split-integrity and comparator-invariance audits as recurring gate checks in future merged reruns.
-	\item Deferred Phase 3.2 branch: evaluate raw telemetry formulations only after explicit Phase I entry prerequisites are met.
-	\item Systems extension: run Kafka-in-loop latency sensitivity checks to complement replay-based operational baselines.
+	\item Controlled ablation/remapping study for \texttt{\_source\_year} (for example \texttt{years\_since\_2022}).
+	\item Extended drift monitoring and recalibration policy triggers.
+	\item Additional streaming learners and surrogate-fidelity comparisons under the same protocol.
+	\item Broader operational validation beyond replay conditions.
 \end{itemize}
 
-Suggested references: \citep{gama2014drift, arora2024driftreview, bifet2007adwin, gomes2017arf, baenagarcia2006eddm}.
+\section{Final Positioning}
 
-\subsection{Deployment Consistency Placeholder (Flink + ML)}
-
-\textbf{Template intent.} Keep this subsection as a future-work marker until deployment experiments are run.
+\textbf{Skeleton intent.} Close with a concise thesis-position statement.
 
 \begin{itemize}
-	\item Keep one-feature-authority policy: Flink emits serving and offline feature payloads from the same event-time logic.
-	\item Keep parity checklist explicit: schema parity, point-in-time validity, sampled offline-vs-live consistency.
-	\item Keep operational checklist explicit: prediction availability, fallback behavior, and latency budgets, now closed for this cycle through Phase H GO evidence.
+	\item What is validated now (artifact-backed claims).
+	\item What remains exploratory (deferred claims).
+	\item Why the current pipeline is reviewer-ready from a reproducibility standpoint.
 \end{itemize}
 
-\subsection{Phase I Scope Lock for Deferred Raw Telemetry Branch}
-
-\textbf{Template intent.} Keep raw telemetry work explicitly deferred and bounded with measurable entry criteria.
-
-\begin{itemize}
-	\item Scope lock for this cycle: engineered-feature ML only, with raw telemetry modeling deferred to Phase 3.2.
-	\item Entry prerequisites for Phase 3.2 remain explicit and auditable: integrated gate state not weaker than GO WITH CONDITIONS, stable drift/skew monitoring protocol, and documented point-in-time raw feature extraction with leakage audits.
-	\item Method guardrail for future Phase 3.2 experiments: preserve grouped temporal validation and fairness-contract transparency while treating construct-validity caveats explicitly.
-	\item Phase I lock artifacts remain deferred in this run cycle and should be regenerated together with the dedicated Phase 3.2 scope-lock package.
-\end{itemize}
-
-Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, gama2014drift, arora2024driftreview, widanage2019indy500, cappello2025statespace, heilmeier2020race}.
-
-\section{Overall Discussion}
-
-\textbf{Template intent.} Close by positioning your thesis against the three strategy paradigms.
-
-\begin{itemize}
-	\item Optimization/planning paradigm remains a strategic reference for global race planning and constraint reasoning.
-	\item Reinforcement-learning paradigm remains a deferred comparator pending broader online evaluation infrastructure.
-	\item Supervised classification in streaming deployment is the validated contribution of this cycle, with significance-backed precision gains under explicit fairness and reproducibility constraints.
-\end{itemize}
-
-Suggested references: \citep{carrasco2023optimization, quiroga2024optimization, thomas2025xrlf1, sasikumar2025pitstop, hettmann2024datatopodium, dinh2025gradient}.
+Suggested references: \citep{walters2022comparing, dietterich1998approximate, brookshire2024leakage, roberts2017cvstructured, gama2014drift, arora2024driftreview}.

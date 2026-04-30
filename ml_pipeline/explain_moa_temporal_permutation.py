@@ -1,10 +1,10 @@
 """Temporal permutation explainability for MOA predictions.
 
-This script adds a second explainability method to complement surrogate SHAP:
-- fit a surrogate model to MOA decoded predictions,
-- compute global permutation importance,
-- compute windowed permutation importance across the timeline,
-- compare top features with existing surrogate-SHAP top features.
+This script complements surrogate SHAP by:
+- selecting a surrogate model through a fixed sweep protocol,
+- computing global permutation importance,
+- computing windowed permutation importance across the timeline,
+- comparing top features with existing surrogate-SHAP top features.
 """
 
 from __future__ import annotations
@@ -16,12 +16,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.inspection import permutation_importance
-from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import train_test_split
 
 from lib.moa_predictions import decode_moa_predictions
+from lib.moa_surrogate_models import evaluate_and_select_surrogate
 from pipeline_config import (
     DEFAULT_DATA_LAKE,
     DEFAULT_SEASON_TAG,
@@ -52,6 +51,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window-min-rows", type=int, default=2000)
     parser.add_argument("--top-features", type=int, default=10)
     parser.add_argument("--perm-repeats", type=int, default=5)
+    parser.add_argument(
+        "--min-f1-gain",
+        type=float,
+        default=0.01,
+        help="minimum F1 gain over baseline surrogate required to switch from baseline model",
+    )
     return parser.parse_args()
 
 
@@ -179,6 +184,8 @@ def main() -> None:
         raise ValueError("--top-features must be >= 1")
     if args.perm_repeats < 2:
         raise ValueError("--perm-repeats must be >= 2")
+    if args.min_f1_gain < 0:
+        raise ValueError("--min-f1-gain must be >= 0")
 
     dataset_csv, pred_path, output_dir, shap_summary_json = _resolve_paths(args)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -194,18 +201,19 @@ def main() -> None:
         stratify=y,
     )
 
-    surrogate = RandomForestClassifier(
-        n_estimators=250,
-        max_depth=12,
-        random_state=args.seed,
-        n_jobs=-1,
-        class_weight="balanced",
+    sweep_df, surrogate, selection_info = evaluate_and_select_surrogate(
+        X_train,
+        X_test,
+        y_train,
+        y_test,
+        seed=args.seed,
+        min_f1_gain=args.min_f1_gain,
     )
-    surrogate.fit(X_train, y_train)
 
-    y_hat = surrogate.predict(X_test)
-    fidelity_accuracy = float(accuracy_score(y_test, y_hat))
-    fidelity_f1 = float(f1_score(y_test, y_hat, zero_division=0))
+    selected_row = sweep_df[sweep_df["selected"] == 1].iloc[0]
+
+    sweep_csv = output_dir / "moa_surrogate_model_sweep.csv"
+    sweep_df.to_csv(sweep_csv, index=False)
 
     # Global permutation importance on held-out rows.
     global_perm = permutation_importance(
@@ -296,11 +304,17 @@ def main() -> None:
                 "rows_used": int(len(X)),
                 "decoded_unknown_prediction_rows": int(diagnostics.get("unknown_prediction_rows", 0)),
                 "known_positive_rate": float(diagnostics.get("known_positive_rate", np.nan)),
-                "fidelity_accuracy": fidelity_accuracy,
-                "fidelity_f1": fidelity_f1,
+                "fidelity_accuracy": float(selected_row["fidelity_accuracy"]),
+                "fidelity_f1": float(selected_row["fidelity_f1"]),
+                "fidelity_precision": float(selected_row["fidelity_precision"]),
+                "fidelity_recall": float(selected_row["fidelity_recall"]),
+                "fidelity_balanced_accuracy": float(selected_row["fidelity_balanced_accuracy"]),
+                "selected_surrogate_id": str(selection_info["selected_model_id"]),
+                "selected_surrogate_family": str(selection_info["selected_family"]),
+                "surrogate_selection_reason": str(selection_info["selection_reason"]),
                 "window_count_used": int(window_df["window_id"].nunique()) if not window_df.empty else 0,
                 "top_features": ";".join(top_features),
-                "notes": "Permutation importance computed on surrogate predictions of MOA-decoded labels",
+                "notes": "Permutation importance computed on selected surrogate predictions of MOA-decoded labels",
             }
         ]
     )
@@ -321,12 +335,15 @@ def main() -> None:
         "summary": summary_df.iloc[0].to_dict(),
         "decode_diagnostics": diagnostics,
         "shap_top_features": shap_top_features,
+        "surrogate_sweep_csv": str(sweep_csv),
+        "surrogate_sweep": sweep_df.to_dict(orient="records"),
         "artifacts": [
             str(summary_csv),
             str(global_csv),
             str(windows_csv),
             str(agreement_csv),
             str(heatmap_pdf),
+            str(sweep_csv),
         ],
     }
     summary_json = output_dir / "moa_temporal_permutation_summary.json"
@@ -334,10 +351,13 @@ def main() -> None:
 
     print("=== MOA TEMPORAL PERMUTATION SUMMARY ===")
     print(f"rows used               : {len(X)}")
-    print(f"fidelity accuracy       : {fidelity_accuracy:.6f}")
-    print(f"fidelity f1             : {fidelity_f1:.6f}")
+    print(f"selected surrogate      : {selection_info['selected_model_id']}")
+    print(f"selection reason        : {selection_info['selection_reason']}")
+    print(f"fidelity accuracy       : {float(selected_row['fidelity_accuracy']):.6f}")
+    print(f"fidelity f1             : {float(selected_row['fidelity_f1']):.6f}")
     print(f"windows used            : {summary_df.iloc[0]['window_count_used']}")
     print(f"top permutation features: {', '.join(top_features)}")
+    print(f"sweep csv               : {sweep_csv}")
     print(f"summary csv             : {summary_csv}")
     print(f"summary json            : {summary_json}")
 

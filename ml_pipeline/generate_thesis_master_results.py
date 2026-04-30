@@ -205,11 +205,16 @@ def _render_markdown(args: argparse.Namespace) -> str:
 
     merged_sweep = _load_csv(reports_dir / f"threshold_frontier_{suffix}.csv", "merged threshold frontier")
     racewise_sweep = _load_optional_csv(reports_dir / f"threshold_frontier_{racewise_suffix}.csv")
+    pr_suffix = suffix[:-7] if suffix.endswith("_merged") else suffix
+    pr_metrics = _load_optional_csv(reports_dir / f"pr_metrics_{pr_suffix}.csv")
+    pr_operating_points = _load_optional_csv(reports_dir / f"pr_operating_points_{pr_suffix}.csv")
 
     moa_summary = _load_csv(reports_dir / f"moa_arf_summary_{suffix}.csv", "MOA ARF summary")
     moa_shap_summary = _load_csv(reports_dir / "moa_shap_proxy_summary.csv", "MOA SHAP proxy summary")
     moa_perm_summary = _load_csv(reports_dir / "moa_temporal_permutation_summary.csv", "MOA temporal permutation summary")
+    moa_surrogate_sweep = _load_optional_csv(reports_dir / "moa_surrogate_model_sweep.csv")
     model_eval = _load_csv(reports_dir / f"model_evaluation_{suffix}.csv", "model evaluation")
+    feature_parity_summary = _load_optional_csv(reports_dir / f"feature_parity_summary_{suffix}.csv")
 
     shap_batch = _load_csv(reports_dir / "shap_feature_importance.csv", "batch SHAP importance")
     shap_moa = _load_csv(reports_dir / "moa_shap_proxy_feature_importance.csv", "MOA SHAP proxy importance")
@@ -309,6 +314,8 @@ def _render_markdown(args: argparse.Namespace) -> str:
         f"| ML-racewise-base | {_fmt_int(racewise_protocol[0])} | {racewise_protocol[1]} | {_fmt_int(racewise_protocol[2])} | {racewise_protocol[3]} | {_fmt_float(racewise_protocol[4], 2)} |"
     )
     lines.append("")
+    lines.append("Protocol note: on current artifacts, pretrain and racewise OOF predictions are identical on 2023-2025 rows; racewise extends evaluation coverage by adding 2022.")
+    lines.append("")
     lines.append("Extended reachability (threshold frontier, no retraining):")
     lines.append("| Variant | Selected Threshold | Reference Threshold | Selected Precision | Reference Precision | Sweep Report |")
     lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
@@ -330,6 +337,47 @@ def _render_markdown(args: argparse.Namespace) -> str:
     lines.append(
         f"| ML-racewise-extended | {racewise_threshold} | {racewise_ref_threshold} | {racewise_precision} | {racewise_ref_precision} | `{racewise_report_text}` |"
     )
+    lines.append("")
+    lines.append("## 3.1) OOF Discrimination Evidence (PR Curves and PR-AUC)")
+    lines.append("")
+    lines.append("This section reports **OOF row-level classification discrimination** from probability outputs (`target_y` vs model probabilities).")
+    lines.append("It is methodologically distinct from comparator precision tables, which evaluate decision-level matching under the fixed `H=2` contract.")
+    lines.append("")
+    if pr_metrics is not None:
+        pr_overall = pr_metrics[pr_metrics["year"].astype(str) == "overall"].copy()
+        if not pr_overall.empty:
+            lines.append("| Protocol | Score Type | PR-AUC (AP) | PR-AUC (Trapz) | Prevalence | Rows | Positives |")
+            lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
+            for _, row in pr_overall.sort_values(["protocol", "score_type"]).iterrows():
+                lines.append(
+                    f"| {row['protocol']} | {row['score_type']} | {_fmt_float(float(row['pr_auc_ap']))} | {_fmt_float(float(row['pr_auc_trapz']))} | {_fmt_float(float(row['prevalence']))} | {_fmt_int(float(row['n_rows']))} | {_fmt_int(float(row['n_positive']))} |"
+                )
+            lines.append("")
+        pr_by_year = pr_metrics[
+            (pr_metrics["year"].astype(str) != "overall")
+            & (pr_metrics["score_type"].astype(str) == "calibrated_proba")
+        ].copy()
+        if not pr_by_year.empty:
+            lines.append("Per-year PR-AUC (calibrated probabilities):")
+            lines.append("| Protocol | Year | PR-AUC (AP) | Prevalence | Rows | Positives |")
+            lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+            for _, row in pr_by_year.sort_values(["protocol", "year"]).iterrows():
+                lines.append(
+                    f"| {row['protocol']} | {int(float(row['year']))} | {_fmt_float(float(row['pr_auc_ap']))} | {_fmt_float(float(row['prevalence']))} | {_fmt_int(float(row['n_rows']))} | {_fmt_int(float(row['n_positive']))} |"
+                )
+            lines.append("")
+        lines.append(f"- PR metrics artifact: `{reports_dir / f'pr_metrics_{pr_suffix}.csv'}`")
+    else:
+        lines.append("- PR metrics artifact not found. Run `ml_pipeline/plot_discrimination_curves.py` to generate it.")
+    if pr_operating_points is not None:
+        lines.append(f"- PR operating points artifact: `{reports_dir / f'pr_operating_points_{pr_suffix}.csv'}`")
+    lines.append("")
+    if exists(f"pr_curves_overall_{pr_suffix}.png"):
+        lines.append(f"![PR curves overall](pr_curves_overall_{pr_suffix}.png)")
+    if exists(f"pr_curves_by_year_{pr_suffix}.png"):
+        lines.append(f"![PR curves by year](pr_curves_by_year_{pr_suffix}.png)")
+    if exists(f"pr_curves_panel_{pr_suffix}.png"):
+        lines.append(f"![PR curves panel](pr_curves_panel_{pr_suffix}.png)")
     lines.append("")
     lines.append("## 4) Per-Year Comparison Across the Three Paradigms (plus Batch ML variants)")
     lines.append("")
@@ -366,6 +414,18 @@ def _render_markdown(args: argparse.Namespace) -> str:
     lines.append("- Batch ML: direct TreeSHAP on serving-bundle gradient-boosted model.")
     lines.append("- MOA: surrogate explainability (SHAP proxy + temporal permutation) on decoded MOA decisions, with explicit fidelity caveat.")
     lines.append("")
+    if moa_surrogate_sweep is not None:
+        lines.append("MOA surrogate model sweep (fixed holdout protocol):")
+        lines.append("| Rank | Model ID | Family | F1 | Accuracy | Precision | Recall | Balanced Accuracy | Selected |")
+        lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+        for _, row in moa_surrogate_sweep.sort_values("rank").iterrows():
+            lines.append(
+                f"| {int(row['rank'])} | {row['model_id']} | {row['family']} | {_fmt_float(float(row['fidelity_f1']))} | {_fmt_float(float(row['fidelity_accuracy']))} | {_fmt_float(float(row['fidelity_precision']))} | {_fmt_float(float(row['fidelity_recall']))} | {_fmt_float(float(row['fidelity_balanced_accuracy']))} | {'yes' if int(row['selected']) == 1 else 'no'} |"
+            )
+        lines.append("")
+        lines.append(f"- Surrogate sweep artifact: `{reports_dir / 'moa_surrogate_model_sweep.csv'}`")
+        lines.append("")
+
     lines.append("Batch ML SHAP top features (`shap_feature_importance.csv`):")
     lines.append("| Rank | Feature | Mean abs SHAP |")
     lines.append("| --- | --- | ---: |")
@@ -416,6 +476,27 @@ def _render_markdown(args: argparse.Namespace) -> str:
         lines.append("MOA temporal permutation heatmap:")
         lines.append("- [moa_temporal_permutation_heatmap.pdf](moa_temporal_permutation_heatmap.pdf)")
         lines.append("")
+    lines.append("## 6.1) `_source_year` Deployment Note (No Retraining)")
+    lines.append("")
+    lines.append("`_source_year` appears as a top-ranked feature in both Batch SHAP and MOA surrogate explainability artifacts.")
+    lines.append("The current pipeline injects this feature both offline and online, and no retraining is required for this note.")
+    lines.append("")
+    lines.append("Technical validation from existing code and artifacts:")
+    lines.append("- Offline feature construction: `_source_year` is generated in `ml_pipeline/lib/data_preparation.py` and persisted in datasets/OOF artifacts.")
+    lines.append("- Online serving path: `_source_year` is derived from race metadata in `ml_pipeline/lib/live_kafka_inference.py` (`_source_year_from_race`).")
+    if feature_parity_summary is not None and not feature_parity_summary.empty:
+        parity_gate = feature_parity_summary[feature_parity_summary["check"] == "feature_parity_overall_gate"]
+        if not parity_gate.empty:
+            row = parity_gate.iloc[0]
+            threshold_text = "N/A"
+            if "threshold" in row.index and not pd.isna(row["threshold"]):
+                threshold_text = _fmt_float(float(row["threshold"]))
+            lines.append(
+                f"- Train-serve parity gate on current artifacts: `{row['status']}` (value={_fmt_float(float(row['value']))}, threshold={threshold_text})."
+            )
+    lines.append("- Tree-based serving models accept unseen numeric year values at inference without invalidating rows; decisions follow learned split thresholds.")
+    lines.append("- Future hardening option (deferred): replace absolute year with `years_since_2022` to make extrapolation semantics explicit.")
+    lines.append("")
     lines.append("## 7) Deployment-Readiness and Validity Gates (Current Artifact Snapshot)")
     lines.append("")
     lines.append("| Test ID | Name | Status | Metric | Value | Threshold | Artifact |")

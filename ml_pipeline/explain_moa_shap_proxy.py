@@ -11,11 +11,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shap
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import train_test_split
 
 from lib.moa_predictions import decode_moa_predictions
+from lib.moa_surrogate_models import evaluate_and_select_surrogate
 from lib.model_training_cv import TARGET_COLUMN
 from pipeline_config import (
     DEFAULT_DATA_LAKE,
@@ -46,6 +45,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-rows", type=int, default=DEFAULT_SAMPLE_ROWS)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--top-dependence", type=int, default=DEFAULT_TOP_DEPENDENCE)
+    parser.add_argument(
+        "--min-f1-gain",
+        type=float,
+        default=0.01,
+        help="minimum F1 gain over baseline surrogate required to switch from baseline model",
+    )
 
     return parser.parse_args()
 
@@ -99,7 +104,6 @@ def _to_shap_values(shap_values: Any) -> np.ndarray:
 
 def _save_shap_artifacts(
     reports_dir: Path,
-    shap_obj: Any,
     shap_matrix: np.ndarray,
     X_sample: pd.DataFrame,
     top_dependence: int,
@@ -162,6 +166,8 @@ def main() -> None:
         raise ValueError("--sample-rows must be >= 1")
     if args.top_dependence < 0:
         raise ValueError("--top-dependence must be >= 0")
+    if args.min_f1_gain < 0:
+        raise ValueError("--min-f1-gain must be >= 0")
 
     dataset_csv, pred_path, output_dir = _load_paths(args)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -171,8 +177,7 @@ def main() -> None:
         raise ValueError(f"target column not found in dataset: {TARGET_COLUMN}")
 
     y_true = pd.to_numeric(frame[TARGET_COLUMN], errors="coerce").fillna(0).astype(int)
-    X = frame.drop(columns=[TARGET_COLUMN]).copy()
-    X = X.astype(float)
+    X = frame.drop(columns=[TARGET_COLUMN]).astype(float)
 
     y_moa_pred, decode_diag = decode_moa_predictions(
         pred_path=pred_path,
@@ -205,35 +210,50 @@ def main() -> None:
         stratify=y_moa_pred,
     )
 
-    surrogate = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=10,
-        random_state=args.seed,
-        n_jobs=-1,
-        class_weight="balanced",
+    sweep_df, surrogate, selection_info = evaluate_and_select_surrogate(
+        X_train,
+        X_test,
+        y_train,
+        y_test,
+        seed=args.seed,
+        min_f1_gain=args.min_f1_gain,
     )
-    surrogate.fit(X_train, y_train)
 
-    y_hat = surrogate.predict(X_test)
-    fidelity_acc = float(accuracy_score(y_test, y_hat))
-    fidelity_f1 = float(f1_score(y_test, y_hat, zero_division=0))
+    sweep_csv = output_dir / "moa_surrogate_model_sweep.csv"
+    sweep_df.to_csv(sweep_csv, index=False)
+
+    selected_row = sweep_df[sweep_df["selected"] == 1].iloc[0]
+    fidelity_acc = float(selected_row["fidelity_accuracy"])
+    fidelity_f1 = float(selected_row["fidelity_f1"])
 
     if len(X) > args.sample_rows:
         X_sample = X.sample(n=args.sample_rows, random_state=args.seed)
     else:
         X_sample = X.copy()
 
-    explainer = shap.TreeExplainer(surrogate)
-    shap_obj = explainer(X_sample)
+    supports_tree = bool(int(selected_row["supports_tree_shap"]))
+    if supports_tree:
+        explainer = shap.TreeExplainer(surrogate)
+        shap_obj = explainer(X_sample)
+    else:
+        # keep non-tree fallback bounded, generic explainers can be expensive on large samples.
+        if len(X_sample) > 1200:
+            X_sample = X_sample.sample(n=1200, random_state=args.seed)
+        explainer = shap.Explainer(surrogate, X_sample)
+        shap_obj = explainer(X_sample)
+
     shap_matrix = _to_shap_values(shap_obj)
 
     artifact_paths = _save_shap_artifacts(
         reports_dir=output_dir,
-        shap_obj=shap_obj,
         shap_matrix=shap_matrix,
         X_sample=X_sample,
         top_dependence=args.top_dependence,
     )
+
+    feature_importance = _build_feature_importance_table(shap_matrix, X_sample)
+    feature_csv = output_dir / "moa_shap_proxy_feature_importance.csv"
+    feature_importance.to_csv(feature_csv, index=False)
 
     summary_csv = output_dir / "moa_shap_proxy_summary.csv"
     summary_json = output_dir / "moa_shap_proxy_summary.json"
@@ -248,7 +268,12 @@ def main() -> None:
         "sample_rows": int(len(X_sample)),
         "fidelity_accuracy": fidelity_acc,
         "fidelity_f1": fidelity_f1,
-        "notes": "SHAP is computed on a surrogate model fitted to MOA predictions, not on MOA internals",
+        "selected_surrogate_id": str(selection_info["selected_model_id"]),
+        "selected_surrogate_family": str(selection_info["selected_family"]),
+        "selected_supports_tree_shap": int(bool(selection_info["selected_supports_tree_shap"])),
+        "surrogate_selection_reason": str(selection_info["selection_reason"]),
+        "surrogate_min_f1_gain": float(selection_info["min_f1_gain"]),
+        "notes": "SHAP is computed on a selected surrogate fitted to MOA predictions, not on MOA internals",
     }
     pd.DataFrame([summary_row]).to_csv(summary_csv, index=False)
     summary_json.write_text(
@@ -256,7 +281,10 @@ def main() -> None:
             {
                 **summary_row,
                 "decode_diagnostics": decode_diag,
-                "artifacts": [str(p) for p in artifact_paths],
+                "surrogate_sweep_csv": str(sweep_csv),
+                "surrogate_sweep": sweep_df.to_dict(orient="records"),
+                "feature_importance_csv": str(feature_csv),
+                "artifacts": [str(feature_csv), str(sweep_csv), *[str(p) for p in artifact_paths]],
             },
             indent=2,
             ensure_ascii=True,
@@ -266,15 +294,19 @@ def main() -> None:
     )
 
     print("=== MOA SHAP PROXY SUMMARY ===")
-    print(f"dataset             : {dataset_csv}")
-    print(f"predictions         : {pred_path}")
-    print(f"rows used           : {n}")
-    print(f"fidelity accuracy   : {fidelity_acc:.6f}")
-    print(f"fidelity f1         : {fidelity_f1:.6f}")
-    print(f"summary csv         : {summary_csv}")
-    print(f"summary json        : {summary_json}")
+    print(f"dataset                 : {dataset_csv}")
+    print(f"predictions             : {pred_path}")
+    print(f"rows used               : {len(X)}")
+    print(f"selected surrogate      : {selection_info['selected_model_id']}")
+    print(f"selection reason        : {selection_info['selection_reason']}")
+    print(f"fidelity accuracy       : {fidelity_acc:.6f}")
+    print(f"fidelity f1             : {fidelity_f1:.6f}")
+    print(f"sweep csv               : {sweep_csv}")
+    print(f"feature importance csv  : {feature_csv}")
+    print(f"summary csv             : {summary_csv}")
+    print(f"summary json            : {summary_json}")
     for path in artifact_paths:
-        print(f"artifact            : {path}")
+        print(f"artifact                : {path}")
     print("caveat: explanation is surrogate-based, it describes MOA decision behavior approximately")
 
 

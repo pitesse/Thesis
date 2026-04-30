@@ -87,6 +87,9 @@ def _build_check_rows(
     reports_dir: Path,
     suffix: str,
     metrics_df: pd.DataFrame,
+    pr_metrics: pd.DataFrame,
+    pr_operating_points: pd.DataFrame,
+    moa_surrogate_sweep: pd.DataFrame,
     phase_b_summary: pd.DataFrame,
     phase_c_sweep: pd.DataFrame,
     phase_d_summary: pd.DataFrame,
@@ -99,6 +102,7 @@ def _build_check_rows(
     moa_perm_summary: pd.DataFrame,
 ) -> pd.DataFrame:
     checks: list[dict[str, object]] = []
+    pr_suffix = suffix[:-7] if suffix.endswith("_merged") else suffix
 
     def add_check(name: str, ok: bool, note: str) -> None:
         checks.append({"check": name, "status": _to_bool_status(ok), "note": note})
@@ -222,7 +226,82 @@ def _build_check_rows(
         f"phase_j_split_status={split_overall}",
     )
 
-    # 7) Ensure new figure and explainability artifacts exist.
+    # 7) PR discrimination checks from OOF-level metrics.
+    pr_overall = pr_metrics[pr_metrics["year"].astype(str) == "overall"].copy()
+    present_pairs = set(
+        zip(
+            pr_overall["protocol"].astype(str).tolist(),
+            pr_overall["score_type"].astype(str).tolist(),
+        )
+    )
+    required_pairs = {
+        ("ml_pretrain", "calibrated_proba"),
+        ("ml_racewise", "calibrated_proba"),
+    }
+    add_check(
+        "pr_overall_rows_presence",
+        required_pairs.issubset(present_pairs),
+        f"present_pairs={sorted(present_pairs)}",
+    )
+
+    pretrain_row = pr_overall[
+        (pr_overall["protocol"] == "ml_pretrain")
+        & (pr_overall["score_type"] == "calibrated_proba")
+    ]
+    racewise_row = pr_overall[
+        (pr_overall["protocol"] == "ml_racewise")
+        & (pr_overall["score_type"] == "calibrated_proba")
+    ]
+    if not pretrain_row.empty and not racewise_row.empty:
+        pretrain_ap = float(pretrain_row.iloc[0]["pr_auc_ap"])
+        racewise_ap = float(racewise_row.iloc[0]["pr_auc_ap"])
+        add_check(
+            "pr_ap_expected_scale",
+            (0.30 <= pretrain_ap <= 0.50) and (0.30 <= racewise_ap <= 0.45),
+            f"ml_pretrain_ap={pretrain_ap:.6f}, ml_racewise_ap={racewise_ap:.6f}",
+        )
+        add_check(
+            "pr_protocol_ordering",
+            pretrain_ap >= racewise_ap,
+            f"ml_pretrain_ap={pretrain_ap:.6f}, ml_racewise_ap={racewise_ap:.6f}",
+        )
+
+    op_subset = pr_operating_points[
+        (pr_operating_points["year"].astype(str) == "overall")
+        & (pr_operating_points["score_type"].astype(str) == "calibrated_proba")
+        & (pr_operating_points["point_label"].astype(str) == "constrained_median")
+    ]
+    op_protocols = set(op_subset["protocol"].astype(str).tolist())
+    add_check(
+        "pr_operating_points_presence",
+        {"ml_pretrain", "ml_racewise"}.issubset(op_protocols),
+        f"protocols_with_constrained_median={sorted(op_protocols)}",
+    )
+
+    # 8) MOA surrogate sweep consistency checks.
+    selected_rows = moa_surrogate_sweep[moa_surrogate_sweep["selected"] == 1].copy()
+    add_check(
+        "moa_surrogate_single_selection",
+        len(selected_rows) == 1,
+        f"selected_rows={len(selected_rows)}",
+    )
+    if len(selected_rows) == 1:
+        selected_id = str(selected_rows.iloc[0]["model_id"])
+        perm_selected = str(moa_perm_summary.iloc[0].get("selected_surrogate_id", "")).strip()
+        if perm_selected:
+            add_check(
+                "moa_surrogate_selection_consistency",
+                selected_id == perm_selected,
+                f"sweep_selected={selected_id}, permutation_selected={perm_selected}",
+            )
+        else:
+            add_check(
+                "moa_surrogate_selection_consistency",
+                False,
+                "selected_surrogate_id not found in moa_temporal_permutation_summary.csv",
+            )
+
+    # 9) Ensure new figure and explainability artifacts exist.
     expected_artifacts = [
         reports_dir / "paper_fig0_accuracy_over_time_real.pdf",
         reports_dir / "paper_fig1_kappa_over_time_real.pdf",
@@ -234,6 +313,12 @@ def _build_check_rows(
         reports_dir / "moa_temporal_permutation_global.csv",
         reports_dir / "moa_temporal_permutation_by_window.csv",
         reports_dir / "moa_temporal_permutation_heatmap.pdf",
+        reports_dir / "moa_surrogate_model_sweep.csv",
+        reports_dir / f"pr_metrics_{pr_suffix}.csv",
+        reports_dir / f"pr_operating_points_{pr_suffix}.csv",
+        reports_dir / f"pr_curves_overall_{pr_suffix}.pdf",
+        reports_dir / f"pr_curves_by_year_{pr_suffix}.pdf",
+        reports_dir / f"pr_curves_panel_{pr_suffix}.pdf",
     ]
 
     missing_artifacts = [str(path) for path in expected_artifacts if not path.exists()]
@@ -243,7 +328,7 @@ def _build_check_rows(
         "missing=" + ";".join(missing_artifacts),
     )
 
-    # 8) Consistency check for new MOA permutation summary.
+    # 10) Consistency check for new MOA permutation summary.
     rows_used = int(moa_perm_summary.iloc[0]["rows_used"])
     unknown_rows = int(moa_perm_summary.iloc[0]["decoded_unknown_prediction_rows"])
     add_check(
@@ -259,6 +344,9 @@ def _build_synthesis_markdown(
     suffix: str,
     synthesis_df: pd.DataFrame,
     checks_df: pd.DataFrame,
+    pr_metrics: pd.DataFrame,
+    pr_operating_points: pd.DataFrame,
+    moa_surrogate_sweep: pd.DataFrame,
     phase_d_summary: pd.DataFrame,
     phase_g_summary: pd.DataFrame,
     phase_h_gate: pd.DataFrame,
@@ -271,6 +359,16 @@ def _build_synthesis_markdown(
     else:
         row_h = phase_h_gate.iloc[0]
     row_moa = moa_perm_summary.iloc[0]
+    pr_overall = pr_metrics[pr_metrics["year"].astype(str) == "overall"].copy()
+    pr_pretrain_cal = pr_overall[
+        (pr_overall["protocol"] == "ml_pretrain")
+        & (pr_overall["score_type"] == "calibrated_proba")
+    ]
+    pr_racewise_cal = pr_overall[
+        (pr_overall["protocol"] == "ml_racewise")
+        & (pr_overall["score_type"] == "calibrated_proba")
+    ]
+    sweep_selected = moa_surrogate_sweep[moa_surrogate_sweep["selected"] == 1].copy()
 
     p95_gate = float(phase_g_summary[phase_g_summary["check"] == "latency_p95_total_ms"].iloc[0]["value"])
     availability = float(phase_g_summary[phase_g_summary["check"] == "availability_pct"].iloc[0]["value"])
@@ -294,6 +392,18 @@ def _build_synthesis_markdown(
     lines.append(
         f"- MOA second explainability method: fidelity_accuracy={float(row_moa['fidelity_accuracy']):.6f}, fidelity_f1={float(row_moa['fidelity_f1']):.6f}."
     )
+    if not pr_pretrain_cal.empty and not pr_racewise_cal.empty:
+        lines.append(
+            "- OOF discrimination (calibrated PR-AUC/AP): "
+            f"pretrain={float(pr_pretrain_cal.iloc[0]['pr_auc_ap']):.6f}, "
+            f"racewise={float(pr_racewise_cal.iloc[0]['pr_auc_ap']):.6f}."
+        )
+    if not sweep_selected.empty:
+        sel = sweep_selected.iloc[0]
+        lines.append(
+            f"- MOA surrogate selection: {sel['model_id']} ({sel['family']}), "
+            f"fidelity_f1={float(sel['fidelity_f1']):.6f}."
+        )
     lines.append("")
 
     lines.append("## Claim Matrix")
@@ -303,6 +413,29 @@ def _build_synthesis_markdown(
         lines.append(
             f"| {row['model']} | {int(row['actionable'])} | {int(row['scored'])} | {float(row['precision']):.6f} | {int(row['tp'])} | {int(row['fp'])} | {float(row['scored_rate']):.6f} |"
         )
+    lines.append("")
+
+    lines.append("## Discrimination and Explainability Addendum")
+    lines.append("| Protocol | Score Type | PR-AUC (AP) | PR-AUC (Trapz) | Prevalence | Rows |")
+    lines.append("| --- | --- | ---: | ---: | ---: | ---: |")
+    for _, row in pr_overall.sort_values(["protocol", "score_type"]).iterrows():
+        lines.append(
+            f"| {row['protocol']} | {row['score_type']} | {float(row['pr_auc_ap']):.6f} | {float(row['pr_auc_trapz']):.6f} | {float(row['prevalence']):.6f} | {int(row['n_rows'])} |"
+        )
+    lines.append("")
+    lines.append("| MOA Surrogate Rank | Model ID | Family | F1 | Accuracy | Precision | Recall | Selected |")
+    lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | --- |")
+    for _, row in moa_surrogate_sweep.sort_values("rank").iterrows():
+        lines.append(
+            f"| {int(row['rank'])} | {row['model_id']} | {row['family']} | {float(row['fidelity_f1']):.6f} | {float(row['fidelity_accuracy']):.6f} | {float(row['fidelity_precision']):.6f} | {float(row['fidelity_recall']):.6f} | {'yes' if int(row['selected']) == 1 else 'no'} |"
+        )
+    lines.append("")
+    lines.append("PR artifacts:")
+    lines.append("- `pr_metrics_2022_2025.csv`")
+    lines.append("- `pr_operating_points_2022_2025.csv`")
+    lines.append("- `pr_curves_overall_2022_2025.pdf`")
+    lines.append("- `pr_curves_by_year_2022_2025.pdf`")
+    lines.append("- `pr_curves_panel_2022_2025.pdf`")
     lines.append("")
 
     lines.append("## Correctness Audit")
@@ -330,6 +463,7 @@ def main() -> None:
     args = parse_args()
     reports_dir = args.reports_dir
     suffix = args.suffix
+    pr_suffix = suffix[:-7] if suffix.endswith("_merged") else suffix
 
     paths = {
         "heuristic_cmp": reports_dir / f"heuristic_comparator_{suffix}.csv",
@@ -347,6 +481,9 @@ def main() -> None:
         "phase_j_split": reports_dir / f"split_integrity_summary_{suffix}.csv",
         "moa_perm_summary": reports_dir / "moa_temporal_permutation_summary.csv",
         "moa_arf_summary": reports_dir / f"moa_arf_summary_{suffix}.csv",
+        "pr_metrics": reports_dir / f"pr_metrics_{pr_suffix}.csv",
+        "pr_operating_points": reports_dir / f"pr_operating_points_{pr_suffix}.csv",
+        "moa_surrogate_sweep": reports_dir / "moa_surrogate_model_sweep.csv",
     }
 
     heuristic_cmp = _load_csv(paths["heuristic_cmp"], "heuristic comparator")
@@ -365,6 +502,9 @@ def main() -> None:
     phase_j_split = _load_csv(paths["phase_j_split"], "phase J split summary")
     moa_perm_summary = _load_csv(paths["moa_perm_summary"], "MOA permutation summary")
     moa_arf_summary = _load_csv(paths["moa_arf_summary"], "MOA ARF summary")
+    pr_metrics = _load_csv(paths["pr_metrics"], "PR metrics")
+    pr_operating_points = _load_csv(paths["pr_operating_points"], "PR operating points")
+    moa_surrogate_sweep = _load_csv(paths["moa_surrogate_sweep"], "MOA surrogate sweep")
 
     synthesis_rows = [
         _comparator_metrics(heuristic_cmp, "SDE Heuristic"),
@@ -392,6 +532,9 @@ def main() -> None:
         reports_dir=reports_dir,
         suffix=suffix,
         metrics_df=synthesis_df,
+        pr_metrics=pr_metrics,
+        pr_operating_points=pr_operating_points,
+        moa_surrogate_sweep=moa_surrogate_sweep,
         phase_b_summary=phase_b_summary,
         phase_c_sweep=phase_c_sweep,
         phase_d_summary=phase_d_summary,
@@ -415,6 +558,9 @@ def main() -> None:
         suffix=suffix,
         synthesis_df=synthesis_df,
         checks_df=checks_df,
+        pr_metrics=pr_metrics,
+        pr_operating_points=pr_operating_points,
+        moa_surrogate_sweep=moa_surrogate_sweep,
         phase_d_summary=phase_d_summary,
         phase_g_summary=phase_g_summary,
         phase_h_gate=phase_h_gate,
