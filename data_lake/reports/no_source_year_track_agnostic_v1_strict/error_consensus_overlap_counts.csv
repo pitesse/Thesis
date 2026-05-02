@@ -1,8 +1,0 @@
-subset,count
-SDE_only,243
-Batch_only,4
-MOA_only,162
-SDE_and_Batch_only,2
-SDE_and_MOA_only,26
-Batch_and_MOA_only,1
-All_three,0

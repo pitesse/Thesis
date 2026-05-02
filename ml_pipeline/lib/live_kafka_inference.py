@@ -148,12 +148,23 @@ def _source_year_from_race(race: str) -> int:
     return _to_int(token, default=0)
 
 
-def _build_drop_zone_lookup(path: Path) -> dict[tuple[str, str, int], tuple[int, float]]:
+def _build_drop_zone_lookup(
+    path: Path,
+) -> dict[tuple[str, str, int], tuple[int, float, int, int, str]]:
     if not path.exists():
         raise FileNotFoundError(f"drop_zones file not found: {path}")
 
     df = pd.read_json(path, lines=True)
-    required = {"race", "driver", "lapNumber", "positionsLost", "gapToPhysicalCar"}
+    required = {
+        "race",
+        "driver",
+        "lapNumber",
+        "positionsLost",
+        "gapToPhysicalCar",
+        "emergencePosition",
+        "physicalCarTyreLife",
+        "dropZoneStatus",
+    }
     missing = [column for column in required if column not in df.columns]
     if missing:
         raise ValueError(f"drop_zones file missing required columns: {missing}")
@@ -164,18 +175,32 @@ def _build_drop_zone_lookup(path: Path) -> dict[tuple[str, str, int], tuple[int,
     work["lapNumber"] = pd.to_numeric(work["lapNumber"], errors="coerce")
     work["positionsLost"] = pd.to_numeric(work["positionsLost"], errors="coerce")
     work["gapToPhysicalCar"] = pd.to_numeric(work["gapToPhysicalCar"], errors="coerce")
+    work["emergencePosition"] = pd.to_numeric(work["emergencePosition"], errors="coerce")
+    work["physicalCarTyreLife"] = pd.to_numeric(work["physicalCarTyreLife"], errors="coerce")
+    work["dropZoneStatus"] = work["dropZoneStatus"].astype(str)
     work = work[work["lapNumber"].notna()].copy()
     work["lapNumber"] = work["lapNumber"].astype(int)
     work.sort_values(by=["race", "driver", "lapNumber"], inplace=True)
     work.drop_duplicates(subset=["race", "driver", "lapNumber"], keep="last", inplace=True)
 
-    lookup: dict[tuple[str, str, int], tuple[int, float]] = {}
+    lookup: dict[tuple[str, str, int], tuple[int, float, int, int, str]] = {}
     for row in work.itertuples(index=False):
         lap = int(getattr(row, "lapNumber"))
         key = (str(getattr(row, "race")), str(getattr(row, "driver")), lap)
         positions_lost = _to_int(getattr(row, "positionsLost"), default=0)
         gap_to_physical_car = _to_float(getattr(row, "gapToPhysicalCar"), default=STRUCTURAL_GAP_FILL)
-        lookup[key] = (positions_lost, STRUCTURAL_GAP_FILL if gap_to_physical_car is None else float(gap_to_physical_car))
+        emergence_position = _to_int(getattr(row, "emergencePosition"), default=0)
+        physical_car_tyre_life = _to_int(getattr(row, "physicalCarTyreLife"), default=-1)
+        drop_zone_status = _normalize_label(getattr(row, "dropZoneStatus"))
+        if not drop_zone_status:
+            drop_zone_status = "INSUFFICIENT_GAP_CONTEXT"
+        lookup[key] = (
+            positions_lost,
+            STRUCTURAL_GAP_FILL if gap_to_physical_car is None else float(gap_to_physical_car),
+            emergence_position,
+            physical_car_tyre_life,
+            drop_zone_status,
+        )
 
     return lookup
 
@@ -185,7 +210,7 @@ class OnlineFeatureEngineer:
 
     def __init__(
         self,
-        drop_zone_lookup: dict[tuple[str, str, int], tuple[int, float]] | None = None,
+        drop_zone_lookup: dict[tuple[str, str, int], tuple[int, float, int, int, str]] | None = None,
         track_agnostic_mode: str = TRACK_AGNOSTIC_OFF,
     ) -> None:
         if track_agnostic_mode not in TRACK_AGNOSTIC_MODES:
@@ -375,8 +400,6 @@ class OnlineFeatureEngineer:
         gap_ahead_raw = _to_float(event.get("gapAhead"))
         gap_behind_raw = _to_float(event.get("gapBehind"))
 
-        has_gap_ahead = gap_ahead_raw is not None
-        has_gap_behind = gap_behind_raw is not None
         gap_ahead_value = gap_ahead_raw if gap_ahead_raw is not None else STRUCTURAL_GAP_FILL
         gap_behind_value = gap_behind_raw if gap_behind_raw is not None else STRUCTURAL_GAP_FILL
 
@@ -404,11 +427,16 @@ class OnlineFeatureEngineer:
         if drop_zone_values is None:
             positions_lost = 0
             gap_to_physical_car = STRUCTURAL_GAP_FILL
-            has_drop_zone_data = False
+            emergence_position = 0
+            physical_car_tyre_life = -1
+            drop_zone_status = "INSUFFICIENT_GAP_CONTEXT"
         else:
             positions_lost = int(drop_zone_values[0])
             gap_to_physical_car = float(drop_zone_values[1])
-            has_drop_zone_data = True
+            emergence_position = int(drop_zone_values[2])
+            physical_car_tyre_life = int(drop_zone_values[3])
+            drop_zone_status = str(drop_zone_values[4]).strip() or "INSUFFICIENT_GAP_CONTEXT"
+        has_drop_zone_data = drop_zone_status == "LOSS_ESTIMATED"
 
         source_year = _source_year_from_race(race)
         track_temp = _to_float(event.get("trackTemp"), default=np.nan)
@@ -498,14 +526,15 @@ class OnlineFeatureEngineer:
             "gapBehind": gap_behind_value,
             "lapTime": lap_time_num,
             "pitLoss": _to_float(event.get("pitLoss"), default=np.nan),
-            "hasGapAhead": has_gap_ahead,
-            "hasGapBehind": has_gap_behind,
             "pace_drop_ratio": pace_drop_ratio,
             "tire_life_ratio": tire_life_ratio,
             "pace_trend": float(pace_trend),
             "gapAhead_trend": float(gap_ahead_trend),
             "positions_lost": int(positions_lost),
             "gap_to_physical_car": float(gap_to_physical_car),
+            "emergence_position": int(emergence_position),
+            "physical_car_tyre_life": int(physical_car_tyre_life),
+            "drop_zone_status": drop_zone_status,
             "has_drop_zone_data": bool(has_drop_zone_data),
             "_source_year": int(source_year),
         }
@@ -646,7 +675,10 @@ def main() -> None:
         value_serializer=lambda payload: json.dumps(payload).encode("utf-8"),
     )
 
-    drop_zone_lookup: dict[tuple[str, str, int], tuple[int, float]] | None = None
+    drop_zone_lookup: dict[
+        tuple[str, str, int],
+        tuple[int, float, int, int, str],
+    ] | None = None
     if args.drop_zones:
         drop_zone_lookup = _build_drop_zone_lookup(Path(args.drop_zones))
 

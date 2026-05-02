@@ -29,6 +29,7 @@ from pipeline_config import (
     run_suffix,
 )
 from lib.data_preparation import _latest_jsonl
+from lib.replay_manifest import load_latest_manifest, strip_year_prefix
 from lib.feature_profiles import (
     DEFAULT_FEATURE_PROFILE,
     DEFAULT_TRACK_AGNOSTIC_MODE,
@@ -186,6 +187,29 @@ def _existing_merged_ml_features_is_deduped(path: Path) -> bool:
     return _existing_merged_stream_is_deduped(path, "lapNumber")
 
 
+def _load_manifest_for_merge(data_lake: Path, year: int, season_tag: str):
+    try:
+        return load_latest_manifest(data_lake, year=year, season_tag=season_tag)
+    except FileNotFoundError:
+        if season_tag == DEFAULT_SEASON_TAG:
+            raise
+    return load_latest_manifest(data_lake, year=year, season_tag=DEFAULT_SEASON_TAG)
+
+
+def _lap_field_for_stream(stream: str) -> str:
+    if stream == "pit_evals":
+        return "pitLapNumber"
+    return "lapNumber"
+
+
+def _row_lap_key(row: dict[str, object], stream: str) -> int | str:
+    lap_raw = row.get(_lap_field_for_stream(stream))
+    try:
+        return int(float(lap_raw))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(lap_raw)
+
+
 def _ensure_merged_jsonl(
     data_lake: Path,
     stream: str,
@@ -195,75 +219,78 @@ def _ensure_merged_jsonl(
     merged_tag: str,
     merge_stamp: str,
 ) -> Path:
-    source_paths = [(year, _latest_jsonl(data_lake, stream, year, season_tag)) for year in years]
-    existing_merged = _latest_jsonl_or_none(data_lake, stream, merged_year, merged_tag)
-
-    newest_source_mtime = max(path.stat().st_mtime for _, path in source_paths)
-    existing_valid = False
-    # reuse merged files when source streams did not change, avoids hidden drift across repeated evaluations.
-    if existing_merged is not None and existing_merged.stat().st_mtime >= newest_source_mtime:
-        existing_valid = _existing_merged_has_prefixed_race(existing_merged)
-        if existing_valid and stream == "pit_evals":
-            existing_valid = _existing_merged_pit_evals_is_deduped(existing_merged)
-        if existing_valid and stream == "ml_features":
-            existing_valid = _existing_merged_ml_features_is_deduped(existing_merged)
-
-    if existing_valid:
-        return existing_merged
+    source_paths = [
+        (year, _latest_jsonl(data_lake, stream, year, season_tag))
+        for year in years
+    ]
+    manifest_by_year = {
+        int(year): _load_manifest_for_merge(data_lake, int(year), season_tag)
+        for year in years
+    }
 
     output_path = data_lake / f"{stream}_{merged_year}_{merged_tag}_{merge_stamp}.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    dedup_enabled = stream in {"pit_evals", "ml_features"}
+    deduped_rows: dict[tuple[int, int, str, int | str], dict[str, object]] = {}
+    passthrough_rows: list[tuple[int, int, str, int | str, dict[str, object]]] = []
+    seen_races_by_year: dict[int, set[str]] = {int(year): set() for year in years}
 
-    if stream in {"pit_evals", "ml_features"}:
-        dedup_field = "pitLapNumber" if stream == "pit_evals" else "lapNumber"
-        deduped_rows: dict[tuple[str, str, int | str], dict[str, object]] = {}
-        passthrough_rows: list[dict[str, object]] = []
+    for year, src in source_paths:
+        manifest = manifest_by_year[int(year)]
+        race_order = {race: idx for idx, race in enumerate(manifest.races_in_order)}
 
-        for year, src in source_paths:
-            with src.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    text = line.strip()
-                    if not text:
-                        continue
-                    row = json.loads(text)
-                    if not isinstance(row, dict):
-                        continue
+        with src.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                row = json.loads(text)
+                if not isinstance(row, dict):
+                    continue
+                if "race" not in row or "driver" not in row:
+                    continue
 
-                    if "race" in row and not _race_is_year_prefixed(row.get("race")):
-                        row["race"] = f"{year} :: {row['race']}"
+                race_name = strip_year_prefix(row.get("race"))
+                driver = str(row.get("driver", "")).strip()
+                if not race_name or not driver:
+                    continue
+                if race_name not in race_order:
+                    raise ValueError(
+                        f"merge contract failed for {stream}: race {race_name!r} "
+                        f"not present in replay manifest year={year}"
+                    )
+                if driver not in set(manifest.drivers_by_race.get(race_name, ())):
+                    raise ValueError(
+                        f"merge contract failed for {stream}: driver/race mismatch "
+                        f"year={year}, race={race_name!r}, driver={driver!r}"
+                    )
 
-                    race = str(row.get("race", ""))
-                    driver = str(row.get("driver", ""))
-                    lap_raw = row.get(dedup_field)
-                    try:
-                        lap_key: int | str = int(float(lap_raw))
-                    except (TypeError, ValueError):
-                        lap_key = str(lap_raw)
+                prefixed_race = f"{year} :: {race_name}"
+                row["race"] = prefixed_race
+                lap_key = _row_lap_key(row, stream)
+                lap_key_norm = str(lap_key)
+                sort_key = (int(year), int(race_order[race_name]), driver, lap_key_norm)
+                seen_races_by_year[int(year)].add(race_name)
 
-                    if race and driver and lap_raw is not None:
-                        # keep the latest row per pit key, enforces deterministic one to one comparator inputs.
-                        deduped_rows[(race, driver, lap_key)] = row
-                    else:
-                        passthrough_rows.append(row)
+                if dedup_enabled and lap_key_norm != "None":
+                    deduped_rows[sort_key] = row
+                else:
+                    passthrough_rows.append((*sort_key, row))
 
-        ordered_keys = sorted(deduped_rows.keys(), key=lambda key: (key[0], key[1], str(key[2])))
-        with output_path.open("w", encoding="utf-8") as dst:
-            for key in ordered_keys:
-                dst.write(json.dumps(deduped_rows[key]) + "\n")
-            for row in passthrough_rows:
-                dst.write(json.dumps(row) + "\n")
-    else:
-        with output_path.open("w", encoding="utf-8") as dst:
-            for year, src in source_paths:
-                with src.open("r", encoding="utf-8") as handle:
-                    for line in handle:
-                        text = line.strip()
-                        if not text:
-                            continue
-                        row = json.loads(text)
-                        if isinstance(row, dict) and "race" in row and not _race_is_year_prefixed(row.get("race")):
-                            row["race"] = f"{year} :: {row['race']}"
-                        dst.write(json.dumps(row) + "\n")
+    for year in years:
+        manifest = manifest_by_year[int(year)]
+        missing = sorted(set(manifest.races_in_order) - seen_races_by_year[int(year)])
+        if stream in {"ml_features", "pit_evals"} and missing:
+            raise ValueError(
+                f"merge contract failed for {stream}: missing races for year={year}: {missing[:8]}"
+            )
+
+    with output_path.open("w", encoding="utf-8") as dst:
+        for key in sorted(deduped_rows.keys()):
+            dst.write(json.dumps(deduped_rows[key]) + "\n")
+        passthrough_rows.sort(key=lambda item: (item[0], item[1], item[2], str(item[3])))
+        for _, _, _, _, row in passthrough_rows:
+            dst.write(json.dumps(row) + "\n")
 
     print(f"merged {stream} jsonl: {output_path}")
     return output_path

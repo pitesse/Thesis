@@ -34,49 +34,12 @@ from lib.feature_profiles import (
     build_feature_plan,
     parse_exclude_features,
 )
-
-# F1 calendar order (chronological 2022-2025 for expanding_race protocol temporal integrity)
-F1_CALENDAR = {
-    2022: [
-        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
-        "Emilia Romagna Grand Prix", "Miami Grand Prix", "Spanish Grand Prix",
-        "Monaco Grand Prix", "Azerbaijan Grand Prix", "Canadian Grand Prix",
-        "British Grand Prix", "Austrian Grand Prix", "French Grand Prix",
-        "Hungarian Grand Prix", "Belgian Grand Prix", "Dutch Grand Prix",
-        "Italian Grand Prix", "Singapore Grand Prix", "Japanese Grand Prix",
-        "United States Grand Prix", "Mexico City Grand Prix", "São Paulo Grand Prix",
-        "Abu Dhabi Grand Prix"
-    ],
-    2023: [
-        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
-        "Azerbaijan Grand Prix", "Miami Grand Prix", "Monaco Grand Prix",
-        "Spanish Grand Prix", "Canadian Grand Prix", "Austrian Grand Prix",
-        "British Grand Prix", "Hungarian Grand Prix", "Belgian Grand Prix",
-        "Dutch Grand Prix", "Italian Grand Prix", "Singapore Grand Prix",
-        "Japanese Grand Prix", "Qatar Grand Prix", "United States Grand Prix",
-        "Mexico City Grand Prix", "São Paulo Grand Prix", "Abu Dhabi Grand Prix"
-    ],
-    2024: [
-        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
-        "Japanese Grand Prix", "Chinese Grand Prix", "Miami Grand Prix",
-        "Emilia Romagna Grand Prix", "Monaco Grand Prix", "Canadian Grand Prix",
-        "Spanish Grand Prix", "Austrian Grand Prix", "British Grand Prix",
-        "Hungarian Grand Prix", "Belgian Grand Prix", "Dutch Grand Prix",
-        "Italian Grand Prix", "Azerbaijan Grand Prix", "Singapore Grand Prix",
-        "United States Grand Prix", "Mexico City Grand Prix", "São Paulo Grand Prix",
-        "Abu Dhabi Grand Prix"
-    ],
-    2025: [
-        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
-        "Japanese Grand Prix", "Shanghai Grand Prix", "Miami Grand Prix",
-        "Monaco Grand Prix", "Canadian Grand Prix", "Spanish Grand Prix",
-        "Austrian Grand Prix", "British Grand Prix", "Hungarian Grand Prix",
-        "Belgian Grand Prix", "Dutch Grand Prix", "Italian Grand Prix",
-        "Monza Grand Prix", "Baku Grand Prix", "Singapore Grand Prix",
-        "United States Grand Prix", "Mexico City Grand Prix", "Brazil Grand Prix",
-        "Abu Dhabi Grand Prix"
-    ]
-}
+from lib.replay_manifest import (
+    ReplayManifest,
+    load_latest_manifest,
+    strip_year_prefix,
+    validate_frame_against_manifest,
+)
 
 
 @dataclass(frozen=True)
@@ -85,6 +48,8 @@ class PreparedSeason:
     ml_features_path: Path
     drop_zones_path: Path
     pit_evals_path: Path
+    manifest_path: Path
+    manifest: ReplayManifest
     feature_dedup_stats: dict[str, int | str]
     pit_eval_dedup_stats: dict[str, int | str]
     dataset: pd.DataFrame
@@ -99,6 +64,15 @@ def _with_year_prefixed_race(frame: pd.DataFrame, year: int) -> pd.DataFrame:
     return work
 
 
+def _load_manifest_with_fallback(data_lake: Path, year: int, season_tag: str) -> ReplayManifest:
+    try:
+        return load_latest_manifest(data_lake, year=year, season_tag=season_tag)
+    except FileNotFoundError:
+        if season_tag == DEFAULT_SEASON_TAG:
+            raise
+    return load_latest_manifest(data_lake, year=year, season_tag=DEFAULT_SEASON_TAG)
+
+
 def _prepare_one_season(
     data_lake: Path,
     year: int,
@@ -110,10 +84,32 @@ def _prepare_one_season(
     ml_features_path = _latest_jsonl(data_lake, "ml_features", year, season_tag)
     drop_zones_path = _latest_jsonl(data_lake, "drop_zones", year, season_tag)
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", year, season_tag)
+    manifest = _load_manifest_with_fallback(data_lake, year, season_tag)
 
     features_raw = _load_jsonl(ml_features_path)
     drop_zones_raw = _load_jsonl(drop_zones_path)
     pit_evals_raw = _load_jsonl(pit_evals_path)
+    validate_frame_against_manifest(
+        features_raw,
+        manifest,
+        context_label=f"ml_features year={year}",
+        allow_prefixed_race=False,
+        require_full_race_coverage=True,
+    )
+    validate_frame_against_manifest(
+        pit_evals_raw,
+        manifest,
+        context_label=f"pit_evals year={year}",
+        allow_prefixed_race=False,
+        require_full_race_coverage=True,
+    )
+    validate_frame_against_manifest(
+        drop_zones_raw,
+        manifest,
+        context_label=f"drop_zones year={year}",
+        allow_prefixed_race=False,
+        require_full_race_coverage=False,
+    )
 
     drop_zones = _prepare_drop_zones(drop_zones_raw)
     features = _prepare_features(
@@ -131,12 +127,28 @@ def _prepare_one_season(
     pit_evals = _with_year_prefixed_race(pit_evals, year)
 
     dataset = _build_targets(features, pit_evals, horizon)
+    expected_prefixed_races = {f"{year} :: {race}" for race in manifest.races_in_order}
+    observed_prefixed_races = set(dataset["race"].astype(str).dropna().unique())
+    missing_prefixed = sorted(expected_prefixed_races - observed_prefixed_races)
+    unexpected_prefixed = sorted(observed_prefixed_races - expected_prefixed_races)
+    if missing_prefixed or unexpected_prefixed:
+        details: list[str] = []
+        if missing_prefixed:
+            details.append(f"missing_prefixed={missing_prefixed[:8]}")
+        if unexpected_prefixed:
+            details.append(f"unexpected_prefixed={unexpected_prefixed[:8]}")
+        raise ValueError(
+            f"dataset year={year} violates replay manifest race set: "
+            + ", ".join(details)
+        )
 
     return PreparedSeason(
         year=year,
         ml_features_path=ml_features_path,
         drop_zones_path=drop_zones_path,
         pit_evals_path=pit_evals_path,
+        manifest_path=manifest.path,
+        manifest=manifest,
         feature_dedup_stats=feature_dedup_stats,
         pit_eval_dedup_stats=pit_eval_dedup_stats,
         dataset=dataset,
@@ -146,31 +158,52 @@ def _prepare_one_season(
 def _merge_seasons(prepared: list[PreparedSeason]) -> pd.DataFrame:
     frames = [item.dataset for item in prepared]
     merged = pd.concat(frames, ignore_index=True)
-    
-    # extract year and race name for calendar ordering
-    merged["_extracted_year"] = merged["race"].str.extract(r"^(\d{4})")
-    merged["_extracted_year"] = pd.to_numeric(merged["_extracted_year"], errors="coerce").astype("Int64")
-    merged["_extracted_race"] = merged["race"].str.replace(r"^\d{4}\s::\s", "", regex=True)
-    
-    # add calendar order index for chronological sorting (fixes temporal leakage in expanding_race)
-    def _get_calendar_order(year: int | float, race_name: str) -> int:
-        if pd.isna(year):
-            return 999999
-        year_int = int(year)
-        calendar = F1_CALENDAR.get(year_int, [])
-        try:
-            return calendar.index(race_name)
-        except (ValueError, KeyError):
-            return 999998  # unknown race, sort last
-    
+
+    manifest_by_year: dict[int, ReplayManifest] = {
+        int(item.year): item.manifest for item in prepared
+    }
+    order_lookup: dict[tuple[int, str], int] = {}
+    for year, manifest in manifest_by_year.items():
+        for idx, race in enumerate(manifest.races_in_order):
+            order_lookup[(year, race)] = int(idx)
+
+    merged["_extracted_year"] = pd.to_numeric(
+        merged["race"].astype(str).str.extract(r"^(\d{4})")[0],
+        errors="coerce",
+    ).astype("Int64")
+    merged["_extracted_race"] = merged["race"].astype(str).map(strip_year_prefix)
+
+    missing_year = merged["_extracted_year"].isna()
+    if missing_year.any():
+        examples = (
+            merged.loc[missing_year, "race"]
+            .astype(str)
+            .drop_duplicates()
+            .head(8)
+            .tolist()
+        )
+        raise ValueError(
+            f"merged dataset has malformed non-prefixed race keys: {examples}"
+        )
+
+    def _manifest_order(year_value: int | float, race_name: str) -> int:
+        key = (int(year_value), str(race_name))
+        if key not in order_lookup:
+            raise ValueError(
+                "merged dataset contains race not present in replay manifest: "
+                f"year={int(year_value)}, race={race_name!r}"
+            )
+        return order_lookup[key]
+
     merged["_calendar_order"] = merged.apply(
-        lambda row: _get_calendar_order(row["_extracted_year"], row["_extracted_race"]),
-        axis=1
+        lambda row: _manifest_order(row["_extracted_year"], row["_extracted_race"]),
+        axis=1,
     )
-    
-    # sort chronologically by year then calendar order, then driver/lap for stability
+
+    # strict deterministic chronology for expanding-race protocols.
     merged.sort_values(
-        by=["_extracted_year", "_calendar_order", "driver", "lapNumber"],
+        by=["_extracted_year", "_calendar_order", "lapNumber", "driver"],
+        kind="mergesort",
         inplace=True
     )
     merged.drop(columns=["_extracted_year", "_extracted_race", "_calendar_order"], inplace=True)
@@ -202,6 +235,7 @@ def _print_multi_season_summary(
         print(f"{item.year}: ml_features={item.ml_features_path}")
         print(f"{item.year}: drop_zones={item.drop_zones_path}")
         print(f"{item.year}: pit_evals={item.pit_evals_path}")
+        print(f"{item.year}: replay_manifest={item.manifest_path}")
         print(
             f"{item.year}: ml_features_dedup_excess={item.feature_dedup_stats.get('dedup_excess_rows_before', 0)} "
             f"-> {item.feature_dedup_stats.get('dedup_excess_rows_after', 0)}"
@@ -265,6 +299,7 @@ def prepare_dataset(
             feature_dedup_stats=season.feature_dedup_stats,
             pit_eval_dedup_stats=season.pit_eval_dedup_stats,
         )
+        print(f"replay manifest   : {season.manifest_path}")
         print(f"feature profile    : {feature_plan.feature_profile}")
         print(
             "excluded features  : "

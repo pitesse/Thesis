@@ -117,6 +117,11 @@ def parse_args() -> argparse.Namespace:
         help="use existing dataset",
     )
     parser.set_defaults(prepare_data=True)
+    parser.add_argument(
+        "--skip-replay-validation",
+        action="store_true",
+        help="skip strict replay-contract validation gate before training",
+    )
 
     parser.add_argument("--folds", type=int, default=DEFAULT_FOLDS)
     parser.add_argument(
@@ -315,6 +320,23 @@ def main() -> None:
     else:
         if not dataset_path.exists():
             raise FileNotFoundError(f"dataset not found: {dataset_path}")
+
+    if not args.skip_replay_validation:
+        validate_cmd = [
+            "--data-lake",
+            str(data_lake),
+            "--years",
+            *[str(year) for year in years],
+            "--season-tag",
+            args.season_tag,
+            "--dataset",
+            str(dataset_path),
+        ]
+        _run_step(
+            "Replay contract validation (fail-fast)",
+            "validate_replay_contracts",
+            validate_cmd,
+        )
 
     leaderboard_output = (
         Path(args.leaderboard_output)

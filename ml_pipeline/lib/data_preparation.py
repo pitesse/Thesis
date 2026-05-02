@@ -72,7 +72,24 @@ REQUIRED_DROP_ZONE_COLUMNS = [
     "lapNumber",
     "positionsLost",
     "gapToPhysicalCar",
+    "emergencePosition",
+    "physicalCarTyreLife",
+    "dropZoneStatus",
 ]
+
+DROP_ZONE_STATUS_LOSS_ESTIMATED = "LOSS_ESTIMATED"
+DROP_ZONE_STATUS_NO_LOSS_FEASIBLE = "NO_LOSS_FEASIBLE"
+DROP_ZONE_STATUS_INELIGIBLE_TYRE_AGE = "INELIGIBLE_TYRE_AGE"
+DROP_ZONE_STATUS_INELIGIBLE_TRACK_STATUS = "INELIGIBLE_TRACK_STATUS"
+DROP_ZONE_STATUS_INSUFFICIENT_GAP_CONTEXT = "INSUFFICIENT_GAP_CONTEXT"
+
+DROP_ZONE_STATUS_SET = {
+    DROP_ZONE_STATUS_LOSS_ESTIMATED,
+    DROP_ZONE_STATUS_NO_LOSS_FEASIBLE,
+    DROP_ZONE_STATUS_INELIGIBLE_TYRE_AGE,
+    DROP_ZONE_STATUS_INELIGIBLE_TRACK_STATUS,
+    DROP_ZONE_STATUS_INSUFFICIENT_GAP_CONTEXT,
+}
 
 TRACK_AGNOSTIC_OFF = "off"
 TRACK_AGNOSTIC_V1 = "track_agnostic_v1"
@@ -358,10 +375,6 @@ def _prepare_features(
     work["tyre_life_num"] = pd.to_numeric(work["tyreLife"], errors="coerce")
     work["lap_time_num"] = pd.to_numeric(work["lapTime"], errors="coerce")
 
-    # keep structural boundary semantics explicit before numeric fill.
-    work["hasGapAhead"] = work["gapAhead"].notna()
-    work["hasGapBehind"] = work["gapBehind"].notna()
-
     work["gapAhead"] = pd.to_numeric(work["gapAhead"], errors="coerce")
     work["gapBehind"] = pd.to_numeric(work["gapBehind"], errors="coerce")
     work["gapAhead"] = work["gapAhead"].fillna(STRUCTURAL_GAP_FILL)
@@ -375,17 +388,24 @@ def _prepare_features(
             validate="m:1",
             indicator="_drop_zone_join",
         )
-        work["has_drop_zone_data"] = work["_drop_zone_join"].eq("both")
         work.drop(columns=["_drop_zone_join"], inplace=True)
     else:
         work["positions_lost"] = 0
         work["gap_to_physical_car"] = STRUCTURAL_GAP_FILL
-        work["has_drop_zone_data"] = False
+        work["emergence_position"] = 0
+        work["physical_car_tyre_life"] = -1
+        work["drop_zone_status"] = DROP_ZONE_STATUS_INSUFFICIENT_GAP_CONTEXT
 
     if "positions_lost" not in work.columns:
         work["positions_lost"] = 0
     if "gap_to_physical_car" not in work.columns:
         work["gap_to_physical_car"] = STRUCTURAL_GAP_FILL
+    if "emergence_position" not in work.columns:
+        work["emergence_position"] = 0
+    if "physical_car_tyre_life" not in work.columns:
+        work["physical_car_tyre_life"] = -1
+    if "drop_zone_status" not in work.columns:
+        work["drop_zone_status"] = DROP_ZONE_STATUS_INSUFFICIENT_GAP_CONTEXT
 
     work["positions_lost"] = (
         pd.to_numeric(work["positions_lost"], errors="coerce").fillna(0).astype(int)
@@ -395,7 +415,23 @@ def _prepare_features(
         .replace([np.inf, -np.inf], np.nan)
         .fillna(STRUCTURAL_GAP_FILL)
     )
-    work["has_drop_zone_data"] = work["has_drop_zone_data"].fillna(False).astype(bool)
+    work["emergence_position"] = (
+        pd.to_numeric(work["emergence_position"], errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
+    work["physical_car_tyre_life"] = (
+        pd.to_numeric(work["physical_car_tyre_life"], errors="coerce")
+        .fillna(-1)
+        .astype(int)
+    )
+    work["drop_zone_status"] = work["drop_zone_status"].map(_normalize_label)
+    work.loc[~work["drop_zone_status"].isin(DROP_ZONE_STATUS_SET), "drop_zone_status"] = (
+        DROP_ZONE_STATUS_INSUFFICIENT_GAP_CONTEXT
+    )
+    work["has_drop_zone_data"] = work["drop_zone_status"].eq(
+        DROP_ZONE_STATUS_LOSS_ESTIMATED
+    )
 
     work.sort_values(by=["race", "driver", "lapNumber"], inplace=True)
 
@@ -543,6 +579,15 @@ def _prepare_drop_zones(drop_zones: pd.DataFrame) -> pd.DataFrame:
     work["gap_to_physical_car"] = pd.to_numeric(
         work["gapToPhysicalCar"], errors="coerce"
     )
+    work["emergence_position"] = pd.to_numeric(
+        work["emergencePosition"], errors="coerce"
+    )
+    work["physical_car_tyre_life"] = pd.to_numeric(
+        work["physicalCarTyreLife"], errors="coerce"
+    )
+    work["drop_zone_status"] = (
+        work["dropZoneStatus"].map(_normalize_label).astype(str)
+    )
 
     work = work[
         [
@@ -551,8 +596,15 @@ def _prepare_drop_zones(drop_zones: pd.DataFrame) -> pd.DataFrame:
             "lapNumber",
             "positions_lost",
             "gap_to_physical_car",
+            "emergence_position",
+            "physical_car_tyre_life",
+            "drop_zone_status",
         ]
     ]
+
+    work.loc[~work["drop_zone_status"].isin(DROP_ZONE_STATUS_SET), "drop_zone_status"] = (
+        DROP_ZONE_STATUS_INSUFFICIENT_GAP_CONTEXT
+    )
 
     # replay retries can duplicate keys, keep the latest row for deterministic joins.
     work.drop_duplicates(

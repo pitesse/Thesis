@@ -61,7 +61,7 @@ def _resolve_output_path(data_lake: Path, requested: str) -> Path:
     if path.is_absolute():
         return path
     if path.parts and path.parts[0] == data_lake.name:
-        return path
+        return data_lake.parent / path
     return data_lake / path
 
 

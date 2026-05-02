@@ -285,6 +285,212 @@ def _section_14(
             rel = _rel(fig, master_dir)
             lines.append(f"![{run.label} - {fig.stem}]({rel})")
         lines.append("")
+
+    # Optional deep-dive block from manually reviewed P1 taxonomy files.
+    p1_run = next((run for run in runs if run.run_id == "p1"), None)
+    if p1_run is not None:
+        random_template_path = p1_run.reports_dir / "error_taxonomy_manual_template.csv"
+        random_agg_path = p1_run.reports_dir / "error_taxonomy_manual_aggregate.csv"
+        random_fig_path = p1_run.reports_dir / "error_taxonomy_manual_composition.png"
+
+        strat_template_path = p1_run.reports_dir / "error_taxonomy_manual_template_stratified.csv"
+        strat_prefill_path = p1_run.reports_dir / "error_taxonomy_manual_template_stratified_prefill.csv"
+        strat_plausibility_path = p1_run.reports_dir / "error_taxonomy_manual_template_stratified_plausibility.csv"
+        strat_diag_path = p1_run.reports_dir / "error_taxonomy_manual_template_stratified_diagnostics.csv"
+        strat_agg_path = p1_run.reports_dir / "error_taxonomy_manual_stratified_aggregate.csv"
+        strat_fig_path = p1_run.reports_dir / "error_taxonomy_manual_stratified_composition.png"
+
+        pool_path = p1_run.reports_dir / "error_taxonomy_summary.csv"
+
+        random_template_df = _load_optional_csv(random_template_path)
+        random_agg_df = _load_optional_csv(random_agg_path)
+        strat_template_df = _load_optional_csv(strat_template_path)
+        strat_prefill_df = _load_optional_csv(strat_prefill_path)
+        strat_plausibility_df = _load_optional_csv(strat_plausibility_path)
+        strat_agg_df = _load_optional_csv(strat_agg_path)
+        pool_df = _load_optional_csv(pool_path)
+
+        if (random_template_df is not None and random_agg_df is not None) or (
+            strat_template_df is not None and strat_agg_df is not None
+        ):
+            lines.append("### 14.5 Manual Taxonomy Deep-Dive (P1, Human-in-the-Loop)")
+            lines.append("")
+            lines.append(
+                "This subsection summarizes two complementary sampling strategies on `P1 percent_conservative_v1`: "
+                "an unstratified random sample (volume realism) and a stratified sample (balanced failure-mode diagnosis)."
+            )
+            lines.append("")
+
+            if pool_df is not None and {"model", "excluded_no_match", "fp"}.issubset(pool_df.columns):
+                pool = pool_df.copy()
+                pool["pool_total"] = (
+                    pd.to_numeric(pool["excluded_no_match"], errors="coerce").fillna(0)
+                    + pd.to_numeric(pool["fp"], errors="coerce").fillna(0)
+                )
+                pmap = {
+                    str(row["model"]): int(row["pool_total"])
+                    for _, row in pool.iterrows()
+                }
+                p_total = int(sum(pmap.values()))
+                if random_template_df is not None and p_total > 0:
+                    batch_pool = int(pmap.get("Batch", 0))
+                    expected_batch = batch_pool / p_total * len(random_template_df)
+                    observed_batch = int((random_template_df["model"].astype(str) == "Batch").sum())
+                    lines.append(
+                        f"Random-sample volume note: pooled P1 errors were `SDE={pmap.get('SDE', 0)}`, "
+                        f"`Batch={pmap.get('Batch', 0)}`, `MOA={pmap.get('MOA', 0)}` (total `{p_total}`). "
+                        f"For `n={len(random_template_df)}` random rows, expected Batch rows were `{expected_batch:.2f}`, "
+                        f"observed `{observed_batch}`."
+                    )
+                    lines.append("")
+
+            if random_agg_df is not None and random_template_df is not None:
+                lines.append("Random sample taxonomy mix:")
+                lines.append("")
+                lines.append("| Model | Manual Tag | Count | Model Sample Size | Within-Model Share |")
+                lines.append("| --- | --- | ---: | ---: | ---: |")
+                random_show = random_agg_df.sort_values(
+                    by=["model", "count", "failure_type_manual"],
+                    ascending=[True, False, True],
+                )
+                for _, row in random_show.iterrows():
+                    lines.append(
+                        f"| {row['model']} | {row['failure_type_manual']} | {int(row['count'])} | "
+                        f"{int(row['model_total'])} | {_fmt(row['within_model_share'])} |"
+                    )
+                lines.append("")
+                lines.append(f"- Random template: `{_rel(random_template_path, master_dir)}`")
+                lines.append(f"- Random aggregate table: `{_rel(random_agg_path, master_dir)}`")
+                if random_fig_path.exists():
+                    rel_random_fig = _rel(random_fig_path, master_dir)
+                    lines.append(f"- Random composition figure: `{rel_random_fig}`")
+                    lines.append(f"![P1 Manual Taxonomy Composition (Random)]({rel_random_fig})")
+                lines.append("")
+
+            if strat_agg_df is not None and (strat_template_df is not None or strat_prefill_df is not None):
+                sample_n = (
+                    len(strat_template_df)
+                    if strat_template_df is not None
+                    else len(strat_prefill_df)  # type: ignore[arg-type]
+                )
+                lines.append("Stratified sample taxonomy mix (`10/10/10`):")
+                lines.append("")
+                lines.append("Note: this block is based on the stratified manual-review file (pre-annotated, then selectively corrected).")
+                lines.append(
+                    "Sample policy in current run: true-FP-only rows (`outcome_class=0`) with balanced "
+                    "`SDE/Batch/MOA = 10/10/10`. Batch FP rows are sourced from the racewise comparator pool "
+                    "to avoid undersampling from the tiny pretrain FP pool."
+                )
+                lines.append(
+                    "Interpretation note: because this is stratified, percentages below describe within-model diagnostic composition, "
+                    "not natural population frequency."
+                )
+                lines.append("")
+                lines.append("| Model | Manual Tag | Count | Model Sample Size | Within-Model Share |")
+                lines.append("| --- | --- | ---: | ---: | ---: |")
+                strat_show = strat_agg_df.sort_values(
+                    by=["model", "count", "failure_type_manual"],
+                    ascending=[True, False, True],
+                )
+                for _, row in strat_show.iterrows():
+                    lines.append(
+                        f"| {row['model']} | {row['failure_type_manual']} | {int(row['count'])} | "
+                        f"{int(row['model_total'])} | {_fmt(row['within_model_share'])} |"
+                    )
+                lines.append("")
+                lines.append(f"- Stratified template: `{_rel(strat_template_path, master_dir)}`")
+                if strat_prefill_path.exists():
+                    lines.append(f"- Stratified prefill: `{_rel(strat_prefill_path, master_dir)}`")
+                lines.append(f"- Stratified aggregate table: `{_rel(strat_agg_path, master_dir)}`")
+                if strat_diag_path.exists():
+                    lines.append(f"- Stratified diagnostics: `{_rel(strat_diag_path, master_dir)}`")
+                lines.append(f"- Stratified sample size: `{sample_n}`")
+                if strat_fig_path.exists():
+                    rel_strat_fig = _rel(strat_fig_path, master_dir)
+                    lines.append(f"- Stratified composition figure: `{rel_strat_fig}`")
+                    lines.append(f"![P1 Manual Taxonomy Composition (Stratified)]({rel_strat_fig})")
+                lines.append("")
+
+            if strat_plausibility_df is not None and "plausibility_status" in strat_plausibility_df.columns:
+                lines.append("### 14.6 Stratified Plausibility Validation (P1)")
+                lines.append("")
+                lines.append(
+                    "This block validates each stratified sampled row against official race calendar, "
+                    "driver race-entry/result presence, and pit-stop summary where available."
+                )
+                lines.append("")
+
+                total_rows = len(strat_plausibility_df)
+                lines.append(f"- Validated sample rows: `{total_rows}`")
+                lines.append(f"- Source file: `{_rel(strat_plausibility_path, master_dir)}`")
+                lines.append("")
+
+                lines.append("Plausibility status counts:")
+                lines.append("")
+                lines.append("| Status | Count | Share |")
+                lines.append("| --- | ---: | ---: |")
+                status_counts = strat_plausibility_df["plausibility_status"].astype(str).value_counts()
+                for status, count in status_counts.items():
+                    share = (float(count) / float(total_rows)) if total_rows > 0 else None
+                    lines.append(f"| {status} | {int(count)} | {_fmt(share, 4)} |")
+                lines.append("")
+
+                model_status = (
+                    strat_plausibility_df.groupby(["model", "plausibility_status"])
+                    .size()
+                    .reset_index(name="count")
+                    .sort_values(["model", "count", "plausibility_status"], ascending=[True, False, True])
+                )
+                if not model_status.empty:
+                    lines.append("Model-by-status breakdown:")
+                    lines.append("")
+                    lines.append("| Model | Status | Count |")
+                    lines.append("| --- | --- | ---: |")
+                    for _, row in model_status.iterrows():
+                        lines.append(f"| {row['model']} | {row['plausibility_status']} | {int(row['count'])} |")
+                    lines.append("")
+
+                invalid_rows = strat_plausibility_df[
+                    strat_plausibility_df["plausibility_status"].astype(str) != "VALIDATED_WITH_PIT_SUMMARY"
+                ]
+                if not invalid_rows.empty:
+                    lines.append("Flagged non-valid rows (for explicit manual discussion):")
+                    lines.append("")
+                    lines.append("| Model | Race | Driver | Suggestion Lap | Status | Official Pit Laps | Nearest Official Pit Distance |")
+                    lines.append("| --- | --- | --- | ---: | --- | --- | ---: |")
+                    show_cols = [
+                        "model",
+                        "race",
+                        "driver",
+                        "suggestion_lap",
+                        "plausibility_status",
+                        "official_pit_laps",
+                        "suggestion_to_nearest_official_pit_distance",
+                    ]
+                    invalid_show = invalid_rows[show_cols].sort_values(
+                        ["model", "race", "driver", "suggestion_lap"],
+                        ascending=[True, True, True, True],
+                    )
+                    for _, row in invalid_show.iterrows():
+                        distance = pd.to_numeric(
+                            row.get("suggestion_to_nearest_official_pit_distance"),
+                            errors="coerce",
+                        )
+                        distance_out = "N/A" if pd.isna(distance) else f"{float(distance):.1f}"
+                        pit_laps = row.get("official_pit_laps")
+                        pit_laps_out = "N/A" if pd.isna(pit_laps) else str(pit_laps)
+                        lines.append(
+                            f"| {row['model']} | {row['race']} | {row['driver']} | {int(row['suggestion_lap'])} | "
+                            f"{row['plausibility_status']} | {pit_laps_out} | {distance_out} |"
+                        )
+                    lines.append("")
+
+                if "validation_source" in strat_plausibility_df.columns:
+                    lines.append(
+                        "Validation source links are captured row-wise in the plausibility CSV (`validation_source` column) "
+                        "for reproducible audit trails."
+                    )
+                    lines.append("")
     lines.append("")
     lines.append(END_14)
     return "\n".join(lines)

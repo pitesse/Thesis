@@ -53,6 +53,11 @@ public class DropZoneEvaluator
     // minimum tire age (laps) before strategic pit stop evaluation is meaningful
     private static final int MIN_TYRE_LIFE = 8;
     private static final int RECENT_LAP_WINDOW = 3;
+    private static final String STATUS_LOSS_ESTIMATED = "LOSS_ESTIMATED";
+    private static final String STATUS_NO_LOSS_FEASIBLE = "NO_LOSS_FEASIBLE";
+    private static final String STATUS_INELIGIBLE_TYRE_AGE = "INELIGIBLE_TYRE_AGE";
+    private static final String STATUS_INELIGIBLE_TRACK_STATUS = "INELIGIBLE_TRACK_STATUS";
+    private static final String STATUS_INSUFFICIENT_GAP_CONTEXT = "INSUFFICIENT_GAP_CONTEXT";
 
     // latest event per driver, used as a compact physical-grid snapshot
     private transient MapState<String, LapEvent> latestGridState;
@@ -120,15 +125,38 @@ public class DropZoneEvaluator
 
         for (int i = 0; i < laps.size(); i++) {
             LapEvent current = laps.get(i);
+            String netRival = (i > 0) ? laps.get(i - 1).getDriver() : null;
 
             // skip fresh tires and opening laps
             if (current.getTyreLife() < MIN_TYRE_LIFE) {
+                emitStatus(
+                        out,
+                        current,
+                        netRival,
+                        null,
+                        0.0,
+                        current.getPosition(),
+                        0,
+                        STATUS_INELIGIBLE_TYRE_AGE,
+                        safePitLoss(selectPitLoss(current), current.getPitLoss())
+                );
                 continue;
             }
 
             // select pit loss based on track status at this lap
             Double pitLoss = selectPitLoss(current);
             if (pitLoss == null) {
+                emitStatus(
+                        out,
+                        current,
+                        netRival,
+                        null,
+                        0.0,
+                        current.getPosition(),
+                        0,
+                        STATUS_INELIGIBLE_TRACK_STATUS,
+                        safePitLoss(current.getPitLoss(), 0.0)
+                );
                 continue;
             }
 
@@ -138,11 +166,14 @@ public class DropZoneEvaluator
             double cumulativeGap = 0;
             LapEvent physicalCarAhead = null;
             double gapToPhysicalCar = 0;
+            boolean missingGapContext = false;
+            boolean noLossFeasible = false;
 
             for (int j = i + 1; j < laps.size(); j++) {
                 LapEvent behind = laps.get(j);
                 Double gap = behind.getGapToCarAhead();
                 if (gap == null) {
+                    missingGapContext = true;
                     break;
                 }
 
@@ -153,6 +184,7 @@ public class DropZoneEvaluator
                     // if j == i+1, the very first car behind already covers the pit loss,
                     // meaning gap behind > pitLoss -> no positions lost -> safe pit.
                     if (j == i + 1) {
+                        noLossFeasible = true;
                         break;
                     }
                     physicalCarAhead = laps.get(j - 1);
@@ -168,33 +200,103 @@ public class DropZoneEvaluator
                 gapToPhysicalCar = pitLoss - cumulativeGap;
             }
 
-            // only emit if driver would actually lose positions
-            if (physicalCarAhead != null) {
-                int emergencePosition = physicalCarAhead.getPosition() + 1;
-                int positionsLost = emergencePosition - current.getPosition();
-
-                // net rival: car immediately ahead in the classification (the undercut target)
-                String netRival = (i > 0) ? laps.get(i - 1).getDriver() : null;
-
-                String status = TrackStatusCodes.normalizeOrGreen(current.getTrackStatus());
-
-                out.collect(new DropZoneAlert(
-                        current.getRace(),
-                        current.getDriver(),
-                        current.getLapNumber(),
-                        current.getPosition(),
-                        emergencePosition,
-                        positionsLost,
+            if (missingGapContext && physicalCarAhead == null && !noLossFeasible) {
+                emitStatus(
+                        out,
+                        current,
                         netRival,
-                        physicalCarAhead.getDriver(),
-                        gapToPhysicalCar,
-                        physicalCarAhead.getCompound(),
-                        physicalCarAhead.getTyreLife(),
-                        status,
+                        null,
+                        0.0,
+                        current.getPosition(),
+                        0,
+                        STATUS_INSUFFICIENT_GAP_CONTEXT,
                         pitLoss
-                ));
+                );
+                continue;
             }
+
+            if (noLossFeasible || physicalCarAhead == null) {
+                emitStatus(
+                        out,
+                        current,
+                        netRival,
+                        null,
+                        0.0,
+                        current.getPosition(),
+                        0,
+                        STATUS_NO_LOSS_FEASIBLE,
+                        pitLoss
+                );
+                continue;
+            }
+
+            int emergencePosition = physicalCarAhead.getPosition() + 1;
+            int positionsLost = emergencePosition - current.getPosition();
+            if (positionsLost <= 0) {
+                emitStatus(
+                        out,
+                        current,
+                        netRival,
+                        physicalCarAhead,
+                        Math.max(0.0, gapToPhysicalCar),
+                        current.getPosition(),
+                        0,
+                        STATUS_NO_LOSS_FEASIBLE,
+                        pitLoss
+                );
+                continue;
+            }
+
+            emitStatus(
+                    out,
+                    current,
+                    netRival,
+                    physicalCarAhead,
+                    Math.max(0.0, gapToPhysicalCar),
+                    emergencePosition,
+                    positionsLost,
+                    STATUS_LOSS_ESTIMATED,
+                    pitLoss
+            );
         }
+    }
+
+    private static void emitStatus(
+            Collector<DropZoneAlert> out,
+            LapEvent current,
+            String netRival,
+            LapEvent physicalCarAhead,
+            double gapToPhysicalCar,
+            int emergencePosition,
+            int positionsLost,
+            String dropZoneStatus,
+            double pitLoss) {
+        out.collect(new DropZoneAlert(
+                current.getRace(),
+                current.getDriver(),
+                current.getLapNumber(),
+                current.getPosition(),
+                emergencePosition,
+                positionsLost,
+                netRival,
+                physicalCarAhead != null ? physicalCarAhead.getDriver() : null,
+                gapToPhysicalCar,
+                physicalCarAhead != null ? physicalCarAhead.getCompound() : null,
+                physicalCarAhead != null ? physicalCarAhead.getTyreLife() : -1,
+                dropZoneStatus,
+                TrackStatusCodes.normalizeOrGreen(current.getTrackStatus()),
+                pitLoss
+        ));
+    }
+
+    private static double safePitLoss(Double preferred, Double fallback) {
+        if (preferred != null) {
+            return preferred;
+        }
+        if (fallback != null) {
+            return fallback;
+        }
+        return 0.0;
     }
 
     // selects the appropriate pit loss value based on FIA track status code.

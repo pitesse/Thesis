@@ -1,5 +1,0 @@
-paradigm,comparison_mode,actionable,scored,excluded,tp,fp,precision,eval_instances,accuracy_pct,kappa_pct,source_artifact,notes
-SDE,full_h2_actionable_one_to_one,6323,1020,5303,749,271,0.734313725490196,,,,/home/pitesse/Desktop/Thesis/data_lake/reports/heuristic_comparator_2022_2025_merged.csv,direct comparator metrics under fixed H=2 contract
-ML_BATCH,full_h2_actionable_one_to_one,1016,595,421,561,34,0.9428571428571428,,,,/home/pitesse/Desktop/Thesis/data_lake/reports/ml_comparator_2022_2025_merged.csv,direct comparator metrics under fixed H=2 contract
-MOA_ARF_DECISION,full_h2_actionable_one_to_one,6453,1430,5023,1293,137,0.9041958041958041,,,,/home/pitesse/Desktop/Thesis/data_lake/reports/moa_comparator_2022_2025_merged.csv,direct comparator metrics under fixed H=2 contract from decoded MOA decisions
-MOA_ARF,prequential_stream_baseline,,,,,,,124136.0,89.44705806534769,13.69690950814679,/home/pitesse/Desktop/Thesis/data_lake/reports/moa_arf_summary_2022_2025_merged.csv,"prequential stream metrics, not yet mapped to comparator semantics; use as baseline until MOA decision mapping is added"

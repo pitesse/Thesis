@@ -26,6 +26,7 @@ WITH_ML_INFERENCE=0
 JOBMANAGER_OVERVIEW_URL="http://localhost:8081/overview"
 JOBMANAGER_READY_TIMEOUT_SECONDS=30
 KAFKA_TOPICS=(f1-telemetry f1-laps f1-track-status f1-alerts f1-ml-features f1-ml-predictions)
+SINK_DIRS=(pit_evals pit_suggestions tire_drops lift_coast drop_zones ml_features)
 
 wait_for_jobmanager() {
 	echo "       Waiting for Flink JobManager REST API..."
@@ -65,12 +66,39 @@ consolidate_sink_outputs() {
 	fi
 
 	local merged_file="$PROJECT_DIR/data_lake/${sink_dir}_${year}_${race_slug}_${session}_${timestamp}.jsonl"
-	find "$target_dir" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) -exec cat {} + >"$merged_file"
+	local files=()
+	while IFS= read -r -d '' file; do
+		files+=("$file")
+	done < <(
+		find "$target_dir" -maxdepth 1 -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) -print0 | sort -z
+	)
+
+	if [ "${#files[@]}" -eq 0 ]; then
+		echo ""
+		return
+	fi
+
+	: >"$merged_file"
+	for file in "${files[@]}"; do
+		cat "$file" >>"$merged_file"
+	done
+
 	if [ -s "$merged_file" ]; then
 		echo "       Merged: $merged_file"
+		echo "$merged_file"
 	else
 		rm -f "$merged_file"
+		echo ""
 	fi
+}
+
+clean_sink_directories() {
+	local base_dir="$PROJECT_DIR/data_lake"
+	for sink_dir in "${SINK_DIRS[@]}"; do
+		local sink_path="$base_dir/$sink_dir"
+		mkdir -p "$sink_path"
+		find "$sink_path" -mindepth 1 -delete
+	done
 }
 
 # ===========================
@@ -168,6 +196,8 @@ if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
 else
 	docker compose -f "$COMPOSE_FILE" up -d
 fi
+echo "       Resetting sink directories for strict run isolation..."
+clean_sink_directories
 
 # wait for flink jobmanager rest api to be ready
 wait_for_jobmanager
@@ -236,10 +266,29 @@ docker compose -f "$COMPOSE_FILE" run --rm producer \
 # jsonl and hidden .inprogress parts into a single race-level jsonl per sink.
 echo "[8/8] Consolidating race outputs (jsonl + inprogress)..."
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+ML_FEATURES_MERGED=""
 
 for SINK_DIR in pit_evals tire_drops lift_coast drop_zones ml_features pit_suggestions; do
-	consolidate_sink_outputs "$SINK_DIR" "$YEAR" "$SAFE_RACE" "$SESSION" "$TIMESTAMP"
+	MERGED_PATH=$(consolidate_sink_outputs "$SINK_DIR" "$YEAR" "$SAFE_RACE" "$SESSION" "$TIMESTAMP")
+	if [ "$SINK_DIR" = "ml_features" ] && [ -n "$MERGED_PATH" ]; then
+		ML_FEATURES_MERGED="$MERGED_PATH"
+	fi
 done
+
+if [ -n "$ML_FEATURES_MERGED" ] && [ -f "$ML_FEATURES_MERGED" ]; then
+	MANIFEST_DIR="$PROJECT_DIR/data_lake/replay_manifests"
+	mkdir -p "$MANIFEST_DIR"
+	RUN_ID="${YEAR}_${SAFE_RACE}_${SESSION}_${TIMESTAMP}"
+	MANIFEST_PATH="$MANIFEST_DIR/replay_manifest_${YEAR}_single_race_${TIMESTAMP}.json"
+	echo "       Building replay manifest: $MANIFEST_PATH"
+	python "$PROJECT_DIR/ml_pipeline/build_replay_manifest.py" \
+		--year "$YEAR" \
+		--season-tag single_race \
+		--run-id "$RUN_ID" \
+		--ml-features "$ML_FEATURES_MERGED" \
+		--output "$MANIFEST_PATH" \
+		--races "$RACE"
+fi
 
 echo ""
 echo "========================================"
