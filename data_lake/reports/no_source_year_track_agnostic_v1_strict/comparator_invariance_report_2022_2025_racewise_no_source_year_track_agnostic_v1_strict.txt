@@ -1,0 +1,47 @@
+=== COMPARATOR-INVARIANCE AUDIT REPORT ===
+heuristic comparator    : data_lake/reports/no_source_year_track_agnostic_v1_strict/heuristic_comparator_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.csv
+ml comparator           : data_lake/reports/no_source_year_track_agnostic_v1_strict/ml_comparator_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.csv
+expected horizon        : 2
+
+check summary
+- comparator_schema_exact_match: PASS (1.0)
+  note: heuristic and ml comparator column order must match
+- fixed_horizon_contract_constant: PASS (2.0)
+  note: comparator_heuristic.DEFAULT_HORIZON=2
+- heuristic_actionable_label_contract: PASS (1.0)
+  note: invalid_rows=0, invalid_labels=
+- heuristic_outcome_domain: PASS (1.0)
+  note: invalid_rows=0
+- heuristic_match_distance_within_horizon: PASS (1.0)
+  note: invalid_rows=0, horizon=2
+- heuristic_one_to_one_target_consumption: PASS (1.0)
+  note: duplicate_target_rows=0
+- heuristic_matched_rows_window_flag: PASS (1.0)
+  note: matched_rows_without_window_flag=0
+- heuristic_scored_rows_have_empty_exclusion_reason: PASS (1.0)
+  note: scored_rows_with_reason=0
+- heuristic_exclusion_reason_domain: PASS (1.0)
+  note: invalid_rows=0, sample_invalid=
+- ml_actionable_label_contract: PASS (1.0)
+  note: invalid_rows=0, invalid_labels=
+- ml_outcome_domain: PASS (1.0)
+  note: invalid_rows=0
+- ml_match_distance_within_horizon: PASS (1.0)
+  note: invalid_rows=0, horizon=2
+- ml_one_to_one_target_consumption: PASS (1.0)
+  note: duplicate_target_rows=0
+- ml_matched_rows_window_flag: PASS (1.0)
+  note: matched_rows_without_window_flag=0
+- ml_scored_rows_have_empty_exclusion_reason: PASS (1.0)
+  note: scored_rows_with_reason=0
+- ml_exclusion_reason_domain: PASS (1.0)
+  note: invalid_rows=0, sample_invalid=
+- comparator_invariance_overall: PASS (1.0)
+  note: all comparator-invariance checks must pass
+
+overall gate            : PASS
+
+artifacts
+summary csv             : data_lake/reports/no_source_year_track_agnostic_v1_strict/comparator_invariance_summary_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.csv
+details csv             : data_lake/reports/no_source_year_track_agnostic_v1_strict/comparator_invariance_details_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.csv
+report txt              : data_lake/reports/no_source_year_track_agnostic_v1_strict/comparator_invariance_report_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.txt

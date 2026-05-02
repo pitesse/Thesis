@@ -1,0 +1,105 @@
+{
+  "dataset_csv": "data_lake/reports/no_source_year_percent_team_v1/moa_dataset_2022_2025_no_source_year_percent_team_v1.csv",
+  "predictions_file": "data_lake/reports/no_source_year_percent_team_v1/moa_arf_predictions_2022_2025_no_source_year_percent_team_v1.pred",
+  "rows_aligned": 124136,
+  "rows_used": 123275,
+  "unknown_prediction_rows": 861,
+  "known_positive_rate": 0.06827012776313121,
+  "sample_rows": 5000,
+  "fidelity_accuracy": 0.7650375177448794,
+  "fidelity_f1": 0.2861367837338262,
+  "selected_surrogate_id": "rf_300_d12",
+  "selected_surrogate_family": "RandomForestClassifier",
+  "selected_supports_tree_shap": 1,
+  "surrogate_selection_reason": "selected top-ranked candidate by F1 (gain=0.024031 >= min_f1_gain=0.010000)",
+  "surrogate_min_f1_gain": 0.01,
+  "notes": "SHAP is computed on a selected surrogate fitted to MOA predictions, not on MOA internals",
+  "decode_diagnostics": {
+    "rows_aligned": 124136,
+    "code_map": {
+      "2.0": 0,
+      "3.0": 1
+    },
+    "code_map_purity": {
+      "2.0": 1.0,
+      "3.0": 1.0
+    },
+    "unknown_prediction_rows": 861,
+    "known_prediction_rows": 123275,
+    "known_positive_rate": 0.06827012776313121,
+    "known_negative_rate": 0.9317298722368688
+  },
+  "surrogate_sweep_csv": "data_lake/reports/no_source_year_percent_team_v1/moa_surrogate_model_sweep.csv",
+  "surrogate_sweep": [
+    {
+      "rank": 1,
+      "model_id": "rf_300_d12",
+      "family": "RandomForestClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.7650375177448794,
+      "fidelity_f1": 0.2861367837338262,
+      "fidelity_precision": 0.18050373134328357,
+      "fidelity_recall": 0.6898395721925134,
+      "fidelity_balanced_accuracy": 0.7301931623804288,
+      "selected": 1
+    },
+    {
+      "rank": 2,
+      "model_id": "rf_100_d10",
+      "family": "RandomForestClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.7200162238896776,
+      "fidelity_f1": 0.2621058257616248,
+      "fidelity_precision": 0.15980187695516163,
+      "fidelity_recall": 0.7284610814022578,
+      "fidelity_balanced_accuracy": 0.7239293044134744,
+      "selected": 0
+    },
+    {
+      "rank": 3,
+      "model_id": "extra_300_d12",
+      "family": "ExtraTreesClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.6832285540458325,
+      "fidelity_f1": 0.24846035411855275,
+      "fidelity_precision": 0.1482374555057986,
+      "fidelity_recall": 0.7670825906120023,
+      "fidelity_balanced_accuracy": 0.7220838688738229,
+      "selected": 0
+    },
+    {
+      "rank": 4,
+      "model_id": "logreg_balanced",
+      "family": "LogisticRegression+Imputer+Scaler",
+      "supports_tree_shap": 0,
+      "fidelity_accuracy": 0.6068140336645711,
+      "fidelity_f1": 0.1900066844919786,
+      "fidelity_precision": 0.11054934370442392,
+      "fidelity_recall": 0.6755793226381461,
+      "fidelity_balanced_accuracy": 0.6386776989300778,
+      "selected": 0
+    },
+    {
+      "rank": 5,
+      "model_id": "hgb_400_d8",
+      "family": "HistGradientBoostingClassifier",
+      "supports_tree_shap": 0,
+      "fidelity_accuracy": 0.9325086189413911,
+      "fidelity_f1": 0.0867178924259056,
+      "fidelity_precision": 0.5683453237410072,
+      "fidelity_recall": 0.046939988116458706,
+      "fidelity_balanced_accuracy": 0.5221640563949871,
+      "selected": 0
+    }
+  ],
+  "feature_importance_csv": "data_lake/reports/no_source_year_percent_team_v1/moa_shap_proxy_feature_importance.csv",
+  "artifacts": [
+    "data_lake/reports/no_source_year_percent_team_v1/moa_shap_proxy_feature_importance.csv",
+    "data_lake/reports/no_source_year_percent_team_v1/moa_surrogate_model_sweep.csv",
+    "data_lake/reports/no_source_year_percent_team_v1/moa_shap_proxy_global_bar.png",
+    "data_lake/reports/no_source_year_percent_team_v1/moa_shap_proxy_beeswarm.png",
+    "data_lake/reports/no_source_year_percent_team_v1/moa_shap_proxy_dependence_race_progress_pct.png",
+    "data_lake/reports/no_source_year_percent_team_v1/moa_shap_proxy_dependence_gapAhead.png",
+    "data_lake/reports/no_source_year_percent_team_v1/moa_shap_proxy_dependence_tire_life_ratio.png"
+  ]
+}

@@ -1,0 +1,6 @@
+metric,value,threshold,status,note
+total_events,3000.0,,INFO,sampled replay events
+successful_events,3000.0,,INFO,events with full inference output
+failed_events,0.0,,INFO,
+availability_pct,100.0,99.0,PASS,availability gate metric
+fallback_to_heuristic_events,0.0,,INFO,proxy fallback count if failed ml predictions route to heuristic path

@@ -1,0 +1,17 @@
+protocol,year,score_type,point_label,requested_threshold,effective_threshold,precision,recall
+ml_pretrain,overall,raw_proba,threshold_0.50,0.5,0.4999880194664001,0.2109469807925681,0.6525566343042071
+ml_pretrain,overall,raw_proba,threshold_0.10,0.1,0.0999969989061355,0.0973553952764814,0.8911326860841424
+ml_pretrain,overall,raw_proba,threshold_0.05,0.05,0.0499999672174453,0.08869977404460164,0.9350161812297735
+ml_pretrain,overall,raw_proba,constrained_median,0.78,0.7800076007843018,0.5066454013822435,0.3700970873786408
+ml_pretrain,overall,calibrated_proba,threshold_0.50,0.5,0.5,0.746268656716418,0.1423948220064725
+ml_pretrain,overall,calibrated_proba,threshold_0.10,0.1,0.1,0.3646462677840577,0.4844012944983819
+ml_pretrain,overall,calibrated_proba,threshold_0.05,0.05,0.05,0.2169811320754717,0.6490614886731392
+ml_pretrain,overall,calibrated_proba,constrained_median,0.78,0.7777777777777778,0.8532934131736527,0.036893203883495145
+ml_racewise,overall,raw_proba,threshold_0.50,0.5,0.4999880194664001,0.20975952982078555,0.6142285783541389
+ml_racewise,overall,raw_proba,threshold_0.10,0.1,0.0999969989061355,0.09626989978427677,0.8545630832626349
+ml_racewise,overall,raw_proba,threshold_0.05,0.05,0.0499999672174453,0.08747811578366056,0.9023148709247364
+ml_racewise,overall,raw_proba,constrained_median,0.77,0.76999831199646,0.4863013698630137,0.36141073809235247
+ml_racewise,overall,calibrated_proba,threshold_0.50,0.5,0.5,0.7410894418291862,0.133559568537147
+ml_racewise,overall,calibrated_proba,threshold_0.10,0.1,0.1,0.3439524838012959,0.46321657980850806
+ml_racewise,overall,calibrated_proba,threshold_0.05,0.05,0.05,0.19440507273405447,0.6316810083626228
+ml_racewise,overall,calibrated_proba,constrained_median,0.77,0.7692307692307693,0.8328690807799443,0.03623803175372682

@@ -1,0 +1,16 @@
+=== SIGNIFICANCE REPORT ===
+SDE comparator: data_lake/reports/no_source_year_drop_aggressive_v1_candidate/heuristic_comparator_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv
+ML comparator : data_lake/reports/no_source_year_drop_aggressive_v1_candidate/ml_comparator_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv
+
+precision summaries
+SDE: scored=1020, tp=749, fp=271, precision=0.734314, wilson95=[0.706365, 0.760504]
+ML : scored=315, tp=302, fp=13, precision=0.958730, wilson95=[0.930681, 0.975726]
+precision delta (ML minus SDE): +0.224416
+
+hypothesis tests
+two proportion z: z=8.507268, p=0
+mcnemar overlap: overlap_n=33, discordant=0, chi2_cc=0.000000, p_asymptotic=1, p_exact=1
+
+interpretation note
+- two proportion z uses independent scored rows and is the primary precision-gap test here.
+- mcnemar is reported on overlap keys only and should be interpreted as a paired sensitivity check.

@@ -1,0 +1,24 @@
+{
+  "dataset": "data_lake/ml_training_dataset_2022_2025_no_source_year_drop_medium_track_agnostic_v1.parquet",
+  "moa_predictions": "data_lake/reports/no_source_year_drop_medium_track_agnostic_v1/moa_arf_predictions_2022_2025_no_source_year_drop_medium_track_agnostic_v1.pred",
+  "pit_evals": "data_lake/pit_evals_9999_merged_20260416_082923.jsonl",
+  "horizon": 2,
+  "diagnostics": {
+    "rows_aligned": 124136,
+    "code_map": {
+      "2.0": 0,
+      "3.0": 1
+    },
+    "code_map_purity": {
+      "2.0": 1.0,
+      "3.0": 1.0
+    },
+    "unknown_prediction_rows": 1302,
+    "known_prediction_rows": 122834,
+    "known_positive_rate": 0.059014605076770275,
+    "known_negative_rate": 0.9409853949232297,
+    "actionable_rows": 7249,
+    "dataset_rows": 124136,
+    "aligned_rows": 124136
+  }
+}

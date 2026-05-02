@@ -1,0 +1,36 @@
+=== THRESHOLD FRONTIER REPORT ===
+decisions input    : data_lake/reports/no_source_year/ml_oof_winner_2022_2025_racewise_no_source_year.csv
+pit evals input    : data_lake/pit_evals_9999_merged_20260416_082923.jsonl
+horizon            : 2
+precision floor    : 0.714919
+threshold points   : 37
+
+selected threshold
+best_threshold     : 0.050000
+best_actionable    : 26693
+best_scored        : 3589
+best_tp            : 3030
+best_fp            : 559
+best_precision     : 0.844246
+best_scored_rate   : 0.134455
+meets_floor        : 1
+
+delta vs reference threshold
+reference_threshold: 0.500000
+reference_scored   : 865
+reference_precision: 0.951445
+delta_scored       : +2724
+delta_actionable   : +25075
+
+lookahead diagnostics at selected threshold
+no_match_count     : 22497
+no_match_rate      : 0.973727
+one_lap_beyond     : 2133
+two_to_three_beyond: 3140
+four_plus_beyond   : 6526
+in_window_consumed : 4132
+
+artifacts
+summary csv        : data_lake/reports/no_source_year/threshold_frontier_2022_2025_racewise_no_source_year.csv
+by year csv        : data_lake/reports/no_source_year/threshold_frontier_by_year_2022_2025_racewise_no_source_year.csv
+best comparator    : data_lake/reports/no_source_year/ml_comparator_best_threshold_2022_2025_racewise_no_source_year.csv

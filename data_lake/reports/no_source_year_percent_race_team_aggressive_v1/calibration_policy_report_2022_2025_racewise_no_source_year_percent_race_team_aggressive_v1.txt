@@ -1,0 +1,34 @@
+=== CALIBRATION AND DECISION-POLICY REPORT ===
+OOF input           : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/ml_oof_winner_2022_2025_racewise_no_source_year_percent_race_team_aggressive_v1.csv
+ablation input      : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/ml_ablation_phase31c_2022_2025_racewise_no_source_year_percent_race_team_aggressive_v1.csv
+rows                : 123129
+prevalence          : 0.067011
+
+reliability summary
+raw brier           : 0.114081
+calibrated brier    : 0.052126
+raw ece             : 0.163756
+calibrated ece      : 0.014789
+raw mce             : 0.518119
+calibrated mce      : 0.220166
+
+constrained policy
+positive rate       : 0.014862
+precision           : 0.176503
+recall              : 0.039147
+f1                  : 0.064081
+threshold mean/min/max: 0.691568/0.020000/0.990000
+
+winner diagnostics from ablation
+reachability ratio  : 0.732908
+fallback folds      : 1/95
+fallback rate       : 0.010526
+margin to floor     : 0.244421
+calibration mix     : isotonic:93,sigmoid:2
+
+artifacts
+summary csv         : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/calibration_policy_summary_2022_2025_racewise_no_source_year_percent_race_team_aggressive_v1.csv
+reliability bins csv: data_lake/reports/no_source_year_percent_race_team_aggressive_v1/calibration_reliability_bins_2022_2025_racewise_no_source_year_percent_race_team_aggressive_v1.csv
+by-year csv         : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/calibration_policy_by_year_2022_2025_racewise_no_source_year_percent_race_team_aggressive_v1.csv
+by-fold csv         : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/calibration_policy_by_fold_2022_2025_racewise_no_source_year_percent_race_team_aggressive_v1.csv
+reference csv       : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/calibration_policy_reference_thresholds_2022_2025_racewise_no_source_year_percent_race_team_aggressive_v1.csv

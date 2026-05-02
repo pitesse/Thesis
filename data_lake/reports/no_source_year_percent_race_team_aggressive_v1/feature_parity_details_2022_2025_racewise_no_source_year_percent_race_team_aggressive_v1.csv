@@ -1,0 +1,33 @@
+section,name,value,note
+schema,training_only_columns_count,0,
+schema,bundle_only_columns_count,0,
+schema,feature_profile,percent_race_team_aggressive_v1,"excluded=team,rainfall,hasGapAhead,hasGapBehind,lapTime,pitLoss,pace_trend,has_drop_zone_data"
+schema,track_agnostic_mode,track_percentage_race_team_v1,resolved track-agnostic mode used for parity replay
+schema,drop_source_year_feature,1,1 means `_source_year` excluded from offline training matrix rebuild
+schema,missing_raw_training_features_in_serving_transform,0,
+parity,feature_match_rate::position,1.0,matches=3000/3000
+parity,feature_match_rate::tyreLife,1.0,matches=3000/3000
+parity,feature_match_rate::trackTemp,1.0,matches=3000/3000
+parity,feature_match_rate::airTemp,1.0,matches=3000/3000
+parity,feature_match_rate::humidity,1.0,matches=3000/3000
+parity,feature_match_rate::rainfall,1.0,matches=3000/3000
+parity,feature_match_rate::speedTrap,1.0,matches=3000/3000
+parity,feature_match_rate::team,1.0,matches=3000/3000
+parity,feature_match_rate::gapAhead,1.0,matches=3000/3000
+parity,feature_match_rate::gapBehind,1.0,matches=3000/3000
+parity,feature_match_rate::lapTime,1.0,matches=3000/3000
+parity,feature_match_rate::pitLoss,1.0,matches=3000/3000
+parity,feature_match_rate::hasGapAhead,1.0,matches=3000/3000
+parity,feature_match_rate::hasGapBehind,1.0,matches=3000/3000
+parity,feature_match_rate::pace_drop_ratio,1.0,matches=3000/3000
+parity,feature_match_rate::tire_life_ratio,1.0,matches=3000/3000
+parity,feature_match_rate::pace_trend,1.0,matches=3000/3000
+parity,feature_match_rate::gapAhead_trend,1.0,matches=3000/3000
+parity,feature_match_rate::positions_lost,1.0,matches=3000/3000
+parity,feature_match_rate::gap_to_physical_car,1.0,matches=3000/3000
+parity,feature_match_rate::has_drop_zone_data,1.0,matches=3000/3000
+parity,feature_match_rate::_source_year,1.0,matches=3000/3000
+parity,feature_match_rate::race_progress_pct,1.0,matches=3000/3000
+parity,feature_match_rate::lapTime_vs_driver_prev_mean_pct,1.0,matches=3000/3000
+parity,feature_match_rate::lapTime_vs_team_prev_lapbucket_mean_pct,1.0,matches=3000/3000
+parity,feature_match_rate::lapTime_vs_race_prev_lapbucket_mean_pct,1.0,matches=3000/3000

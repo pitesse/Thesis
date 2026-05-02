@@ -24,7 +24,16 @@ try:
     from .model_training_cv import _load_dataset, _prepare_matrix
     from ..pipeline_config import default_dataset_path, normalize_years
 except ImportError:
-    from comparator_heuristic import (  # type: ignore
+    import sys
+
+    _LIB_DIR = Path(__file__).resolve().parent
+    _PIPELINE_DIR = _LIB_DIR.parent
+    for _path in (_PIPELINE_DIR, _LIB_DIR):
+        _path_text = str(_path)
+        if _path_text not in sys.path:
+            sys.path.insert(0, _path_text)
+
+    from lib.comparator_heuristic import (  # type: ignore
         DEFAULT_DATA_LAKE,
         DEFAULT_HORIZON,
         DEFAULT_SEASON_TAG,
@@ -35,8 +44,8 @@ except ImportError:
         _prepare_pit_evals,
         _print_summary,
     )
-    from moa_predictions import decode_moa_predictions  # type: ignore
-    from model_training_cv import _load_dataset, _prepare_matrix  # type: ignore
+    from lib.moa_predictions import decode_moa_predictions  # type: ignore
+    from lib.model_training_cv import _load_dataset, _prepare_matrix  # type: ignore
     from pipeline_config import default_dataset_path, normalize_years  # type: ignore
 
 
@@ -45,6 +54,15 @@ DEFAULT_MOA_PREDICTIONS = "data_lake/reports/moa_arf_predictions_2022_2025_merge
 DEFAULT_OUTPUT = "data_lake/reports/moa_comparator_2022_2025_merged.csv"
 DEFAULT_OUTPUT_DIAGNOSTICS = "data_lake/reports/moa_comparator_diagnostics_2022_2025_merged.json"
 DEFAULT_ACTIONABLE_LABEL = "PIT_NOW"
+
+
+def _resolve_output_path(data_lake: Path, requested: str) -> Path:
+    path = Path(requested)
+    if path.is_absolute():
+        return path
+    if path.parts and path.parts[0] == data_lake.name:
+        return path
+    return data_lake / path
 
 
 def _prepare_moa_suggestions(
@@ -126,15 +144,11 @@ def main() -> None:
     pit_evals = _prepare_pit_evals(_load_jsonl(pit_evals_path))
     comparator = _build_comparator_dataset(suggestions, pit_evals, args.horizon)
 
-    output_path = Path(args.output)
-    if not output_path.is_absolute():
-        output_path = data_lake / output_path
+    output_path = _resolve_output_path(data_lake, args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     comparator.to_csv(output_path, index=False)
 
-    diagnostics_path = Path(args.diagnostics_output)
-    if not diagnostics_path.is_absolute():
-        diagnostics_path = data_lake / diagnostics_path
+    diagnostics_path = _resolve_output_path(data_lake, args.diagnostics_output)
     diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
     diagnostics_payload = {
         "dataset": str(dataset_path),

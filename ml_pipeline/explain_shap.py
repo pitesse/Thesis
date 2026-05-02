@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
 def _extract_model_and_features(bundle: object) -> tuple[object, list[str] | None]:
     if isinstance(bundle, dict):
         model = bundle.get("model", bundle)
-        feature_names = bundle.get("features", None)
+        feature_names = bundle.get("feature_columns", bundle.get("features", None))
     else:
         model = bundle
         feature_names = None

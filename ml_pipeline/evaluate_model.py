@@ -29,6 +29,13 @@ from pipeline_config import (
     run_suffix,
 )
 from lib.data_preparation import _latest_jsonl
+from lib.feature_profiles import (
+    DEFAULT_FEATURE_PROFILE,
+    DEFAULT_TRACK_AGNOSTIC_MODE,
+    available_track_agnostic_modes,
+    build_feature_plan,
+    parse_exclude_features,
+)
 
 
 @contextmanager
@@ -271,6 +278,16 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument("--data-lake", default=DEFAULT_DATA_LAKE)
+    parser.add_argument(
+        "--reports-dir",
+        default="",
+        help="optional output reports directory override",
+    )
+    parser.add_argument(
+        "--artifact-suffix",
+        default="",
+        help="optional explicit suffix for generated artifacts (defaults to protocol-derived suffix)",
+    )
     parser.add_argument("--years", type=int, nargs="+", default=list(DEFAULT_YEARS))
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG)
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON)
@@ -286,6 +303,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--precision-floor", type=float, default=0.7149187592319055)
     parser.add_argument("--latency-budget-ms", type=float, default=500.0)
     parser.add_argument("--availability-floor", type=float, default=99.0)
+    parser.add_argument(
+        "--drop-source-year-feature",
+        action="store_true",
+        help="exclude `_source_year` from offline matrix rebuild in feature-parity checks",
+    )
+    parser.add_argument(
+        "--feature-profile",
+        default=DEFAULT_FEATURE_PROFILE,
+        help=(
+            "shared feature-profile token for reproducible ablations "
+            "(e.g. baseline, drop_medium_v1, drop_aggressive_v1_candidate, "
+            "track_agnostic_v1, percent_conservative_v1, percent_team_v1, percent_race_team_v1)"
+        ),
+    )
+    parser.add_argument(
+        "--exclude-features",
+        nargs="*",
+        default=[],
+        help=(
+            "optional additional raw feature names to exclude; accepts whitespace and/or comma-separated tokens"
+        ),
+    )
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=available_track_agnostic_modes(),
+        default=DEFAULT_TRACK_AGNOSTIC_MODE,
+        help=(
+            "controls causal race-relative transforms in parity/latency audits "
+            "(z-scores or percentage/ratio modes); "
+            "'auto' follows feature-profile defaults"
+        ),
+    )
 
     parser.add_argument("--evaluation-summary-output", default="", help="unified evaluation summary csv")
     parser.add_argument("--evaluation-markdown-output", default="", help="unified narrative markdown report")
@@ -297,9 +346,15 @@ def main() -> None:
     args = parse_args()
     years = normalize_years(args.years)
     data_lake = Path(args.data_lake)
-    reports = reports_dir(data_lake)
+    reports = Path(args.reports_dir) if args.reports_dir else reports_dir(data_lake)
+    parsed_exclude_features = parse_exclude_features(args.exclude_features)
+    feature_plan = build_feature_plan(
+        feature_profile=args.feature_profile,
+        exclude_features=parsed_exclude_features,
+        track_agnostic_mode=args.track_agnostic_mode,
+    )
 
-    suffix = run_suffix(years, args.season_tag)
+    suffix = args.artifact_suffix.strip() if args.artifact_suffix.strip() else run_suffix(years, args.season_tag)
 
     dataset_path = Path(args.dataset) if args.dataset else default_dataset_path(data_lake, years, args.season_tag)
     oof_input = Path(args.oof_input) if args.oof_input else default_report_csv(data_lake, "ml_oof_winner", years, args.season_tag)
@@ -396,12 +451,12 @@ def main() -> None:
     evaluation_summary_output = (
         Path(args.evaluation_summary_output)
         if args.evaluation_summary_output
-        else default_report_csv(data_lake, "model_evaluation", years, args.season_tag)
+        else reports / f"model_evaluation_{suffix}.csv"
     )
     evaluation_markdown_output = (
         Path(args.evaluation_markdown_output)
         if args.evaluation_markdown_output
-        else default_report_md(data_lake, "model_evaluation", years, args.season_tag)
+        else reports / f"model_evaluation_{suffix}.md"
     )
 
     script_dir = Path(__file__).resolve().parent / "lib"
@@ -541,27 +596,33 @@ def main() -> None:
         ],
     )
 
-    _run_step(
-        "Feature parity audit",
-        [
-            sys.executable,
-            pipeline_script("evaluate_feature_parity.py"),
-            "--dataset",
-            str(dataset_path),
-            "--bundle",
-            str(bundle_path),
-            "--ml-features",
-            str(ml_features_path),
-            "--drop-zones",
-            str(drop_zones_path),
-            "--summary-output",
-            str(phase_f_summary),
-            "--details-output",
-            str(phase_f_details),
-            "--report-output",
-            str(phase_f_report),
-        ],
-    )
+    feature_parity_cmd = [
+        sys.executable,
+        pipeline_script("evaluate_feature_parity.py"),
+        "--dataset",
+        str(dataset_path),
+        "--bundle",
+        str(bundle_path),
+        "--ml-features",
+        str(ml_features_path),
+        "--drop-zones",
+        str(drop_zones_path),
+        "--summary-output",
+        str(phase_f_summary),
+        "--details-output",
+        str(phase_f_details),
+        "--report-output",
+        str(phase_f_report),
+        "--feature-profile",
+        feature_plan.feature_profile,
+        "--exclude-features",
+        *list(feature_plan.excluded_features),
+        "--track-agnostic-mode",
+        feature_plan.track_agnostic_mode,
+    ]
+    if args.drop_source_year_feature:
+        feature_parity_cmd.append("--drop-source-year-feature")
+    _run_step("Feature parity audit", feature_parity_cmd)
 
     _run_step(
         "Latency and availability audit",
@@ -590,6 +651,8 @@ def main() -> None:
             str(phase_g_overhead),
             "--report-output",
             str(phase_g_report),
+            "--track-agnostic-mode",
+            feature_plan.track_agnostic_mode,
         ],
     )
 
@@ -829,6 +892,10 @@ def main() -> None:
     ]
 
     summary_df = pd.DataFrame(summary_rows)
+    summary_df["feature_profile"] = feature_plan.feature_profile
+    summary_df["excluded_features"] = feature_plan.excluded_features_csv()
+    summary_df["track_agnostic_mode"] = feature_plan.track_agnostic_mode
+    summary_df["drop_source_year_feature"] = int(bool(args.drop_source_year_feature))
     evaluation_summary_output.parent.mkdir(parents=True, exist_ok=True)
     summary_df.to_csv(evaluation_summary_output, index=False)
 
@@ -842,6 +909,9 @@ def main() -> None:
         f"- Years: {years}",
         f"- Horizon: H={args.horizon}",
         f"- Comparator source token: year={comparator_year}, season_tag={comparator_tag}",
+        f"- Feature profile: {feature_plan.feature_profile}",
+        f"- Excluded features: {feature_plan.excluded_features_csv() or 'none'}",
+        f"- Track-agnostic mode: {feature_plan.track_agnostic_mode}",
         "",
         "## Why These Tests",
         "- Leakage-safe grouped validation by race (Roberts et al., 2017).",

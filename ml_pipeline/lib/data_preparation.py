@@ -18,6 +18,11 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+try:
+    from .race_metadata import get_scheduled_laps, race_name_without_year_prefix
+except ImportError:
+    from race_metadata import get_scheduled_laps, race_name_without_year_prefix
+
 
 DEFAULT_DATA_LAKE = "data_lake"
 DEFAULT_YEAR = 2023
@@ -69,6 +74,215 @@ REQUIRED_DROP_ZONE_COLUMNS = [
     "gapToPhysicalCar",
 ]
 
+TRACK_AGNOSTIC_OFF = "off"
+TRACK_AGNOSTIC_V1 = "track_agnostic_v1"
+TRACK_PERCENTAGE_V1 = "track_percentage_v1"
+TRACK_PERCENTAGE_TEAM_V1 = "track_percentage_team_v1"
+TRACK_PERCENTAGE_RACE_TEAM_V1 = "track_percentage_race_team_v1"
+TRACK_AGNOSTIC_MODES = {
+    TRACK_AGNOSTIC_OFF,
+    TRACK_AGNOSTIC_V1,
+    TRACK_PERCENTAGE_V1,
+    TRACK_PERCENTAGE_TEAM_V1,
+    TRACK_PERCENTAGE_RACE_TEAM_V1,
+}
+
+
+def _causal_expanding_z_by_race(
+    frame: pd.DataFrame,
+    *,
+    source_column: str,
+    output_column: str,
+) -> None:
+    timeline = frame[["race", "driver", "lapNumber"]].copy()
+    timeline["_value"] = pd.to_numeric(frame[source_column], errors="coerce")
+    timeline["_row_id"] = np.arange(len(frame), dtype=int)
+
+    # Use race timeline order (lap, driver) for race-relative context features.
+    timeline.sort_values(
+        by=["race", "lapNumber", "driver"],
+        kind="mergesort",
+        inplace=True,
+    )
+
+    past_values = timeline.groupby("race", sort=False)["_value"].shift(1)
+    count = (
+        past_values.notna()
+        .groupby(timeline["race"], sort=False)
+        .cumsum()
+        .astype(float)
+    )
+    csum = past_values.groupby(timeline["race"], sort=False).cumsum()
+    csum_sq = (past_values**2).groupby(timeline["race"], sort=False).cumsum()
+
+    mean = csum / count
+    var = (csum_sq / count) - (mean**2)
+    var = var.clip(lower=0.0)
+    std = np.sqrt(var)
+    std = std.where(std > 1e-9, np.nan)
+
+    z = (timeline["_value"] - mean) / std
+    z = z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    restore = timeline[["_row_id"]].copy()
+    restore[output_column] = z.values
+    restore.sort_values("_row_id", kind="mergesort", inplace=True)
+    frame[output_column] = restore[output_column].to_numpy(dtype=float)
+
+
+def _clip_pct_feature(
+    values: pd.Series,
+    *,
+    default_value: float = 1.0,
+    lower: float = 0.5,
+    upper: float = 2.0,
+) -> pd.Series:
+    return (
+        pd.to_numeric(values, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(default_value)
+        .clip(lower=lower, upper=upper)
+    )
+
+
+def _scheduled_laps_series(frame: pd.DataFrame) -> pd.Series:
+    years = pd.to_numeric(frame["_source_year"], errors="coerce")
+    if years.isna().any():
+        raise ValueError("missing `_source_year` values required for scheduled-laps lookup")
+
+    race_names = frame["race"].astype(str).map(race_name_without_year_prefix)
+    laps: list[float] = []
+    missing: list[tuple[int, str]] = []
+
+    for year, race_name in zip(years.astype(int).tolist(), race_names.tolist(), strict=False):
+        try:
+            laps.append(float(get_scheduled_laps(year, race_name)))
+        except ValueError:
+            missing.append((year, race_name))
+            laps.append(np.nan)
+
+    if missing:
+        uniq = sorted(set(missing))
+        preview = ", ".join([f"{year}:{race}" for year, race in uniq[:10]])
+        raise ValueError(
+            "scheduled laps metadata missing for race/year pairs: "
+            f"{preview}"
+        )
+
+    result = pd.Series(laps, index=frame.index, dtype=float)
+    if (result <= 0).any():
+        raise ValueError("scheduled laps metadata contains non-positive values")
+    return result
+
+
+def _apply_track_percentage_features(
+    frame: pd.DataFrame,
+    *,
+    track_agnostic_mode: str,
+) -> None:
+    lap_time_clean = pd.to_numeric(frame["lap_time_clean"], errors="coerce")
+    lap_number = pd.to_numeric(frame["lapNumber"], errors="coerce")
+
+    scheduled_laps = _scheduled_laps_series(frame)
+    race_progress = lap_number / scheduled_laps
+    frame["race_progress_pct"] = (
+        pd.to_numeric(race_progress, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+        .clip(lower=0.0, upper=1.5)
+    )
+
+    driver_prev_mean = frame.groupby(["race", "driver"], sort=False)[
+        "lap_time_clean"
+    ].transform(lambda s: s.shift(1).expanding(min_periods=1).mean())
+    driver_ratio = lap_time_clean / pd.to_numeric(driver_prev_mean, errors="coerce")
+    frame["lapTime_vs_driver_prev_mean_pct"] = _clip_pct_feature(driver_ratio)
+
+    if track_agnostic_mode in {
+        TRACK_PERCENTAGE_TEAM_V1,
+        TRACK_PERCENTAGE_RACE_TEAM_V1,
+    }:
+        team_lap = (
+            frame.groupby(["race", "team", "lapNumber"], sort=False, dropna=False)[
+                "lap_time_clean"
+            ]
+            .mean()
+            .reset_index(name="_team_lap_mean")
+        )
+        team_lap.sort_values(
+            by=["race", "team", "lapNumber"],
+            kind="mergesort",
+            inplace=True,
+        )
+        team_lap["_team_prev_lapbucket_mean"] = team_lap.groupby(
+            ["race", "team"], sort=False
+        )["_team_lap_mean"].transform(lambda s: s.shift(1).expanding(min_periods=1).mean())
+
+        team_map = team_lap.set_index(["race", "team", "lapNumber"])[
+            "_team_prev_lapbucket_mean"
+        ]
+        team_index = pd.MultiIndex.from_frame(frame[["race", "team", "lapNumber"]])
+        team_prev_mean = pd.Series(team_index.map(team_map), index=frame.index, dtype=float)
+        team_ratio = lap_time_clean / pd.to_numeric(team_prev_mean, errors="coerce")
+        frame["lapTime_vs_team_prev_lapbucket_mean_pct"] = _clip_pct_feature(team_ratio)
+
+    if track_agnostic_mode == TRACK_PERCENTAGE_RACE_TEAM_V1:
+        race_lap = (
+            frame.groupby(["race", "lapNumber"], sort=False)["lap_time_clean"]
+            .mean()
+            .reset_index(name="_race_lap_mean")
+        )
+        race_lap.sort_values(
+            by=["race", "lapNumber"],
+            kind="mergesort",
+            inplace=True,
+        )
+        race_lap["_race_prev_lapbucket_mean"] = race_lap.groupby(
+            ["race"], sort=False
+        )["_race_lap_mean"].transform(lambda s: s.shift(1).expanding(min_periods=1).mean())
+
+        race_map = race_lap.set_index(["race", "lapNumber"])["_race_prev_lapbucket_mean"]
+        race_index = pd.MultiIndex.from_frame(frame[["race", "lapNumber"]])
+        race_prev_mean = pd.Series(race_index.map(race_map), index=frame.index, dtype=float)
+        race_ratio = lap_time_clean / pd.to_numeric(race_prev_mean, errors="coerce")
+        frame["lapTime_vs_race_prev_lapbucket_mean_pct"] = _clip_pct_feature(race_ratio)
+
+
+def _apply_track_agnostic_features(
+    frame: pd.DataFrame,
+    *,
+    track_agnostic_mode: str,
+) -> None:
+    if track_agnostic_mode == TRACK_AGNOSTIC_OFF:
+        return
+    if track_agnostic_mode not in TRACK_AGNOSTIC_MODES:
+        raise ValueError(
+            f"unsupported track_agnostic_mode={track_agnostic_mode!r}; "
+            f"expected one of {sorted(TRACK_AGNOSTIC_MODES)}"
+        )
+
+    if track_agnostic_mode == TRACK_AGNOSTIC_V1:
+        transforms = [
+            ("trackTemp", "trackTemp_expanding_z"),
+            ("airTemp", "airTemp_expanding_z"),
+            ("humidity", "humidity_expanding_z"),
+            ("speedTrap", "speedTrap_expanding_z"),
+            ("lapTime", "lapTime_expanding_z"),
+        ]
+        for source_column, output_column in transforms:
+            if source_column in frame.columns:
+                _causal_expanding_z_by_race(
+                    frame,
+                    source_column=source_column,
+                    output_column=output_column,
+                )
+        return
+
+    _apply_track_percentage_features(
+        frame,
+        track_agnostic_mode=track_agnostic_mode,
+    )
+
 def _duplicate_key_stats(df: pd.DataFrame, key_columns: list[str]) -> tuple[int, int]:
     counts = df.groupby(key_columns, dropna=False).size()
     duplicate_keys = int((counts > 1).sum())
@@ -111,6 +325,7 @@ def _prepare_features(
     features: pd.DataFrame,
     drop_zones: pd.DataFrame | None = None,
     source_year_fallback: int = DEFAULT_YEAR,
+    track_agnostic_mode: str = TRACK_AGNOSTIC_OFF,
 ) -> pd.DataFrame:
     _require_columns(features, REQUIRED_FEATURE_COLUMNS, "ml_features")
 
@@ -244,6 +459,12 @@ def _prepare_features(
         work["gapAhead_trend"].replace([np.inf, -np.inf], np.nan).fillna(0.0)
     )
 
+    # Optional race-relative normalization for track-agnostic experiments.
+    _apply_track_agnostic_features(
+        work,
+        track_agnostic_mode=track_agnostic_mode,
+    )
+
     work.drop(
         columns=[
             "compound_norm",
@@ -266,6 +487,7 @@ def _prepare_features(
         "dedup_excess_rows_before": dedup_excess_before,
         "dedup_keys_after": dedup_keys_after,
         "dedup_excess_rows_after": dedup_excess_after,
+        "track_agnostic_mode": track_agnostic_mode,
     }
     return work
 
@@ -447,6 +669,7 @@ def _print_summary(
     pit_evals_path: Path,
     output_path: Path,
     output_format: str,
+    track_agnostic_mode: str = TRACK_AGNOSTIC_OFF,
     feature_dedup_stats: dict[str, int | str] | None = None,
     pit_eval_dedup_stats: dict[str, int | str] | None = None,
 ) -> None:
@@ -466,6 +689,7 @@ def _print_summary(
     print(f"pit_evals input   : {pit_evals_path}")
     print(f"output            : {output_path} ({output_format})")
     print(f"shape             : {dataset.shape}")
+    print(f"track agnostic    : {track_agnostic_mode}")
 
     print("\nclass distribution")
     print(f"y=1 positives     : {positives} ({pos_ratio:.4%})")
@@ -529,6 +753,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="fail if parquet backend is not available",
     )
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=sorted(TRACK_AGNOSTIC_MODES),
+        default=TRACK_AGNOSTIC_OFF,
+        help="optional race-relative feature mode (causal, past-only normalization)",
+    )
     return parser.parse_args()
 
 
@@ -551,6 +781,7 @@ def main() -> None:
         features_raw,
         drop_zones,
         source_year_fallback=args.year,
+        track_agnostic_mode=args.track_agnostic_mode,
     )
     pit_evals = _prepare_pit_evals(pit_evals_raw)
 
@@ -571,6 +802,7 @@ def main() -> None:
         pit_evals_path=pit_evals_path,
         output_path=saved_path,
         output_format=output_format,
+        track_agnostic_mode=args.track_agnostic_mode,
         feature_dedup_stats=features.attrs.get("dedup_stats"),
         pit_eval_dedup_stats=pit_evals.attrs.get("dedup_stats"),
     )

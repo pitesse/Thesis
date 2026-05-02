@@ -1,0 +1,34 @@
+=== CALIBRATION AND DECISION-POLICY REPORT ===
+OOF input           : data_lake/reports/no_source_year_drop_aggressive_v1_candidate/ml_oof_winner_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv
+ablation input      : data_lake/reports/no_source_year_drop_aggressive_v1_candidate/ml_ablation_phase31c_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv
+rows                : 103015
+prevalence          : 0.074989
+
+reliability summary
+raw brier           : 0.142318
+calibrated brier    : 0.056953
+raw ece             : 0.223391
+calibrated ece      : 0.019695
+raw mce             : 0.531385
+calibrated mce      : 0.121884
+
+constrained policy
+positive rate       : 0.004805
+precision           : 0.828283
+recall              : 0.053074
+f1                  : 0.099757
+threshold mean/min/max: 0.792025/0.090000/0.990000
+
+winner diagnostics from ablation
+reachability ratio  : 0.903221
+fallback folds      : 1/74
+fallback rate       : 0.013514
+margin to floor     : 0.499010
+calibration mix     : isotonic:74
+
+artifacts
+summary csv         : data_lake/reports/no_source_year_drop_aggressive_v1_candidate/calibration_policy_summary_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv
+reliability bins csv: data_lake/reports/no_source_year_drop_aggressive_v1_candidate/calibration_reliability_bins_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv
+by-year csv         : data_lake/reports/no_source_year_drop_aggressive_v1_candidate/calibration_policy_by_year_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv
+by-fold csv         : data_lake/reports/no_source_year_drop_aggressive_v1_candidate/calibration_policy_by_fold_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv
+reference csv       : data_lake/reports/no_source_year_drop_aggressive_v1_candidate/calibration_policy_reference_thresholds_2022_2025_no_source_year_drop_aggressive_v1_candidate.csv

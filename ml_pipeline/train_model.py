@@ -40,6 +40,13 @@ from lib.model_training_cv import (
     DEFAULT_SWEEP_MIN,
     DEFAULT_SWEEP_POINTS,
 )
+from lib.feature_profiles import (
+    DEFAULT_FEATURE_PROFILE,
+    DEFAULT_TRACK_AGNOSTIC_MODE,
+    available_track_agnostic_modes,
+    build_feature_plan,
+    parse_exclude_features,
+)
 
 
 @contextmanager
@@ -150,6 +157,38 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_MIN_CALIBRATION_POSITIVES,
     )
+    parser.add_argument(
+        "--drop-source-year-feature",
+        action="store_true",
+        help="exclude `_source_year` from model features for ablation runs",
+    )
+    parser.add_argument(
+        "--feature-profile",
+        default=DEFAULT_FEATURE_PROFILE,
+        help=(
+            "shared feature-profile token for reproducible ablations "
+            "(e.g. baseline, drop_medium_v1, drop_aggressive_v1_candidate, "
+            "track_agnostic_v1, percent_conservative_v1, percent_team_v1, percent_race_team_v1)"
+        ),
+    )
+    parser.add_argument(
+        "--exclude-features",
+        nargs="*",
+        default=[],
+        help=(
+            "optional additional raw feature names to exclude; accepts whitespace and/or comma-separated tokens"
+        ),
+    )
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=available_track_agnostic_modes(),
+        default=DEFAULT_TRACK_AGNOSTIC_MODE,
+        help=(
+            "controls causal race-relative feature generation during data preparation "
+            "(z-scores or percentage/ratio modes); "
+            "'auto' follows feature-profile defaults"
+        ),
+    )
 
     parser.add_argument(
         "--grid-max-delta-step",
@@ -227,6 +266,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    parsed_exclude_features = parse_exclude_features(args.exclude_features)
+    feature_plan = build_feature_plan(
+        feature_profile=args.feature_profile,
+        exclude_features=parsed_exclude_features,
+        track_agnostic_mode=args.track_agnostic_mode,
+    )
 
     if args.rolling_min_train_years < 1:
         raise ValueError("--rolling-min-train-years must be at least 1")
@@ -263,6 +308,9 @@ def main() -> None:
             horizon=args.horizon,
             output_path=dataset_path,
             strict_parquet=args.strict_parquet,
+            feature_profile=feature_plan.feature_profile,
+            exclude_features=parsed_exclude_features,
+            track_agnostic_mode=feature_plan.track_agnostic_mode,
         )
     else:
         if not dataset_path.exists():
@@ -328,6 +376,18 @@ def main() -> None:
         "--oof-output",
         str(oof_output),
     ]
+    if args.drop_source_year_feature:
+        train_cmd.append("--drop-source-year-feature")
+    train_cmd.extend(
+        [
+            "--feature-profile",
+            feature_plan.feature_profile,
+            "--exclude-features",
+            *list(parsed_exclude_features),
+            "--track-agnostic-mode",
+            feature_plan.track_agnostic_mode,
+        ]
+    )
     _run_step(
         "Training and cross-validated policy selection",
         "lib.model_training_cv",
@@ -368,6 +428,18 @@ def main() -> None:
         ]
         if args.serving_with_calibration:
             serving_cmd.append("--with-calibration")
+        if args.drop_source_year_feature:
+            serving_cmd.append("--drop-source-year-feature")
+        serving_cmd.extend(
+            [
+                "--feature-profile",
+                feature_plan.feature_profile,
+                "--exclude-features",
+                *list(parsed_exclude_features),
+                "--track-agnostic-mode",
+                feature_plan.track_agnostic_mode,
+            ]
+        )
 
         _run_step("Building serving bundle", "lib.serving_bundle_builder", serving_cmd)
 
@@ -375,6 +447,13 @@ def main() -> None:
     print(f"dataset             : {dataset_path}")
     print(f"leaderboard csv     : {leaderboard_output}")
     print(f"winner oof csv      : {oof_output}")
+    print(f"drop `_source_year` : {bool(args.drop_source_year_feature)}")
+    print(f"feature profile     : {feature_plan.feature_profile}")
+    print(
+        "excluded features   : "
+        f"{','.join(str(v) for v in parsed_exclude_features) if parsed_exclude_features else 'none'}"
+    )
+    print(f"track agnostic mode : {feature_plan.track_agnostic_mode}")
     if args.build_serving_bundle:
         print(f"serving bundle      : {serving_bundle_output}")
 

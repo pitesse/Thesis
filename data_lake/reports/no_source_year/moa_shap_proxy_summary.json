@@ -1,0 +1,105 @@
+{
+  "dataset_csv": "data_lake/reports/no_source_year/moa_dataset_2022_2025_no_source_year.csv",
+  "predictions_file": "data_lake/reports/no_source_year/moa_arf_predictions_2022_2025_no_source_year.pred",
+  "rows_aligned": 124136,
+  "rows_used": 123184,
+  "unknown_prediction_rows": 952,
+  "known_positive_rate": 0.057791596311209247,
+  "sample_rows": 5000,
+  "fidelity_accuracy": 0.7517960790680683,
+  "fidelity_f1": 0.2322661644695543,
+  "selected_surrogate_id": "rf_300_d12",
+  "selected_surrogate_family": "RandomForestClassifier",
+  "selected_supports_tree_shap": 1,
+  "surrogate_selection_reason": "selected top-ranked candidate by F1 (gain=0.024237 >= min_f1_gain=0.010000)",
+  "surrogate_min_f1_gain": 0.01,
+  "notes": "SHAP is computed on a selected surrogate fitted to MOA predictions, not on MOA internals",
+  "decode_diagnostics": {
+    "rows_aligned": 124136,
+    "code_map": {
+      "2.0": 0,
+      "3.0": 1
+    },
+    "code_map_purity": {
+      "2.0": 1.0,
+      "3.0": 1.0
+    },
+    "unknown_prediction_rows": 952,
+    "known_prediction_rows": 123184,
+    "known_positive_rate": 0.057791596311209247,
+    "known_negative_rate": 0.9422084036887908
+  },
+  "surrogate_sweep_csv": "data_lake/reports/no_source_year/moa_surrogate_model_sweep.csv",
+  "surrogate_sweep": [
+    {
+      "rank": 1,
+      "model_id": "rf_300_d12",
+      "family": "RandomForestClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.7517960790680683,
+      "fidelity_f1": 0.2322661644695543,
+      "fidelity_precision": 0.14141568567497326,
+      "fidelity_recall": 0.6495786516853933,
+      "fidelity_balanced_accuracy": 0.7038226261485597,
+      "selected": 1
+    },
+    {
+      "rank": 2,
+      "model_id": "rf_100_d10",
+      "family": "RandomForestClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.6965133741932865,
+      "fidelity_f1": 0.2080288105073615,
+      "fidelity_precision": 0.12248970936759386,
+      "fidelity_recall": 0.6896067415730337,
+      "fidelity_balanced_accuracy": 0.6932719013512866,
+      "selected": 0
+    },
+    {
+      "rank": 3,
+      "model_id": "extra_300_d12",
+      "family": "ExtraTreesClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.6441531030563786,
+      "fidelity_f1": 0.18861638130495142,
+      "fidelity_precision": 0.10862381409231425,
+      "fidelity_recall": 0.7155898876404494,
+      "fidelity_balanced_accuracy": 0.6776803528582638,
+      "selected": 0
+    },
+    {
+      "rank": 4,
+      "model_id": "logreg_balanced",
+      "family": "LogisticRegression+Imputer+Scaler",
+      "supports_tree_shap": 0,
+      "fidelity_accuracy": 0.5869626983804846,
+      "fidelity_f1": 0.15355182166028947,
+      "fidelity_precision": 0.08709190413285525,
+      "fidelity_recall": 0.6481741573033708,
+      "fidelity_balanced_accuracy": 0.6156909213260489,
+      "selected": 0
+    },
+    {
+      "rank": 5,
+      "model_id": "hgb_400_d8",
+      "family": "HistGradientBoostingClassifier",
+      "supports_tree_shap": 0,
+      "fidelity_accuracy": 0.9420789868896375,
+      "fidelity_f1": 0.02991162474507138,
+      "fidelity_precision": 0.46808510638297873,
+      "fidelity_recall": 0.01544943820224719,
+      "fidelity_balanced_accuracy": 0.5071862277385251,
+      "selected": 0
+    }
+  ],
+  "feature_importance_csv": "data_lake/reports/no_source_year/moa_shap_proxy_feature_importance.csv",
+  "artifacts": [
+    "data_lake/reports/no_source_year/moa_shap_proxy_feature_importance.csv",
+    "data_lake/reports/no_source_year/moa_surrogate_model_sweep.csv",
+    "data_lake/reports/no_source_year/moa_shap_proxy_global_bar.png",
+    "data_lake/reports/no_source_year/moa_shap_proxy_beeswarm.png",
+    "data_lake/reports/no_source_year/moa_shap_proxy_dependence_gap_to_physical_car.png",
+    "data_lake/reports/no_source_year/moa_shap_proxy_dependence_gapBehind.png",
+    "data_lake/reports/no_source_year/moa_shap_proxy_dependence_pace_drop_ratio.png"
+  ]
+}

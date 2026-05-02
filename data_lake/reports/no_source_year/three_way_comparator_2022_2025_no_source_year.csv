@@ -1,0 +1,5 @@
+paradigm,comparison_mode,actionable,scored,excluded,tp,fp,precision,eval_instances,accuracy_pct,kappa_pct,source_artifact,notes
+SDE,full_h2_actionable_one_to_one,6323,1020,5303,749,271,0.734313725490196,,,,data_lake/reports/no_source_year/heuristic_comparator_2022_2025_no_source_year.csv,direct comparator metrics under fixed H=2 contract
+ML_BATCH,full_h2_actionable_one_to_one,495,311,184,300,11,0.9646302250803859,,,,data_lake/reports/no_source_year/ml_comparator_2022_2025_no_source_year.csv,direct comparator metrics under fixed H=2 contract
+MOA_ARF_DECISION,full_h2_actionable_one_to_one,7119,1687,5432,1482,205,0.8784825133372851,,,,data_lake/reports/no_source_year/moa_comparator_2022_2025_no_source_year.csv,direct comparator metrics under fixed H=2 contract from decoded MOA decisions
+MOA_ARF,prequential_stream_baseline,,,,,,,124136.0,89.41644647805632,16.993182721138815,data_lake/reports/no_source_year/moa_arf_summary_2022_2025_no_source_year.csv,"prequential stream metrics, not yet mapped to comparator semantics; use as baseline until MOA decision mapping is added"

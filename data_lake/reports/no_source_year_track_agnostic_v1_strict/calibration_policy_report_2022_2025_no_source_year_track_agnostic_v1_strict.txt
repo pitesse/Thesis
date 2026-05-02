@@ -1,0 +1,34 @@
+=== CALIBRATION AND DECISION-POLICY REPORT ===
+OOF input           : data_lake/reports/no_source_year_track_agnostic_v1_strict/ml_oof_winner_2022_2025_no_source_year_track_agnostic_v1_strict.csv
+ablation input      : data_lake/reports/no_source_year_track_agnostic_v1_strict/ml_ablation_phase31c_2022_2025_no_source_year_track_agnostic_v1_strict.csv
+rows                : 103015
+prevalence          : 0.074989
+
+reliability summary
+raw brier           : 0.166106
+calibrated brier    : 0.062749
+raw ece             : 0.257452
+calibrated ece      : 0.017107
+raw mce             : 0.541232
+calibrated mce      : 0.239942
+
+constrained policy
+positive rate       : 0.004553
+precision           : 0.249467
+recall              : 0.015146
+f1                  : 0.028557
+threshold mean/min/max: 0.710934/0.060000/0.990000
+
+winner diagnostics from ablation
+reachability ratio  : 0.742288
+fallback folds      : 3/74
+fallback rate       : 0.040541
+margin to floor     : 0.140217
+calibration mix     : isotonic:74
+
+artifacts
+summary csv         : data_lake/reports/no_source_year_track_agnostic_v1_strict/calibration_policy_summary_2022_2025_no_source_year_track_agnostic_v1_strict.csv
+reliability bins csv: data_lake/reports/no_source_year_track_agnostic_v1_strict/calibration_reliability_bins_2022_2025_no_source_year_track_agnostic_v1_strict.csv
+by-year csv         : data_lake/reports/no_source_year_track_agnostic_v1_strict/calibration_policy_by_year_2022_2025_no_source_year_track_agnostic_v1_strict.csv
+by-fold csv         : data_lake/reports/no_source_year_track_agnostic_v1_strict/calibration_policy_by_fold_2022_2025_no_source_year_track_agnostic_v1_strict.csv
+reference csv       : data_lake/reports/no_source_year_track_agnostic_v1_strict/calibration_policy_reference_thresholds_2022_2025_no_source_year_track_agnostic_v1_strict.csv

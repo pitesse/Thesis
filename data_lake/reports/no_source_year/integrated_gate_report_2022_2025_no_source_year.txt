@@ -1,0 +1,30 @@
+=== INTEGRATED GATE REPORT ===
+timestamp                 : 2026-05-01T10:39:46.327081+00:00
+decision                  : GO
+confidence                : HIGH
+decision_note             : all integrated gates passed
+
+layer status
+- layer B: PASS
+- layer C: PASS
+- layer D: PASS
+- layer F: PASS
+- layer G: PASS
+
+key metrics
+- significance precision delta (ml-sde): 0.230316
+- significance p-value (two proportion): 0.000000e+00
+- threshold frontier 0.1000 precision: 0.893685
+- threshold no-match dominance rate: 0.966372
+- calibration constrained precision: 0.818182
+- calibration reachability ratio: 0.922604
+- calibration fallback rate: 0.013514
+- feature parity score: 1.000000
+- latency p95 (ms): 10.002881
+- availability (%): 100.000000
+- failed events: 0
+
+artifacts
+- unified csv             : data_lake/reports/no_source_year/integrated_gate_2022_2025_no_source_year.csv
+- by-layer csv            : data_lake/reports/no_source_year/integrated_gate_by_layer_2022_2025_no_source_year.csv
+- report txt              : data_lake/reports/no_source_year/integrated_gate_report_2022_2025_no_source_year.txt

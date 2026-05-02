@@ -21,6 +21,10 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+try:
+    from .race_metadata import get_scheduled_laps, race_name_without_year_prefix
+except ImportError:
+    from race_metadata import get_scheduled_laps, race_name_without_year_prefix
 
 try:
     from kafka import KafkaConsumer, KafkaProducer  # type: ignore[import-not-found]
@@ -46,6 +50,28 @@ COMPOUND_MAX_STINT = {
     "WET": 25.0,
     "INTERMEDIATE": 25.0,
 }
+
+TRACK_AGNOSTIC_OFF = "off"
+TRACK_AGNOSTIC_V1 = "track_agnostic_v1"
+TRACK_PERCENTAGE_V1 = "track_percentage_v1"
+TRACK_PERCENTAGE_TEAM_V1 = "track_percentage_team_v1"
+TRACK_PERCENTAGE_RACE_TEAM_V1 = "track_percentage_race_team_v1"
+TRACK_AGNOSTIC_AUTO = "auto"
+TRACK_AGNOSTIC_MODES = {
+    TRACK_AGNOSTIC_OFF,
+    TRACK_AGNOSTIC_V1,
+    TRACK_PERCENTAGE_V1,
+    TRACK_PERCENTAGE_TEAM_V1,
+    TRACK_PERCENTAGE_RACE_TEAM_V1,
+}
+TRACK_AGNOSTIC_ARG_CHOICES = {TRACK_AGNOSTIC_AUTO, *TRACK_AGNOSTIC_MODES}
+TRACK_AGNOSTIC_SOURCE_FEATURES = (
+    "trackTemp",
+    "airTemp",
+    "humidity",
+    "speedTrap",
+    "lapTime",
+)
 
 
 def _normalize_label(value: object) -> str:
@@ -107,6 +133,16 @@ class DriverStintState:
     last_lap_number: int | None = None
 
 
+@dataclass
+class RaceTrackAgnosticState:
+    stats: dict[str, dict[str, float]] = field(default_factory=dict)
+    seen_driver_lap: dict[tuple[str, int], dict[str, float | None]] = field(default_factory=dict)
+    driver_lap_times: dict[str, dict[int, float]] = field(default_factory=dict)
+    team_lap_driver_times: dict[tuple[str, int], dict[str, float]] = field(default_factory=dict)
+    race_lap_driver_times: dict[int, dict[str, float]] = field(default_factory=dict)
+    pct_seen_driver_lap: dict[tuple[str, int], tuple[str, float]] = field(default_factory=dict)
+
+
 def _source_year_from_race(race: str) -> int:
     token = str(race).split(" :: ", maxsplit=1)[0]
     return _to_int(token, default=0)
@@ -147,9 +183,141 @@ def _build_drop_zone_lookup(path: Path) -> dict[tuple[str, str, int], tuple[int,
 class OnlineFeatureEngineer:
     """builds serving-time features aligned with prepare_ml_dataset semantics."""
 
-    def __init__(self, drop_zone_lookup: dict[tuple[str, str, int], tuple[int, float]] | None = None) -> None:
+    def __init__(
+        self,
+        drop_zone_lookup: dict[tuple[str, str, int], tuple[int, float]] | None = None,
+        track_agnostic_mode: str = TRACK_AGNOSTIC_OFF,
+    ) -> None:
+        if track_agnostic_mode not in TRACK_AGNOSTIC_MODES:
+            raise ValueError(
+                f"unsupported track_agnostic_mode={track_agnostic_mode!r}; "
+                f"expected one of {sorted(TRACK_AGNOSTIC_MODES)}"
+            )
         self._state: dict[tuple[str, str], DriverStintState] = {}
         self._drop_zone_lookup = drop_zone_lookup or {}
+        self._track_agnostic_mode = track_agnostic_mode
+        self._race_track_stats: dict[str, RaceTrackAgnosticState] = {}
+
+    @staticmethod
+    def _is_valid_track_value(value: float | None) -> bool:
+        return value is not None and np.isfinite(float(value))
+
+    def _track_stats_remove(
+        self,
+        race_state: RaceTrackAgnosticState,
+        prior_values: dict[str, float | None],
+    ) -> None:
+        for feature_name, value in prior_values.items():
+            if not self._is_valid_track_value(value):
+                continue
+            feature_stats = race_state.stats.get(feature_name)
+            if feature_stats is None:
+                continue
+            feature_stats["count"] = max(0.0, float(feature_stats["count"]) - 1.0)
+            feature_stats["sum"] = float(feature_stats["sum"]) - float(value)
+            feature_stats["sum_sq"] = float(feature_stats["sum_sq"]) - (float(value) ** 2)
+
+    def _track_stats_observe(
+        self,
+        race_state: RaceTrackAgnosticState,
+        current_values: dict[str, float | None],
+    ) -> None:
+        for feature_name, value in current_values.items():
+            if not self._is_valid_track_value(value):
+                continue
+            feature_stats = race_state.stats.setdefault(
+                feature_name,
+                {"count": 0.0, "sum": 0.0, "sum_sq": 0.0},
+            )
+            feature_stats["count"] = float(feature_stats["count"]) + 1.0
+            feature_stats["sum"] = float(feature_stats["sum"]) + float(value)
+            feature_stats["sum_sq"] = float(feature_stats["sum_sq"]) + (float(value) ** 2)
+
+    def _track_stats_z(
+        self,
+        race_state: RaceTrackAgnosticState,
+        current_values: dict[str, float | None],
+    ) -> dict[str, float]:
+        output: dict[str, float] = {}
+        for feature_name, value in current_values.items():
+            col = f"{feature_name}_expanding_z"
+            if not self._is_valid_track_value(value):
+                output[col] = 0.0
+                continue
+            feature_stats = race_state.stats.get(feature_name)
+            if feature_stats is None:
+                output[col] = 0.0
+                continue
+            count = float(feature_stats["count"])
+            if count <= 1.0:
+                output[col] = 0.0
+                continue
+            mean = float(feature_stats["sum"]) / count
+            var = (float(feature_stats["sum_sq"]) / count) - (mean**2)
+            var = max(var, 0.0)
+            std = float(np.sqrt(var))
+            if std <= 1e-9:
+                output[col] = 0.0
+                continue
+            output[col] = float((float(value) - mean) / std)
+        return output
+
+    @staticmethod
+    def _clip_ratio(value: float | None, *, default: float = 1.0) -> float:
+        if value is None or not np.isfinite(value):
+            return float(default)
+        return float(np.clip(value, 0.5, 2.0))
+
+    @staticmethod
+    def _mean(values: list[float]) -> float | None:
+        if not values:
+            return None
+        return float(np.mean(np.asarray(values, dtype=float)))
+
+    def _driver_prev_lap_mean(
+        self,
+        race_state: RaceTrackAgnosticState,
+        driver: str,
+        lap_number: int,
+    ) -> float | None:
+        lap_map = race_state.driver_lap_times.get(driver, {})
+        prior_values = [
+            float(value)
+            for lap, value in lap_map.items()
+            if lap < lap_number and np.isfinite(float(value))
+        ]
+        return self._mean(prior_values)
+
+    def _team_prev_lapbucket_mean(
+        self,
+        race_state: RaceTrackAgnosticState,
+        team: str,
+        lap_number: int,
+    ) -> float | None:
+        lapbucket_means: list[float] = []
+        for (team_name, lap), driver_values in race_state.team_lap_driver_times.items():
+            if team_name != team or lap >= lap_number:
+                continue
+            values = [float(v) for v in driver_values.values() if np.isfinite(float(v))]
+            lap_mean = self._mean(values)
+            if lap_mean is not None:
+                lapbucket_means.append(lap_mean)
+        return self._mean(lapbucket_means)
+
+    def _race_prev_lapbucket_mean(
+        self,
+        race_state: RaceTrackAgnosticState,
+        lap_number: int,
+    ) -> float | None:
+        lapbucket_means: list[float] = []
+        for lap, driver_values in race_state.race_lap_driver_times.items():
+            if lap >= lap_number:
+                continue
+            values = [float(v) for v in driver_values.values() if np.isfinite(float(v))]
+            lap_mean = self._mean(values)
+            if lap_mean is not None:
+                lapbucket_means.append(lap_mean)
+        return self._mean(lapbucket_means)
 
     def transform(self, event: dict[str, Any]) -> dict[str, Any]:
         race = str(event.get("race", ""))
@@ -243,19 +411,92 @@ class OnlineFeatureEngineer:
             has_drop_zone_data = True
 
         source_year = _source_year_from_race(race)
+        track_temp = _to_float(event.get("trackTemp"), default=np.nan)
+        air_temp = _to_float(event.get("airTemp"), default=np.nan)
+        humidity = _to_float(event.get("humidity"), default=np.nan)
+        speed_trap = _to_float(event.get("speedTrap"), default=np.nan)
+        lap_time_num = _to_float(event.get("lapTime"), default=np.nan)
+        team_name = str(event.get("team", ""))
+        race_name = race_name_without_year_prefix(race)
+
+        track_agnostic_cols: dict[str, float] = {}
+        race_state = self._race_track_stats.setdefault(
+            race,
+            RaceTrackAgnosticState(),
+        )
+
+        if self._track_agnostic_mode == TRACK_AGNOSTIC_V1:
+            driver_lap_key = (driver, lap_number)
+            prior_values = race_state.seen_driver_lap.get(driver_lap_key)
+            if prior_values is not None:
+                self._track_stats_remove(race_state, prior_values)
+            current_track_values: dict[str, float | None] = {
+                "trackTemp": track_temp,
+                "airTemp": air_temp,
+                "humidity": humidity,
+                "speedTrap": speed_trap,
+                "lapTime": lap_time_num,
+            }
+            track_agnostic_cols = self._track_stats_z(race_state, current_track_values)
+            self._track_stats_observe(race_state, current_track_values)
+            race_state.seen_driver_lap[driver_lap_key] = current_track_values
+        elif self._track_agnostic_mode in {
+            TRACK_PERCENTAGE_V1,
+            TRACK_PERCENTAGE_TEAM_V1,
+            TRACK_PERCENTAGE_RACE_TEAM_V1,
+        }:
+            try:
+                scheduled_race_laps = float(get_scheduled_laps(source_year, race_name))
+            except ValueError as exc:
+                raise ValueError(
+                    "missing scheduled-laps metadata for live percentage mode: "
+                    f"year={source_year}, race={race_name!r}"
+                ) from exc
+
+            if scheduled_race_laps <= 0:
+                raise ValueError(
+                    f"invalid scheduled laps for year={source_year}, race={race_name!r}"
+                )
+
+            race_progress_pct = float(np.clip(float(lap_number) / scheduled_race_laps, 0.0, 1.5))
+            driver_prev_mean = self._driver_prev_lap_mean(race_state, driver, lap_number)
+
+            driver_ratio = None
+            if lap_time_num is not None and np.isfinite(lap_time_num) and lap_time_num > 0 and driver_prev_mean is not None and driver_prev_mean > 0:
+                driver_ratio = float(lap_time_num / driver_prev_mean)
+
+            track_agnostic_cols["race_progress_pct"] = race_progress_pct
+            track_agnostic_cols["lapTime_vs_driver_prev_mean_pct"] = self._clip_ratio(driver_ratio)
+
+            if self._track_agnostic_mode in {
+                TRACK_PERCENTAGE_TEAM_V1,
+                TRACK_PERCENTAGE_RACE_TEAM_V1,
+            }:
+                team_prev_mean = self._team_prev_lapbucket_mean(race_state, team_name, lap_number)
+                team_ratio = None
+                if lap_time_num is not None and np.isfinite(lap_time_num) and lap_time_num > 0 and team_prev_mean is not None and team_prev_mean > 0:
+                    team_ratio = float(lap_time_num / team_prev_mean)
+                track_agnostic_cols["lapTime_vs_team_prev_lapbucket_mean_pct"] = self._clip_ratio(team_ratio)
+
+            if self._track_agnostic_mode == TRACK_PERCENTAGE_RACE_TEAM_V1:
+                race_prev_mean = self._race_prev_lapbucket_mean(race_state, lap_number)
+                race_ratio = None
+                if lap_time_num is not None and np.isfinite(lap_time_num) and lap_time_num > 0 and race_prev_mean is not None and race_prev_mean > 0:
+                    race_ratio = float(lap_time_num / race_prev_mean)
+                track_agnostic_cols["lapTime_vs_race_prev_lapbucket_mean_pct"] = self._clip_ratio(race_ratio)
 
         feature_row = {
             "position": _to_int(event.get("position"), default=0),
             "tyreLife": _to_int(event.get("tyreLife"), default=0),
-            "trackTemp": _to_float(event.get("trackTemp"), default=np.nan),
-            "airTemp": _to_float(event.get("airTemp"), default=np.nan),
-            "humidity": _to_float(event.get("humidity"), default=np.nan),
+            "trackTemp": track_temp,
+            "airTemp": air_temp,
+            "humidity": humidity,
             "rainfall": bool(event.get("rainfall")) if event.get("rainfall") is not None else False,
-            "speedTrap": _to_float(event.get("speedTrap"), default=np.nan),
-            "team": str(event.get("team", "")),
+            "speedTrap": speed_trap,
+            "team": team_name,
             "gapAhead": gap_ahead_value,
             "gapBehind": gap_behind_value,
-            "lapTime": _to_float(event.get("lapTime"), default=np.nan),
+            "lapTime": lap_time_num,
             "pitLoss": _to_float(event.get("pitLoss"), default=np.nan),
             "hasGapAhead": has_gap_ahead,
             "hasGapBehind": has_gap_behind,
@@ -268,6 +509,7 @@ class OnlineFeatureEngineer:
             "has_drop_zone_data": bool(has_drop_zone_data),
             "_source_year": int(source_year),
         }
+        feature_row.update(track_agnostic_cols)
 
         # update state after feature emission so the current lap never informs itself.
         if duplicate_lap_event and len(state.pace_drop_history) > 0:
@@ -284,6 +526,45 @@ class OnlineFeatureEngineer:
         state.prev_compound_norm = compound_norm
         state.last_lap_number = lap_number
         self._state[key] = state
+
+        if (
+            self._track_agnostic_mode in {
+                TRACK_PERCENTAGE_V1,
+                TRACK_PERCENTAGE_TEAM_V1,
+                TRACK_PERCENTAGE_RACE_TEAM_V1,
+            }
+            and lap_time_num is not None
+            and np.isfinite(lap_time_num)
+            and lap_time_num > 0
+            and lap_number > 0
+        ):
+            driver_lap_map = race_state.driver_lap_times.setdefault(driver, {})
+            driver_lap_map[lap_number] = float(lap_time_num)
+
+            if self._track_agnostic_mode in {
+                TRACK_PERCENTAGE_TEAM_V1,
+                TRACK_PERCENTAGE_RACE_TEAM_V1,
+            }:
+                pct_key = (driver, lap_number)
+                prev_pct_meta = race_state.pct_seen_driver_lap.get(pct_key)
+                if prev_pct_meta is not None:
+                    prev_team, _ = prev_pct_meta
+                    if prev_team != team_name:
+                        prev_team_key = (prev_team, lap_number)
+                        prev_team_map = race_state.team_lap_driver_times.get(prev_team_key)
+                        if prev_team_map is not None:
+                            prev_team_map.pop(driver, None)
+                            if len(prev_team_map) == 0:
+                                race_state.team_lap_driver_times.pop(prev_team_key, None)
+
+                team_key = (team_name, lap_number)
+                team_driver_map = race_state.team_lap_driver_times.setdefault(team_key, {})
+                team_driver_map[driver] = float(lap_time_num)
+                race_state.pct_seen_driver_lap[pct_key] = (team_name, float(lap_time_num))
+
+            if self._track_agnostic_mode == TRACK_PERCENTAGE_RACE_TEAM_V1:
+                race_driver_map = race_state.race_lap_driver_times.setdefault(lap_number, {})
+                race_driver_map[driver] = float(lap_time_num)
 
         return feature_row
 
@@ -318,6 +599,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_DROP_ZONES,
         help="optional drop_zones jsonl path for serving-time enrichment",
     )
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=sorted(TRACK_AGNOSTIC_ARG_CHOICES),
+        default=TRACK_AGNOSTIC_AUTO,
+        help="optional race-relative causal normalization mode",
+    )
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="decision threshold")
     parser.add_argument("--max-messages", type=int, default=0, help="optional max number of consumed messages")
     return parser.parse_args()
@@ -337,6 +624,12 @@ def main() -> None:
     model_name = str(bundle.get("model_name", "xgboost"))
     model_version = str(bundle.get("model_version", "v1"))
     threshold = float(bundle.get("threshold", args.threshold))
+    bundle_track_agnostic = str(bundle.get("track_agnostic_mode", TRACK_AGNOSTIC_OFF))
+    resolved_track_agnostic_mode = (
+        bundle_track_agnostic
+        if args.track_agnostic_mode == TRACK_AGNOSTIC_AUTO
+        else args.track_agnostic_mode
+    )
 
     consumer = KafkaConsumer(
         args.input_topic,
@@ -357,7 +650,10 @@ def main() -> None:
     if args.drop_zones:
         drop_zone_lookup = _build_drop_zone_lookup(Path(args.drop_zones))
 
-    feature_engineer = OnlineFeatureEngineer(drop_zone_lookup=drop_zone_lookup)
+    feature_engineer = OnlineFeatureEngineer(
+        drop_zone_lookup=drop_zone_lookup,
+        track_agnostic_mode=resolved_track_agnostic_mode,
+    )
     consumed = 0
 
     try:

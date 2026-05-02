@@ -1,0 +1,18 @@
+metric_group,protocol,score_type,ece,mce,rows,prevalence,n_points,best_net_benefit,best_threshold,mean_precision,std_precision,mean_coverage,std_coverage,n_races
+batch_calibration,ml_pretrain,raw_proba,0.18776385427356304,0.49982866609852217,103015.0,,,,,,,,,
+batch_calibration,ml_pretrain,calibrated_proba,0.018941334715774256,0.07714578642148473,103015.0,,,,,,,,,
+batch_calibration,ml_racewise,raw_proba,0.16382191499115462,0.47735766584941164,123129.0,,,,,,,,,
+batch_calibration,ml_racewise,calibrated_proba,0.014900488680488488,0.06426942897275811,123129.0,,,,,,,,,
+moa_surrogate_calibration,moa_surrogate,y_score,0.24479420473102392,0.4449097467796313,24710.0,,,,,,,,,
+batch_pr_gain,ml_pretrain,raw_proba,,,,0.07498907926030189,102830.0,,,,,,,
+batch_pr_gain,ml_pretrain,calibrated_proba,,,,0.07498907926030189,1990.0,,,,,,,
+batch_pr_gain,ml_racewise,raw_proba,,,,0.06701102096175555,122881.0,,,,,,,
+batch_pr_gain,ml_racewise,calibrated_proba,,,,0.06701102096175555,4306.0,,,,,,,
+batch_decision_curve,ml_pretrain,raw_proba,,,,,,0.0652667528559389,0.01,,,,,
+batch_decision_curve,ml_pretrain,calibrated_proba,,,,,,0.0652282177205732,0.01,,,,,
+batch_decision_curve,ml_racewise,raw_proba,,,,,,0.05706850440422548,0.01,,,,,
+batch_decision_curve,ml_racewise,calibrated_proba,,,,,,0.05734463756538166,0.01,,,,,
+moa_surrogate_decision_curve,moa_surrogate,y_score,,,,,,0.057936303545368696,0.01,,,,,
+temporal_drift,Batch ML,comparator,,,,,,,,0.9319813519813521,0.20323635256940206,0.7229799573948509,0.19091486803885646,30.0
+temporal_drift,MOA,comparator,,,,,,,,0.8602968450584411,0.16648029270097756,0.2589243302312251,0.13766244696275481,95.0
+temporal_drift,SDE,comparator,,,,,,,,0.7332782223813278,0.14226949618281481,0.16253218587301585,0.11059509133045584,96.0

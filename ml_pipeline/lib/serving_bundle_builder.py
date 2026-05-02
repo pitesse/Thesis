@@ -24,6 +24,14 @@ from .model_training_cv import (
     _load_dataset,
     _prepare_matrix,
 )
+from .feature_profiles import (
+    DEFAULT_FEATURE_PROFILE,
+    DEFAULT_TRACK_AGNOSTIC_MODE,
+    available_track_agnostic_modes,
+    build_feature_plan,
+    ensure_track_agnostic_columns,
+    parse_exclude_features,
+)
 
 DEFAULT_OUTPUT = "data_lake/models/pit_strategy_serving_bundle.joblib"
 DEFAULT_THRESHOLD = 0.50
@@ -73,6 +81,37 @@ def parse_args() -> argparse.Namespace:
             "useful for first live dry-runs, but final thesis reporting should calibrate on held-out folds"
         ),
     )
+    parser.add_argument(
+        "--drop-source-year-feature",
+        action="store_true",
+        help="exclude `_source_year` from serving-model features for ablation runs",
+    )
+    parser.add_argument(
+        "--feature-profile",
+        default=DEFAULT_FEATURE_PROFILE,
+        help=(
+            "shared feature-profile token for reproducible ablations "
+            "(e.g. baseline, drop_medium_v1, drop_aggressive_v1_candidate, "
+            "track_agnostic_v1, percent_conservative_v1, percent_team_v1, percent_race_team_v1)"
+        ),
+    )
+    parser.add_argument(
+        "--exclude-features",
+        nargs="*",
+        default=[],
+        help=(
+            "optional additional raw feature names to exclude; accepts whitespace and/or comma-separated tokens"
+        ),
+    )
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=available_track_agnostic_modes(),
+        default=DEFAULT_TRACK_AGNOSTIC_MODE,
+        help=(
+            "metadata flag for resolved track-agnostic dataset mode; "
+            "'auto' follows feature-profile defaults"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -100,9 +139,25 @@ def main() -> None:
 
     dataset_path = Path(args.dataset)
     output_path = Path(args.output)
+    exclude_features = parse_exclude_features(args.exclude_features)
+    feature_plan = build_feature_plan(
+        feature_profile=args.feature_profile,
+        exclude_features=exclude_features,
+        track_agnostic_mode=args.track_agnostic_mode,
+    )
 
     df = _load_dataset(dataset_path)
-    X, y, _, _ , _= _prepare_matrix(df)
+    ensure_track_agnostic_columns(
+        list(df.columns),
+        track_agnostic_mode=feature_plan.track_agnostic_mode,
+        context_label=f"dataset {dataset_path}",
+    )
+    X, y, _, _, _ = _prepare_matrix(
+        df,
+        drop_source_year_feature=bool(args.drop_source_year_feature),
+        feature_profile=feature_plan.feature_profile,
+        exclude_features=list(feature_plan.excluded_features),
+    )
 
     if args.scale_pos_weight_mode == "auto":
         spw = _compute_scale_pos_weight(y)
@@ -153,6 +208,10 @@ def main() -> None:
         "subsample": float(args.subsample),
         "colsample_bytree": float(args.colsample_bytree),
         "calibrated": bool(calibrator is not None),
+        "drop_source_year_feature": bool(args.drop_source_year_feature),
+        "feature_profile": feature_plan.feature_profile,
+        "excluded_features": list(feature_plan.excluded_features),
+        "track_agnostic_mode": feature_plan.track_agnostic_mode,
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +232,13 @@ def main() -> None:
     print(f"spw mode         : {bundle['scale_pos_weight_mode']}")
     print(f"calibrated       : {bundle['calibrated']}")
     print(f"threshold        : {bundle['threshold']:.4f}")
+    print(f"drop `_source_year`: {bundle['drop_source_year_feature']}")
+    print(f"feature profile  : {bundle['feature_profile']}")
+    print(
+        "excluded features: "
+        f"{','.join(bundle['excluded_features']) if bundle['excluded_features'] else 'none'}"
+    )
+    print(f"track agnostic  : {bundle['track_agnostic_mode']}")
 
 
 if __name__ == "__main__":

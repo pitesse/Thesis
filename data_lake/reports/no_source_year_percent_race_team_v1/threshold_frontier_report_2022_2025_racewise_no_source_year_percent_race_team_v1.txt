@@ -1,0 +1,36 @@
+=== THRESHOLD FRONTIER REPORT ===
+decisions input    : data_lake/reports/no_source_year_percent_race_team_v1/ml_oof_winner_2022_2025_racewise_no_source_year_percent_race_team_v1.csv
+pit evals input    : data_lake/pit_evals_9999_merged_20260416_082923.jsonl
+horizon            : 2
+precision floor    : 0.714919
+threshold points   : 37
+
+selected threshold
+best_threshold     : 0.050000
+best_actionable    : 28361
+best_scored        : 3941
+best_tp            : 3297
+best_fp            : 644
+best_precision     : 0.836590
+best_scored_rate   : 0.138958
+meets_floor        : 1
+
+delta vs reference threshold
+reference_threshold: 0.100000
+reference_scored   : 2984
+reference_precision: 0.863271
+delta_scored       : +957
+delta_actionable   : +14687
+
+lookahead diagnostics at selected threshold
+no_match_count     : 23688
+no_match_rate      : 0.970025
+one_lap_beyond     : 2661
+two_to_three_beyond: 4000
+four_plus_beyond   : 8367
+in_window_consumed : 5038
+
+artifacts
+summary csv        : data_lake/reports/no_source_year_percent_race_team_v1/threshold_frontier_2022_2025_racewise_no_source_year_percent_race_team_v1.csv
+by year csv        : data_lake/reports/no_source_year_percent_race_team_v1/threshold_frontier_by_year_2022_2025_racewise_no_source_year_percent_race_team_v1.csv
+best comparator    : data_lake/reports/no_source_year_percent_race_team_v1/ml_comparator_best_threshold_2022_2025_racewise_no_source_year_percent_race_team_v1.csv

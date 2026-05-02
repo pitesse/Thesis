@@ -1,0 +1,13 @@
+model,subtype,count,rate_within_no_match
+SDE,far_miss_6_plus,1718,0.35255489431561665
+SDE,near_miss_3_5,1236,0.25364252000820847
+SDE,no_future,1622,0.3328545044120665
+SDE,unexpected_within_horizon,297,0.060948081264108354
+Batch,far_miss_6_plus,19,0.04714640198511166
+Batch,near_miss_3_5,96,0.23821339950372208
+Batch,no_future,3,0.007444168734491315
+Batch,unexpected_within_horizon,285,0.707196029776675
+MOA,far_miss_6_plus,1803,0.3729058945191313
+MOA,near_miss_3_5,1029,0.21282316442605997
+MOA,no_future,1546,0.31975180972078593
+MOA,unexpected_within_horizon,457,0.09451913133402275

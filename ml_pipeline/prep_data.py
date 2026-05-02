@@ -27,6 +27,13 @@ from lib.data_preparation import (
     _print_summary,
     _write_dataset,
 )
+from lib.feature_profiles import (
+    DEFAULT_FEATURE_PROFILE,
+    DEFAULT_TRACK_AGNOSTIC_MODE,
+    available_track_agnostic_modes,
+    build_feature_plan,
+    parse_exclude_features,
+)
 
 # F1 calendar order (chronological 2022-2025 for expanding_race protocol temporal integrity)
 F1_CALENDAR = {
@@ -97,6 +104,7 @@ def _prepare_one_season(
     year: int,
     season_tag: str,
     horizon: int,
+    track_agnostic_mode: str,
 ) -> PreparedSeason:
     # always select latest stream snapshots per season token, this keeps retraining aligned with latest validated exports.
     ml_features_path = _latest_jsonl(data_lake, "ml_features", year, season_tag)
@@ -112,6 +120,7 @@ def _prepare_one_season(
         features_raw,
         drop_zones,
         source_year_fallback=year,
+        track_agnostic_mode=track_agnostic_mode,
     )
     pit_evals = _prepare_pit_evals(pit_evals_raw)
     feature_dedup_stats = dict(features.attrs.get("dedup_stats", {}))
@@ -174,6 +183,7 @@ def _print_multi_season_summary(
     merged: pd.DataFrame,
     output_path: Path,
     output_format: str,
+    track_agnostic_mode: str,
 ) -> None:
     positives = int((merged["target_y"] == 1).sum())
     negatives = int((merged["target_y"] == 0).sum())
@@ -185,6 +195,7 @@ def _print_multi_season_summary(
     print(f"output            : {output_path} ({output_format})")
     print(f"shape             : {merged.shape}")
     print(f"years             : {[item.year for item in prepared]}")
+    print(f"track agnostic    : {track_agnostic_mode}")
 
     print("\nsource files by season")
     for item in prepared:
@@ -214,7 +225,15 @@ def prepare_dataset(
     horizon: int,
     output_path: Path,
     strict_parquet: bool,
+    feature_profile: str = DEFAULT_FEATURE_PROFILE,
+    exclude_features: list[str] | None = None,
+    track_agnostic_mode: str = DEFAULT_TRACK_AGNOSTIC_MODE,
 ) -> Path:
+    feature_plan = build_feature_plan(
+        feature_profile=feature_profile,
+        exclude_features=exclude_features or [],
+        track_agnostic_mode=track_agnostic_mode,
+    )
     normalized_years = normalize_years(years)
     prepared = [
         _prepare_one_season(
@@ -222,6 +241,7 @@ def prepare_dataset(
             year=year,
             season_tag=season_tag,
             horizon=horizon,
+            track_agnostic_mode=feature_plan.track_agnostic_mode,
         )
         for year in normalized_years
     ]
@@ -241,8 +261,14 @@ def prepare_dataset(
             pit_evals_path=season.pit_evals_path,
             output_path=saved_path,
             output_format=output_format,
+            track_agnostic_mode=feature_plan.track_agnostic_mode,
             feature_dedup_stats=season.feature_dedup_stats,
             pit_eval_dedup_stats=season.pit_eval_dedup_stats,
+        )
+        print(f"feature profile    : {feature_plan.feature_profile}")
+        print(
+            "excluded features  : "
+            f"{feature_plan.excluded_features_csv() or 'none'}"
         )
         return saved_path
 
@@ -253,7 +279,18 @@ def prepare_dataset(
         output_path,
         strict_parquet=strict_parquet,
     )
-    _print_multi_season_summary(prepared, merged, saved_path, output_format)
+    _print_multi_season_summary(
+        prepared,
+        merged,
+        saved_path,
+        output_format,
+        feature_plan.track_agnostic_mode,
+    )
+    print(f"feature profile    : {feature_plan.feature_profile}")
+    print(
+        "excluded features  : "
+        f"{feature_plan.excluded_features_csv() or 'none'}"
+    )
     return saved_path
 
 
@@ -294,6 +331,31 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="fail if parquet backend is not available",
     )
+    parser.add_argument(
+        "--feature-profile",
+        default=DEFAULT_FEATURE_PROFILE,
+        help=(
+            "shared feature-profile token for reproducible ablations "
+            "(e.g. baseline, drop_medium_v1, drop_aggressive_v1_candidate, track_agnostic_v1)"
+        ),
+    )
+    parser.add_argument(
+        "--exclude-features",
+        nargs="*",
+        default=[],
+        help=(
+            "optional additional raw feature names to exclude; accepts whitespace and/or comma-separated tokens"
+        ),
+    )
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=available_track_agnostic_modes(),
+        default=DEFAULT_TRACK_AGNOSTIC_MODE,
+        help=(
+            "controls causal race-relative z-score feature generation; "
+            "'auto' follows feature-profile defaults"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -317,6 +379,9 @@ def main() -> None:
         horizon=args.horizon,
         output_path=output_path,
         strict_parquet=args.strict_parquet,
+        feature_profile=args.feature_profile,
+        exclude_features=parse_exclude_features(args.exclude_features),
+        track_agnostic_mode=args.track_agnostic_mode,
     )
 
     print(f"prepared dataset   : {saved_path}")

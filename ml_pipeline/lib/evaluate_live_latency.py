@@ -20,7 +20,12 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from .live_kafka_inference import OnlineFeatureEngineer, _build_drop_zone_lookup, _build_model_matrix
+from .live_kafka_inference import (
+    TRACK_AGNOSTIC_MODES,
+    OnlineFeatureEngineer,
+    _build_drop_zone_lookup,
+    _build_model_matrix,
+)
 
 DEFAULT_ML_FEATURES = "data_lake/ml_features_9999_merged_20260404_195653.jsonl"
 DEFAULT_DROP_ZONES = "data_lake/drop_zones_9999_merged_20260404_195653.jsonl"
@@ -38,6 +43,7 @@ DEFAULT_RANDOM_SEED = 42
 DEFAULT_WARMUP_EVENTS = 50
 DEFAULT_LATENCY_BUDGET_MS = 500.0
 DEFAULT_AVAILABILITY_FLOOR = 99.0
+DEFAULT_TRACK_AGNOSTIC_MODE = "off"
 
 REQUIRED_FIELDS = {
     "race",
@@ -131,6 +137,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-events", type=int, default=DEFAULT_WARMUP_EVENTS, help="events excluded from percentile gates")
     parser.add_argument("--latency-budget-ms", type=float, default=DEFAULT_LATENCY_BUDGET_MS, help="p95 latency budget")
     parser.add_argument("--availability-floor", type=float, default=DEFAULT_AVAILABILITY_FLOOR, help="minimum availability percent")
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=sorted(TRACK_AGNOSTIC_MODES),
+        default=DEFAULT_TRACK_AGNOSTIC_MODE,
+        help="optional race-relative causal normalization mode for serving replay",
+    )
     parser.add_argument("--summary-output", default=DEFAULT_SUMMARY_OUTPUT, help="latency gate summary output")
     parser.add_argument("--details-output", default=DEFAULT_DETAILS_OUTPUT, help="latency component details output")
     parser.add_argument("--by-year-output", default=DEFAULT_BY_YEAR_OUTPUT, help="latency by-year output")
@@ -172,7 +184,10 @@ def main() -> None:
     feature_columns = list(bundle["feature_columns"])
     threshold = float(bundle.get("threshold", 0.50))
 
-    engineer = OnlineFeatureEngineer(drop_zone_lookup=drop_zone_lookup)
+    engineer = OnlineFeatureEngineer(
+        drop_zone_lookup=drop_zone_lookup,
+        track_agnostic_mode=args.track_agnostic_mode,
+    )
 
     timing_rows: list[dict[str, object]] = []
     failures: dict[str, int] = {}
@@ -326,6 +341,13 @@ def main() -> None:
             "threshold": 1,
             "note": "requires latency and availability gate pass",
         },
+        {
+            "check": "track_agnostic_mode",
+            "status": "INFO",
+            "value": float("nan"),
+            "threshold": float("nan"),
+            "note": args.track_agnostic_mode,
+        },
     ]
     summary_df = pd.DataFrame(summary_rows)
 
@@ -467,6 +489,7 @@ def main() -> None:
         f"ml_features input      : {ml_features_path}",
         f"drop_zones input       : {drop_zones_path if args.drop_zones else 'disabled'}",
         f"bundle input           : {bundle_path}",
+        f"track agnostic mode    : {args.track_agnostic_mode}",
         f"sample events          : {total_events}",
         f"successful events      : {ok_events}",
         f"failed events          : {failed_events}",

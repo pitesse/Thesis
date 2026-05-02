@@ -1,0 +1,112 @@
+{
+  "summary": {
+    "dataset_csv": "data_lake/reports/no_source_year_drop_medium_v1/moa_dataset_2022_2025_no_source_year_drop_medium_v1.csv",
+    "predictions_file": "data_lake/reports/no_source_year_drop_medium_v1/moa_arf_predictions_2022_2025_no_source_year_drop_medium_v1.pred",
+    "rows_used": 123493,
+    "decoded_unknown_prediction_rows": 643,
+    "known_positive_rate": 0.05402735377713717,
+    "fidelity_accuracy": 0.8262277825013158,
+    "fidelity_f1": 0.24463217177050334,
+    "fidelity_precision": 0.15984360625574978,
+    "fidelity_recall": 0.5209895052473763,
+    "fidelity_balanced_accuracy": 0.6823222724182527,
+    "selected_surrogate_id": "rf_300_d12",
+    "selected_surrogate_family": "RandomForestClassifier",
+    "surrogate_selection_reason": "selected top-ranked candidate by F1 (gain=0.025134 >= min_f1_gain=0.010000)",
+    "window_count_used": 12,
+    "top_features": "lapTime;gapBehind;gapAhead;speedTrap;position;tire_life_ratio;humidity;gap_to_physical_car;trackTemp;gapAhead_trend",
+    "notes": "Permutation importance computed on selected surrogate predictions of MOA-decoded labels"
+  },
+  "decode_diagnostics": {
+    "rows_aligned": 124136,
+    "code_map": {
+      "2.0": 0,
+      "3.0": 1
+    },
+    "code_map_purity": {
+      "2.0": 1.0,
+      "3.0": 1.0
+    },
+    "unknown_prediction_rows": 643,
+    "known_prediction_rows": 123493,
+    "known_positive_rate": 0.05402735377713717,
+    "known_negative_rate": 0.9459726462228628,
+    "rows_used_after_known_filter": 123493
+  },
+  "shap_top_features": [
+    "gapBehind",
+    "position",
+    "speedTrap"
+  ],
+  "surrogate_sweep_csv": "data_lake/reports/no_source_year_drop_medium_v1/moa_surrogate_model_sweep.csv",
+  "surrogate_sweep": [
+    {
+      "rank": 1,
+      "model_id": "rf_300_d12",
+      "family": "RandomForestClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.8262277825013158,
+      "fidelity_f1": 0.24463217177050334,
+      "fidelity_precision": 0.15984360625574978,
+      "fidelity_recall": 0.5209895052473763,
+      "fidelity_balanced_accuracy": 0.6823222724182527,
+      "selected": 1
+    },
+    {
+      "rank": 2,
+      "model_id": "rf_100_d10",
+      "family": "RandomForestClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.7731082230049799,
+      "fidelity_f1": 0.21949860724233983,
+      "fidelity_precision": 0.13479302086897024,
+      "fidelity_recall": 0.5907046476761619,
+      "fidelity_balanced_accuracy": 0.6871135050920933,
+      "selected": 0
+    },
+    {
+      "rank": 3,
+      "model_id": "extra_300_d12",
+      "family": "ExtraTreesClassifier",
+      "supports_tree_shap": 1,
+      "fidelity_accuracy": 0.6986112798088991,
+      "fidelity_f1": 0.19628589937378535,
+      "fidelity_precision": 0.114656912209889,
+      "fidelity_recall": 0.6814092953523239,
+      "fidelity_balanced_accuracy": 0.6905013521486636,
+      "selected": 0
+    },
+    {
+      "rank": 4,
+      "model_id": "logreg_balanced",
+      "family": "LogisticRegression+Imputer+Scaler",
+      "supports_tree_shap": 0,
+      "fidelity_accuracy": 0.5492530061945827,
+      "fidelity_f1": 0.12853228962818003,
+      "fidelity_precision": 0.07175946158552574,
+      "fidelity_recall": 0.6154422788605697,
+      "fidelity_balanced_accuracy": 0.5804581392162895,
+      "selected": 0
+    },
+    {
+      "rank": 5,
+      "model_id": "hgb_400_d8",
+      "family": "HistGradientBoostingClassifier",
+      "supports_tree_shap": 0,
+      "fidelity_accuracy": 0.9459492287137131,
+      "fidelity_f1": 0.038876889848812095,
+      "fidelity_precision": 0.4909090909090909,
+      "fidelity_recall": 0.020239880059970013,
+      "fidelity_balanced_accuracy": 0.509520753212095,
+      "selected": 0
+    }
+  ],
+  "artifacts": [
+    "data_lake/reports/no_source_year_drop_medium_v1/moa_temporal_permutation_summary.csv",
+    "data_lake/reports/no_source_year_drop_medium_v1/moa_temporal_permutation_global.csv",
+    "data_lake/reports/no_source_year_drop_medium_v1/moa_temporal_permutation_by_window.csv",
+    "data_lake/reports/no_source_year_drop_medium_v1/moa_temporal_permutation_shap_agreement.csv",
+    "data_lake/reports/no_source_year_drop_medium_v1/moa_temporal_permutation_heatmap.pdf",
+    "data_lake/reports/no_source_year_drop_medium_v1/moa_surrogate_model_sweep.csv"
+  ]
+}

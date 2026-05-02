@@ -1,0 +1,36 @@
+=== THRESHOLD FRONTIER REPORT ===
+decisions input    : data_lake/reports/no_source_year_track_agnostic_v1_strict/ml_oof_winner_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.csv
+pit evals input    : data_lake/pit_evals_9999_merged_20260416_082923.jsonl
+horizon            : 2
+precision floor    : 0.714919
+threshold points   : 37
+
+selected threshold
+best_threshold     : 0.050000
+best_actionable    : 41381
+best_scored        : 4083
+best_tp            : 3348
+best_fp            : 735
+best_precision     : 0.819985
+best_scored_rate   : 0.098668
+meets_floor        : 1
+
+delta vs reference threshold
+reference_threshold: 0.100000
+reference_scored   : 2605
+reference_precision: 0.853743
+delta_scored       : +1478
+delta_actionable   : +26397
+
+lookahead diagnostics at selected threshold
+no_match_count     : 36373
+no_match_rate      : 0.975200
+one_lap_beyond     : 2950
+two_to_three_beyond: 4755
+four_plus_beyond   : 12107
+in_window_consumed : 5201
+
+artifacts
+summary csv        : data_lake/reports/no_source_year_track_agnostic_v1_strict/threshold_frontier_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.csv
+by year csv        : data_lake/reports/no_source_year_track_agnostic_v1_strict/threshold_frontier_by_year_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.csv
+best comparator    : data_lake/reports/no_source_year_track_agnostic_v1_strict/ml_comparator_best_threshold_2022_2025_racewise_no_source_year_track_agnostic_v1_strict.csv

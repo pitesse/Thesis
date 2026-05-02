@@ -19,6 +19,14 @@ import pandas as pd
 from .data_preparation import _load_jsonl, _prepare_drop_zones, _prepare_features
 from .live_kafka_inference import OnlineFeatureEngineer, _build_drop_zone_lookup
 from .model_training_cv import METADATA_DROP_COLUMNS, TARGET_COLUMN, _prepare_matrix
+from .feature_profiles import (
+    DEFAULT_FEATURE_PROFILE,
+    DEFAULT_TRACK_AGNOSTIC_MODE,
+    available_track_agnostic_modes,
+    build_feature_plan,
+    ensure_track_agnostic_columns,
+    parse_exclude_features,
+)
 
 DEFAULT_DATASET = "data_lake/ml_training_dataset_2022_2025_merged.parquet"
 DEFAULT_BUNDLE = "data_lake/models/pit_strategy_serving_bundle.joblib"
@@ -72,6 +80,15 @@ PARITY_COMPARE_COLUMNS = [
     "gap_to_physical_car",
     "has_drop_zone_data",
     "_source_year",
+    "trackTemp_expanding_z",
+    "airTemp_expanding_z",
+    "humidity_expanding_z",
+    "speedTrap_expanding_z",
+    "lapTime_expanding_z",
+    "race_progress_pct",
+    "lapTime_vs_driver_prev_mean_pct",
+    "lapTime_vs_team_prev_lapbucket_mean_pct",
+    "lapTime_vs_race_prev_lapbucket_mean_pct",
 ]
 
 
@@ -98,13 +115,17 @@ def _normalize_key_frame(df: pd.DataFrame) -> pd.DataFrame:
 def _collect_serving_features(
     ml_features: pd.DataFrame,
     drop_zone_lookup: dict[tuple[str, str, int], tuple[int, float]] | None,
+    track_agnostic_mode: str,
 ) -> pd.DataFrame:
     work = _normalize_key_frame(ml_features)
     # mirror offline prep contract: keep-last dedup before lag-state derivation.
     work = work.drop_duplicates(subset=KEY_COLUMNS, keep="last").copy()
-    work.sort_values(by=KEY_COLUMNS, kind="mergesort", inplace=True)
+    work.sort_values(by=["race", "lapNumber", "driver"], kind="mergesort", inplace=True)
 
-    engineer = OnlineFeatureEngineer(drop_zone_lookup=drop_zone_lookup)
+    engineer = OnlineFeatureEngineer(
+        drop_zone_lookup=drop_zone_lookup,
+        track_agnostic_mode=track_agnostic_mode,
+    )
     rows: list[dict[str, object]] = []
     for event in work.to_dict(orient="records"):
         transformed = engineer.transform(event)
@@ -155,6 +176,36 @@ def parse_args() -> argparse.Namespace:
         default=0.95,
         help="minimum overall parity match rate",
     )
+    parser.add_argument(
+        "--drop-source-year-feature",
+        action="store_true",
+        help="exclude `_source_year` when rebuilding offline training matrix for schema parity",
+    )
+    parser.add_argument(
+        "--feature-profile",
+        default=DEFAULT_FEATURE_PROFILE,
+        help=(
+            "shared feature-profile token for reproducible ablations "
+            "(e.g. baseline, drop_medium_v1, drop_aggressive_v1_candidate, track_agnostic_v1)"
+        ),
+    )
+    parser.add_argument(
+        "--exclude-features",
+        nargs="*",
+        default=[],
+        help=(
+            "optional additional raw feature names to exclude; accepts whitespace and/or comma-separated tokens"
+        ),
+    )
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=available_track_agnostic_modes(),
+        default=DEFAULT_TRACK_AGNOSTIC_MODE,
+        help=(
+            "controls causal race-relative z-score transforms for offline and live feature paths; "
+            "'auto' follows feature-profile defaults"
+        ),
+    )
     parser.add_argument("--summary-output", default=DEFAULT_SUMMARY_OUTPUT, help="summary output csv")
     parser.add_argument("--details-output", default=DEFAULT_DETAILS_OUTPUT, help="details output csv")
     parser.add_argument("--report-output", default=DEFAULT_REPORT_OUTPUT, help="text report output")
@@ -174,6 +225,12 @@ def main() -> None:
     bundle_path = Path(args.bundle)
     ml_features_path = Path(args.ml_features)
     drop_zones_path = Path(args.drop_zones)
+    exclude_features = parse_exclude_features(args.exclude_features)
+    feature_plan = build_feature_plan(
+        feature_profile=args.feature_profile,
+        exclude_features=exclude_features,
+        track_agnostic_mode=args.track_agnostic_mode,
+    )
 
     if not dataset_path.exists():
         raise FileNotFoundError(f"training dataset not found: {dataset_path}")
@@ -185,13 +242,32 @@ def main() -> None:
         raise FileNotFoundError(f"drop_zones file not found: {drop_zones_path}")
 
     dataset = pd.read_parquet(dataset_path) if dataset_path.suffix.lower() == ".parquet" else pd.read_csv(dataset_path)
+    ensure_track_agnostic_columns(
+        list(dataset.columns),
+        track_agnostic_mode=feature_plan.track_agnostic_mode,
+        context_label=f"dataset {dataset_path}",
+    )
     bundle = joblib.load(bundle_path)
     ml_features = _load_jsonl(ml_features_path)
     drop_zones = _prepare_drop_zones(_load_jsonl(drop_zones_path))
     drop_zone_lookup = _build_drop_zone_lookup(drop_zones_path)
-    offline_features = _prepare_features(ml_features, drop_zones)
+    offline_features = _prepare_features(
+        ml_features,
+        drop_zones,
+        track_agnostic_mode=feature_plan.track_agnostic_mode,
+    )
+    ensure_track_agnostic_columns(
+        list(offline_features.columns),
+        track_agnostic_mode=feature_plan.track_agnostic_mode,
+        context_label=f"offline transformed features from {ml_features_path}",
+    )
 
-    training_matrix, _, _, _, _ = _prepare_matrix(dataset)
+    training_matrix, _, _, _, _ = _prepare_matrix(
+        dataset,
+        drop_source_year_feature=bool(args.drop_source_year_feature),
+        feature_profile=feature_plan.feature_profile,
+        exclude_features=list(feature_plan.excluded_features),
+    )
     training_feature_columns = list(training_matrix.columns)
     bundle_feature_columns = list(bundle.get("feature_columns", []))
 
@@ -224,6 +300,30 @@ def main() -> None:
             "name": "bundle_only_columns_count",
             "value": len(bundle_only),
             "note": ";".join(bundle_only[:50]),
+        }
+    )
+    details_rows.append(
+        {
+            "section": "schema",
+            "name": "feature_profile",
+            "value": feature_plan.feature_profile,
+            "note": f"excluded={feature_plan.excluded_features_csv() or 'none'}",
+        }
+    )
+    details_rows.append(
+        {
+            "section": "schema",
+            "name": "track_agnostic_mode",
+            "value": feature_plan.track_agnostic_mode,
+            "note": "resolved track-agnostic mode used for parity replay",
+        }
+    )
+    details_rows.append(
+        {
+            "section": "schema",
+            "name": "drop_source_year_feature",
+            "value": int(bool(args.drop_source_year_feature)),
+            "note": "1 means `_source_year` excluded from offline training matrix rebuild",
         }
     )
 
@@ -282,13 +382,26 @@ def main() -> None:
         }
     )
 
-    serving_features = _collect_serving_features(ml_features, drop_zone_lookup)
+    serving_features = _collect_serving_features(
+        ml_features,
+        drop_zone_lookup,
+        feature_plan.track_agnostic_mode,
+    )
 
     raw_training_features = [
         column
         for column in dataset.columns
         if column != TARGET_COLUMN and column not in METADATA_DROP_COLUMNS
     ]
+    if args.drop_source_year_feature:
+        raw_training_features = [
+            column for column in raw_training_features if column != "_source_year"
+        ]
+    if feature_plan.excluded_features:
+        excluded = set(feature_plan.excluded_features)
+        raw_training_features = [
+            column for column in raw_training_features if column not in excluded
+        ]
     serving_transform_features = sorted(set(serving_features.columns) - set(KEY_COLUMNS))
     missing_in_serving_transform = sorted(set(raw_training_features) - set(serving_transform_features))
     transform_coverage_ok = len(missing_in_serving_transform) == 0

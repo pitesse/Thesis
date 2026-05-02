@@ -1,0 +1,31 @@
+=== SPLIT-INTEGRITY AUDIT REPORT ===
+dataset input          : data_lake/ml_training_dataset_2022_2025_no_source_year_percent_race_team_aggressive_v1.parquet
+oof input              : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/ml_oof_winner_2022_2025_no_source_year_percent_race_team_aggressive_v1.csv
+rows                   : 124136
+unique races           : 96
+expected folds         : 5
+
+check summary
+- race_key_prefix_format: PASS (1.0)
+  note: invalid_prefix_rows=0
+- source_year_prefix_consistency: PASS (1.0)
+  note: mismatch_rows=0
+- grouped_kfold_no_race_overlap: PASS (1.0)
+  note: overlap_folds=0, overlap_races=0
+- oof_fold_uniqueness_per_race: PASS (1.0)
+  note: races_in_multiple_folds=0
+- oof_row_coverage_vs_dataset: FAIL (0.8298559644261133)
+  note: oof_rows=103015, dataset_rows=124136
+- oof_race_universe_match: FAIL (0.0)
+  note: missing_in_oof=22,extra_in_oof=0,sample_missing=2022 :: Abu Dhabi Grand Prix;2022 :: Australian Grand Prix;2022 :: Austrian Grand Prix;2022 :: Azerbaijan Grand Prix;2022 :: Bahrain Grand Prix,sample_extra=
+- oof_fold_count_match: FAIL (14.8)
+  note: observed_folds=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74]
+- split_integrity_overall: FAIL (0.0)
+  note: all split-integrity checks must pass
+
+overall gate           : FAIL
+
+artifacts
+summary csv            : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/split_integrity_summary_2022_2025_no_source_year_percent_race_team_aggressive_v1.csv
+details csv            : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/split_integrity_details_2022_2025_no_source_year_percent_race_team_aggressive_v1.csv
+report txt             : data_lake/reports/no_source_year_percent_race_team_aggressive_v1/split_integrity_report_2022_2025_no_source_year_percent_race_team_aggressive_v1.txt

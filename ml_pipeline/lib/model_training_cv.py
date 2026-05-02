@@ -22,6 +22,15 @@ from sklearn.metrics import average_precision_score, brier_score_loss
 from sklearn.model_selection import GroupKFold
 from xgboost import XGBClassifier
 
+from .feature_profiles import (
+    DEFAULT_FEATURE_PROFILE,
+    DEFAULT_TRACK_AGNOSTIC_MODE,
+    available_track_agnostic_modes,
+    build_feature_plan,
+    ensure_track_agnostic_columns,
+    parse_exclude_features,
+)
+
 
 DEFAULT_DATASET = "data_lake/ml_training_dataset.parquet"
 DEFAULT_FOLDS = 5
@@ -76,8 +85,21 @@ def _load_dataset(path: Path) -> pd.DataFrame:
     return df
 
 
-def _select_feature_columns(columns: Iterable[str]) -> list[str]:
-    return [c for c in columns if c != TARGET_COLUMN and c not in METADATA_DROP_COLUMNS]
+def _select_feature_columns(
+    columns: Iterable[str],
+    *,
+    drop_source_year_feature: bool = False,
+    excluded_features: Iterable[str] | None = None,
+) -> list[str]:
+    excluded = {str(item).strip() for item in (excluded_features or []) if str(item).strip()}
+    feature_cols = [
+        c for c in columns if c != TARGET_COLUMN and c not in METADATA_DROP_COLUMNS
+    ]
+    if drop_source_year_feature:
+        feature_cols = [c for c in feature_cols if c != "_source_year"]
+    if excluded:
+        feature_cols = [c for c in feature_cols if c not in excluded]
+    return feature_cols
 
 
 def _compute_scale_pos_weight(y: pd.Series) -> float:
@@ -90,6 +112,10 @@ def _compute_scale_pos_weight(y: pd.Series) -> float:
 
 def _prepare_matrix(
     df: pd.DataFrame,
+    *,
+    drop_source_year_feature: bool = False,
+    feature_profile: str = DEFAULT_FEATURE_PROFILE,
+    exclude_features: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series, pd.DataFrame]:
     if TARGET_COLUMN not in df.columns:
         raise ValueError(f"missing target column: {TARGET_COLUMN}")
@@ -109,7 +135,16 @@ def _prepare_matrix(
     work[GROUP_COLUMN] = work[GROUP_COLUMN].astype(str)
     source_year = _infer_source_year(work)
 
-    feature_cols = _select_feature_columns(work.columns)
+    feature_plan = build_feature_plan(
+        feature_profile=feature_profile,
+        exclude_features=exclude_features or [],
+    )
+
+    feature_cols = _select_feature_columns(
+        work.columns,
+        drop_source_year_feature=drop_source_year_feature,
+        excluded_features=feature_plan.excluded_features,
+    )
     if not feature_cols:
         raise ValueError("no feature columns remain after metadata drop")
 
@@ -1274,12 +1309,49 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_OOF_OUTPUT,
         help="optional csv output path for winner out-of-fold decisions",
     )
+    parser.add_argument(
+        "--drop-source-year-feature",
+        action="store_true",
+        help="exclude `_source_year` from model features while preserving split-year metadata",
+    )
+    parser.add_argument(
+        "--feature-profile",
+        default=DEFAULT_FEATURE_PROFILE,
+        help=(
+            "shared feature-profile token for reproducible ablations "
+            "(e.g. baseline, drop_medium_v1, drop_aggressive_v1_candidate, "
+            "track_agnostic_v1, percent_conservative_v1, percent_team_v1, percent_race_team_v1)"
+        ),
+    )
+    parser.add_argument(
+        "--exclude-features",
+        nargs="*",
+        default=[],
+        help=(
+            "optional additional raw feature names to exclude; accepts whitespace and/or comma-separated tokens"
+        ),
+    )
+    parser.add_argument(
+        "--track-agnostic-mode",
+        choices=available_track_agnostic_modes(),
+        default=DEFAULT_TRACK_AGNOSTIC_MODE,
+        help=(
+            "metadata flag for resolved track-agnostic dataset mode; "
+            "'auto' follows feature-profile defaults"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     dataset_path = Path(args.dataset)
+    exclude_features = parse_exclude_features(args.exclude_features)
+    feature_plan = build_feature_plan(
+        feature_profile=args.feature_profile,
+        exclude_features=exclude_features,
+        track_agnostic_mode=args.track_agnostic_mode,
+    )
 
     if args.split_protocol == "grouped_race" and args.folds < 2:
         raise ValueError("--folds must be at least 2 when --split-protocol=grouped_race")
@@ -1342,7 +1414,17 @@ def main() -> None:
         raise RuntimeError("ablation grid is empty")
 
     df = _load_dataset(dataset_path)
-    X, y, groups, source_year, meta = _prepare_matrix(df)
+    ensure_track_agnostic_columns(
+        list(df.columns),
+        track_agnostic_mode=feature_plan.track_agnostic_mode,
+        context_label=f"dataset {dataset_path}",
+    )
+    X, y, groups, source_year, meta = _prepare_matrix(
+        df,
+        drop_source_year_feature=bool(args.drop_source_year_feature),
+        feature_profile=feature_plan.feature_profile,
+        exclude_features=list(feature_plan.excluded_features),
+    )
 
     if args.split_protocol == "grouped_race" and groups.nunique() < args.folds:
         raise ValueError(
@@ -1373,6 +1455,12 @@ def main() -> None:
     print(f"rows                    : {len(df)}")
     print(f"usable rows             : {len(y)}")
     print(f"feature columns         : {X.shape[1]}")
+    print(
+        f"drop `_source_year` feat: {bool(args.drop_source_year_feature)}"
+    )
+    print(f"feature profile         : {feature_plan.feature_profile}")
+    print(f"excluded features       : {feature_plan.excluded_features_csv() or 'none'}")
+    print(f"track agnostic mode     : {feature_plan.track_agnostic_mode}")
     print(f"groups (races)          : {groups.nunique()}")
     print(f"source years            : {sorted(source_year.unique().tolist())}")
     print(f"class y=1               : {positives}")
@@ -1501,6 +1589,10 @@ def main() -> None:
         inplace=True,
     )
     leaderboard_df.reset_index(drop=True, inplace=True)
+    leaderboard_df["feature_profile"] = feature_plan.feature_profile
+    leaderboard_df["excluded_features"] = feature_plan.excluded_features_csv()
+    leaderboard_df["track_agnostic_mode"] = feature_plan.track_agnostic_mode
+    leaderboard_df["drop_source_year_feature"] = int(bool(args.drop_source_year_feature))
 
     top_k = min(args.top_k, len(leaderboard_df))
     display_cols = [
@@ -1568,6 +1660,10 @@ def main() -> None:
         winner_config_id = int(winner["config_id"])
         oof_df = pd.concat(oof_frames, ignore_index=True)
         oof_df = oof_df[oof_df["config_id"] == winner_config_id].copy()
+        oof_df["feature_profile"] = feature_plan.feature_profile
+        oof_df["excluded_features"] = feature_plan.excluded_features_csv()
+        oof_df["track_agnostic_mode"] = feature_plan.track_agnostic_mode
+        oof_df["drop_source_year_feature"] = int(bool(args.drop_source_year_feature))
         oof_output_path = Path(args.oof_output)
         oof_output_path.parent.mkdir(parents=True, exist_ok=True)
         oof_df.to_csv(oof_output_path, index=False)
