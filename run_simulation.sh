@@ -23,8 +23,12 @@ SESSION="R"
 SPEED=50
 START_LAP=1
 WITH_ML_INFERENCE=0
+PREPARE_MODE="container"
+SKIP_FASTF1_PREFLIGHT=0
 JOBMANAGER_OVERVIEW_URL="http://localhost:8081/overview"
+JOBMANAGER_JOBS_URL="http://localhost:8081/jobs"
 JOBMANAGER_READY_TIMEOUT_SECONDS=30
+JOB_READY_TIMEOUT_SECONDS=60
 KAFKA_TOPICS=(f1-telemetry f1-laps f1-track-status f1-alerts f1-ml-features f1-ml-predictions)
 SINK_DIRS=(pit_evals pit_suggestions tire_drops lift_coast drop_zones ml_features)
 
@@ -41,6 +45,36 @@ wait_for_jobmanager() {
 		fi
 		sleep 1
 	done
+}
+
+wait_for_flink_job_running() {
+	echo "       Waiting for Flink job to reach RUNNING state..."
+	for i in $(seq 1 "$JOB_READY_TIMEOUT_SECONDS"); do
+		JOBS_JSON=$(curl -sf "$JOBMANAGER_JOBS_URL" 2>/dev/null || true)
+		if [ -z "$JOBS_JSON" ]; then
+			sleep 1
+			continue
+		fi
+		RUNNING_COUNT=$(printf '%s' "$JOBS_JSON" | python3 -c "
+import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    print(0); raise SystemExit
+jobs=data.get('jobs',[])
+running=sum(1 for j in jobs if j.get('status') == 'RUNNING')
+print(running)
+")
+		if [ "${RUNNING_COUNT:-0}" -ge 1 ]; then
+			echo "       Flink job is RUNNING."
+			return
+		fi
+		sleep 1
+	done
+
+	echo "ERROR: Flink job did not reach RUNNING within ${JOB_READY_TIMEOUT_SECONDS}s"
+	echo "       Check logs: docker logs -f flink-jobmanager"
+	exit 1
 }
 
 create_kafka_topics() {
@@ -70,12 +104,11 @@ consolidate_sink_outputs() {
 	while IFS= read -r -d '' file; do
 		files+=("$file")
 	done < <(
-		find "$target_dir" -maxdepth 1 -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) -print0 | sort -z
+		find "$target_dir" -type f \( -name "*.jsonl" -o -name "*.inprogress*" \) -print0 | sort -z
 	)
 
 	if [ "${#files[@]}" -eq 0 ]; then
-		echo ""
-		return
+		return 1
 	fi
 
 	: >"$merged_file"
@@ -84,11 +117,11 @@ consolidate_sink_outputs() {
 	done
 
 	if [ -s "$merged_file" ]; then
-		echo "       Merged: $merged_file"
+		echo "       Merged: $merged_file" >&2
 		echo "$merged_file"
 	else
 		rm -f "$merged_file"
-		echo ""
+		return 1
 	fi
 }
 
@@ -130,6 +163,18 @@ while [[ $# -gt 0 ]]; do
 		WITH_ML_INFERENCE=1
 		shift 1
 		;;
+	--prepare-host)
+		PREPARE_MODE="host"
+		shift 1
+		;;
+	--prepare-container-then-host)
+		PREPARE_MODE="container_then_host"
+		shift 1
+		;;
+	--skip-fastf1-preflight)
+		SKIP_FASTF1_PREFLIGHT=1
+		shift 1
+		;;
 	*)
 		echo "Unknown argument: $1"
 		exit 1
@@ -160,6 +205,12 @@ if [ "$WITH_ML_INFERENCE" -eq 1 ]; then
 	echo " ML Inference: enabled"
 else
 	echo " ML Inference: disabled"
+fi
+echo " Prepare mode: $PREPARE_MODE"
+if [ "$SKIP_FASTF1_PREFLIGHT" -eq 1 ]; then
+	echo " FastF1 preflight: skipped"
+else
+	echo " FastF1 preflight: enabled"
 fi
 echo "========================================"
 
@@ -214,6 +265,7 @@ create_kafka_topics
 echo "[5/7] Submitting Flink job..."
 docker exec flink-jobmanager flink run \
 	-d /opt/flink/usrlib/f1-stream-processor.jar
+wait_for_flink_job_running
 
 # ===========================
 # 6. dashboard is already running via docker compose up
@@ -234,19 +286,58 @@ fi
 echo "[7/7] Starting Python producer (two-stage pipeline)..."
 echo "       Args: --year $YEAR --race \"$RACE\" --session $SESSION --speed $SPEED --start-lap $START_LAP"
 
+if [ "$SKIP_FASTF1_PREFLIGHT" -ne 1 ]; then
+	echo "       Running FastF1 upstream preflight..."
+	if ! "$PROJECT_DIR/scripts/check_f1_api_health.sh"; then
+		echo "ERROR: FastF1 upstream unavailable for required endpoints."
+		echo "       Aborting before replay to avoid partial/invalid artifacts."
+		echo "       Retry later or rerun with --skip-fastf1-preflight if you explicitly want to force."
+		exit 1
+	fi
+fi
+
 # stage 1: prepare parquet (skip if already exists for this race/year/session)
 SAFE_RACE=$(echo "$RACE" | tr ' ' '_')
 PARQUET_FILE="$PROJECT_DIR/data/${YEAR}_${SAFE_RACE}_${SESSION}_prepared.parquet"
+
+run_prepare_stage() {
+	local year="$1"
+	local race="$2"
+	local session="$3"
+
+	if [ "$PREPARE_MODE" = "host" ]; then
+		.venv/bin/python f1-telemetry-producer/src/prepare_race.py \
+			--year "$year" \
+			--race "$race" \
+			--session "$session"
+		return $?
+	fi
+
+	if docker compose -f "$COMPOSE_FILE" run --rm producer \
+		python f1-telemetry-producer/src/prepare_race.py \
+		--year "$year" \
+		--race "$race" \
+		--session "$session"; then
+		return 0
+	fi
+
+	if [ "$PREPARE_MODE" = "container_then_host" ]; then
+		echo "       Container prepare failed, retrying prepare on host .venv..."
+		.venv/bin/python f1-telemetry-producer/src/prepare_race.py \
+			--year "$year" \
+			--race "$race" \
+			--session "$session"
+		return $?
+	fi
+
+	return 1
+}
 
 if [ -f "$PARQUET_FILE" ]; then
 	echo "       Parquet already exists: $PARQUET_FILE (skipping prepare)"
 else
 	echo "       Running prepare_race.py..."
-	docker compose -f "$COMPOSE_FILE" run --rm producer \
-		python f1-telemetry-producer/src/prepare_race.py \
-		--year "$YEAR" \
-		--race "$RACE" \
-		--session "$SESSION"
+	run_prepare_stage "$YEAR" "$RACE" "$SESSION"
 fi
 
 # stage 2: stream to kafka
@@ -269,9 +360,12 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 ML_FEATURES_MERGED=""
 
 for SINK_DIR in pit_evals tire_drops lift_coast drop_zones ml_features pit_suggestions; do
-	MERGED_PATH=$(consolidate_sink_outputs "$SINK_DIR" "$YEAR" "$SAFE_RACE" "$SESSION" "$TIMESTAMP")
-	if [ "$SINK_DIR" = "ml_features" ] && [ -n "$MERGED_PATH" ]; then
-		ML_FEATURES_MERGED="$MERGED_PATH"
+	if MERGED_PATH=$(consolidate_sink_outputs "$SINK_DIR" "$YEAR" "$SAFE_RACE" "$SESSION" "$TIMESTAMP"); then
+		if [ "$SINK_DIR" = "ml_features" ]; then
+			ML_FEATURES_MERGED="$MERGED_PATH"
+		fi
+	else
+		echo "       WARNING: no files found to consolidate for sink '$SINK_DIR'"
 	fi
 done
 
