@@ -24,6 +24,7 @@ from lib.data_preparation import (
     _prepare_drop_zones,
     _prepare_features,
     _prepare_pit_evals,
+    _prepare_pit_timings,
     _print_summary,
     _write_dataset,
 )
@@ -48,10 +49,12 @@ class PreparedSeason:
     ml_features_path: Path
     drop_zones_path: Path
     pit_evals_path: Path
+    pit_timings_path: Path
     manifest_path: Path
     manifest: ReplayManifest
     feature_dedup_stats: dict[str, int | str]
     pit_eval_dedup_stats: dict[str, int | str]
+    pit_timing_dedup_stats: dict[str, int | str]
     dataset: pd.DataFrame
 
 
@@ -84,11 +87,13 @@ def _prepare_one_season(
     ml_features_path = _latest_jsonl(data_lake, "ml_features", year, season_tag)
     drop_zones_path = _latest_jsonl(data_lake, "drop_zones", year, season_tag)
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", year, season_tag)
+    pit_timings_path = _latest_jsonl(data_lake, "pit_timings", year, season_tag)
     manifest = _load_manifest_with_fallback(data_lake, year, season_tag)
 
     features_raw = _load_jsonl(ml_features_path)
     drop_zones_raw = _load_jsonl(drop_zones_path)
     pit_evals_raw = _load_jsonl(pit_evals_path)
+    pit_timings_raw = _load_jsonl(pit_timings_path)
     validate_frame_against_manifest(
         features_raw,
         manifest,
@@ -110,6 +115,13 @@ def _prepare_one_season(
         allow_prefixed_race=False,
         require_full_race_coverage=False,
     )
+    validate_frame_against_manifest(
+        pit_timings_raw,
+        manifest,
+        context_label=f"pit_timings year={year}",
+        allow_prefixed_race=False,
+        require_full_race_coverage=False,
+    )
 
     drop_zones = _prepare_drop_zones(drop_zones_raw)
     features = _prepare_features(
@@ -119,14 +131,17 @@ def _prepare_one_season(
         track_agnostic_mode=track_agnostic_mode,
     )
     pit_evals = _prepare_pit_evals(pit_evals_raw)
+    pit_timings = _prepare_pit_timings(pit_timings_raw)
     feature_dedup_stats = dict(features.attrs.get("dedup_stats", {}))
     pit_eval_dedup_stats = dict(pit_evals.attrs.get("dedup_stats", {}))
+    pit_timing_dedup_stats = dict(pit_timings.attrs.get("dedup_stats", {}))
 
     # keep race keys unique across seasons to preserve grouped-CV integrity.
     features = _with_year_prefixed_race(features, year)
     pit_evals = _with_year_prefixed_race(pit_evals, year)
+    pit_timings = _with_year_prefixed_race(pit_timings, year)
 
-    dataset = _build_targets(features, pit_evals, horizon)
+    dataset = _build_targets(features, pit_evals, pit_timings, horizon)
     expected_prefixed_races = {f"{year} :: {race}" for race in manifest.races_in_order}
     observed_prefixed_races = set(dataset["race"].astype(str).dropna().unique())
     missing_prefixed = sorted(expected_prefixed_races - observed_prefixed_races)
@@ -147,10 +162,12 @@ def _prepare_one_season(
         ml_features_path=ml_features_path,
         drop_zones_path=drop_zones_path,
         pit_evals_path=pit_evals_path,
+        pit_timings_path=pit_timings_path,
         manifest_path=manifest.path,
         manifest=manifest,
         feature_dedup_stats=feature_dedup_stats,
         pit_eval_dedup_stats=pit_eval_dedup_stats,
+        pit_timing_dedup_stats=pit_timing_dedup_stats,
         dataset=dataset,
     )
 
@@ -235,6 +252,7 @@ def _print_multi_season_summary(
         print(f"{item.year}: ml_features={item.ml_features_path}")
         print(f"{item.year}: drop_zones={item.drop_zones_path}")
         print(f"{item.year}: pit_evals={item.pit_evals_path}")
+        print(f"{item.year}: pit_timings={item.pit_timings_path}")
         print(f"{item.year}: replay_manifest={item.manifest_path}")
         print(
             f"{item.year}: ml_features_dedup_excess={item.feature_dedup_stats.get('dedup_excess_rows_before', 0)} "
@@ -244,12 +262,20 @@ def _print_multi_season_summary(
             f"{item.year}: pit_evals_dedup_excess={item.pit_eval_dedup_stats.get('dedup_excess_rows_before', 0)} "
             f"-> {item.pit_eval_dedup_stats.get('dedup_excess_rows_after', 0)}"
         )
+        print(
+            f"{item.year}: pit_timings_dedup_excess={item.pit_timing_dedup_stats.get('dedup_excess_rows_before', 0)} "
+            f"-> {item.pit_timing_dedup_stats.get('dedup_excess_rows_after', 0)}"
+        )
         print(f"{item.year}: rows={len(item.dataset)}")
 
     print("\nclass distribution")
     print(f"y=1 positives     : {positives} ({pos_ratio:.4%})")
     print(f"y=0 negatives     : {negatives} ({1.0 - pos_ratio:.4%})")
     print(f"scale_pos_weight  : {scale_pos_weight:.6f}")
+    if "target_pit_any_h2" in merged.columns:
+        any_pos = int((merged["target_pit_any_h2"] == 1).sum())
+        any_ratio = (any_pos / total) if total else 0.0
+        print(f"pit_any positives : {any_pos} ({any_ratio:.4%})")
 
 
 def prepare_dataset(
@@ -293,11 +319,13 @@ def prepare_dataset(
             ml_features_path=season.ml_features_path,
             drop_zones_path=season.drop_zones_path,
             pit_evals_path=season.pit_evals_path,
+            pit_timings_path=season.pit_timings_path,
             output_path=saved_path,
             output_format=output_format,
             track_agnostic_mode=feature_plan.track_agnostic_mode,
             feature_dedup_stats=season.feature_dedup_stats,
             pit_eval_dedup_stats=season.pit_eval_dedup_stats,
+            pit_timing_dedup_stats=season.pit_timing_dedup_stats,
         )
         print(f"replay manifest   : {season.manifest_path}")
         print(f"feature profile    : {feature_plan.feature_profile}")

@@ -66,6 +66,14 @@ REQUIRED_PIT_EVAL_COLUMNS = [
     "result",
 ]
 
+REQUIRED_PIT_TIMING_COLUMNS = [
+    "race",
+    "driver",
+    "lapNumber",
+    "pitInTime",
+    "pitOutTime",
+]
+
 REQUIRED_DROP_ZONE_COLUMNS = [
     "race",
     "driver",
@@ -564,6 +572,44 @@ def _prepare_pit_evals(pit_evals: pd.DataFrame) -> pd.DataFrame:
     return work
 
 
+def _prepare_pit_timings(pit_timings: pd.DataFrame) -> pd.DataFrame:
+    _require_columns(pit_timings, REQUIRED_PIT_TIMING_COLUMNS, "pit_timings")
+
+    work = pit_timings.copy()
+    work["race"] = work["race"].astype(str)
+    work["driver"] = work["driver"].astype(str)
+
+    work["lapNumber"] = pd.to_numeric(work["lapNumber"], errors="coerce")
+    work = work[work["lapNumber"].notna()].copy()
+    work["lapNumber"] = work["lapNumber"].astype(int)
+
+    dedup_keys_before, dedup_excess_before = _duplicate_key_stats(
+        work, ["race", "driver", "lapNumber"]
+    )
+    work = work.drop_duplicates(
+        subset=["race", "driver", "lapNumber"],
+        keep="last",
+    ).copy()
+    dedup_keys_after, dedup_excess_after = _duplicate_key_stats(
+        work, ["race", "driver", "lapNumber"]
+    )
+
+    work["pitInTime"] = pd.to_numeric(work["pitInTime"], errors="coerce")
+    work["pitOutTime"] = pd.to_numeric(work["pitOutTime"], errors="coerce")
+    work["date"] = work.get("date", pd.Series([pd.NA] * len(work), index=work.index))
+
+    work.sort_values(by=["race", "driver", "lapNumber"], inplace=True)
+    work.reset_index(drop=True, inplace=True)
+    work.attrs["dedup_stats"] = {
+        "key_columns": "race,driver,lapNumber",
+        "dedup_keys_before": dedup_keys_before,
+        "dedup_excess_rows_before": dedup_excess_before,
+        "dedup_keys_after": dedup_keys_after,
+        "dedup_excess_rows_after": dedup_excess_after,
+    }
+    return work
+
+
 def _prepare_drop_zones(drop_zones: pd.DataFrame) -> pd.DataFrame:
     _require_columns(drop_zones, REQUIRED_DROP_ZONE_COLUMNS, "drop_zones")
 
@@ -616,15 +662,24 @@ def _prepare_drop_zones(drop_zones: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_targets(
-    features: pd.DataFrame, pit_evals: pd.DataFrame, horizon: int
+    features: pd.DataFrame,
+    pit_evals: pd.DataFrame,
+    pit_timings: pd.DataFrame,
+    horizon: int,
 ) -> pd.DataFrame:
     dataset = features.copy()
+    dataset["target_pit_success_h2"] = 0
+    dataset["target_pit_any_h2"] = 0
     dataset["target_y"] = 0
+    dataset["matched_pit_lap_success"] = pd.NA
+    dataset["matched_pit_lap_any"] = pd.NA
     dataset["matched_pit_lap"] = pd.NA
     dataset["matched_pit_result"] = "NO_PIT_IN_WINDOW"
+    dataset["matched_pit_in_time"] = np.nan
+    dataset["matched_pit_out_time"] = np.nan
     dataset["label_horizon_laps"] = horizon
 
-    grouped_pits: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
+    grouped_eval_pits: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
     for key, grp in pit_evals.groupby(["race", "driver"], sort=False):
         if not isinstance(key, tuple) or len(key) != 2:
             continue
@@ -632,7 +687,18 @@ def _build_targets(
         driver_key = str(key[1])
         laps = grp["pitLapNumber"].to_numpy(dtype=np.int64)
         results = grp["result_norm"].to_numpy(dtype=object)
-        grouped_pits[(race_key, driver_key)] = (laps, results)
+        grouped_eval_pits[(race_key, driver_key)] = (laps, results)
+
+    grouped_any_pits: dict[tuple[str, str], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    for key, grp in pit_timings.groupby(["race", "driver"], sort=False):
+        if not isinstance(key, tuple) or len(key) != 2:
+            continue
+        race_key = str(key[0])
+        driver_key = str(key[1])
+        laps = grp["lapNumber"].to_numpy(dtype=np.int64)
+        pit_in_times = pd.to_numeric(grp["pitInTime"], errors="coerce").to_numpy(dtype=float)
+        pit_out_times = pd.to_numeric(grp["pitOutTime"], errors="coerce").to_numpy(dtype=float)
+        grouped_any_pits[(race_key, driver_key)] = (laps, pit_in_times, pit_out_times)
 
     positive_array = np.array(sorted(POSITIVE_RESULTS), dtype=object)
 
@@ -642,49 +708,79 @@ def _build_targets(
         race = str(key[0])
         driver = str(key[1])
 
-        pit_data = grouped_pits.get((race, driver))
-        if pit_data is None:
-            continue
-
-        pit_laps, pit_results = pit_data
-        if pit_laps.size == 0:
-            continue
-
         row_idx = np.asarray(list(idx), dtype=np.int64)
         row_laps = dataset.loc[row_idx, "lapNumber"].to_numpy(dtype=np.int64)
 
-        # pick the first pit strictly after lap k, matching the [k+1, k+h] window contract.
-        search_idx = np.searchsorted(pit_laps, row_laps + 1, side="left")
-        valid = search_idx < pit_laps.size
-        if not np.any(valid):
-            continue
+        # success target: nearest future evaluated pit in [k+1, k+h].
+        eval_pit_data = grouped_eval_pits.get((race, driver))
+        if eval_pit_data is not None:
+            pit_laps, pit_results = eval_pit_data
+            if pit_laps.size > 0:
+                search_idx = np.searchsorted(pit_laps, row_laps + 1, side="left")
+                valid = search_idx < pit_laps.size
+                safe_idx = np.where(valid, search_idx, pit_laps.size - 1)
+                candidate_laps = pit_laps[safe_idx]
+                in_window = valid & (candidate_laps <= (row_laps + horizon))
+                candidate_results = pit_results[safe_idx]
+                positive_mask = in_window & np.isin(candidate_results, positive_array)
 
-        safe_idx = np.where(valid, search_idx, pit_laps.size - 1)
-        candidate_laps = pit_laps[safe_idx]
-        in_window = valid & (candidate_laps <= (row_laps + horizon))
-        if not np.any(in_window):
-            continue
+                dataset.loc[row_idx, "target_pit_success_h2"] = positive_mask.astype(int)
+                dataset.loc[row_idx, "matched_pit_lap_success"] = np.where(
+                    in_window,
+                    candidate_laps.astype(float),
+                    np.nan,
+                )
+                dataset.loc[row_idx, "matched_pit_result"] = np.where(
+                    in_window,
+                    candidate_results,
+                    "NO_PIT_IN_WINDOW",
+                )
 
-        # assign labels from the nearest valid future pit only to avoid multi-target leakage.
-        candidate_results = pit_results[safe_idx]
-        positive_mask = in_window & np.isin(candidate_results, positive_array)
+        # any-pit target: nearest future FastF1 pit timing in [k+1, k+h].
+        any_pit_data = grouped_any_pits.get((race, driver))
+        if any_pit_data is not None:
+            pit_laps_any, pit_in_any, pit_out_any = any_pit_data
+            if pit_laps_any.size > 0:
+                search_idx_any = np.searchsorted(pit_laps_any, row_laps + 1, side="left")
+                valid_any = search_idx_any < pit_laps_any.size
+                safe_idx_any = np.where(valid_any, search_idx_any, pit_laps_any.size - 1)
+                candidate_laps_any = pit_laps_any[safe_idx_any]
+                in_window_any = valid_any & (candidate_laps_any <= (row_laps + horizon))
 
-        dataset.loc[row_idx, "target_y"] = positive_mask.astype(int)
-        dataset.loc[row_idx, "matched_pit_lap"] = np.where(
-            in_window,
-            candidate_laps.astype(float),
-            np.nan,
-        )
-        dataset.loc[row_idx, "matched_pit_result"] = np.where(
-            in_window,
-            candidate_results,
-            "NO_PIT_IN_WINDOW",
-        )
+                dataset.loc[row_idx, "target_pit_any_h2"] = in_window_any.astype(int)
+                dataset.loc[row_idx, "matched_pit_lap_any"] = np.where(
+                    in_window_any,
+                    candidate_laps_any.astype(float),
+                    np.nan,
+                )
+                dataset.loc[row_idx, "matched_pit_in_time"] = np.where(
+                    in_window_any,
+                    pit_in_any[safe_idx_any],
+                    np.nan,
+                )
+                dataset.loc[row_idx, "matched_pit_out_time"] = np.where(
+                    in_window_any,
+                    pit_out_any[safe_idx_any],
+                    np.nan,
+                )
 
-    dataset["target_y"] = dataset["target_y"].astype(int)
-    dataset["matched_pit_lap"] = pd.to_numeric(
-        dataset["matched_pit_lap"], errors="coerce"
+    dataset["target_pit_success_h2"] = dataset["target_pit_success_h2"].astype(int)
+    dataset["target_pit_any_h2"] = dataset["target_pit_any_h2"].astype(int)
+    dataset["target_y"] = dataset["target_pit_success_h2"].astype(int)
+
+    dataset["matched_pit_lap_success"] = pd.to_numeric(
+        dataset["matched_pit_lap_success"], errors="coerce"
     ).astype("Int64")
+    dataset["matched_pit_lap_any"] = pd.to_numeric(
+        dataset["matched_pit_lap_any"], errors="coerce"
+    ).astype("Int64")
+    dataset["matched_pit_lap"] = dataset["matched_pit_lap_success"].astype("Int64")
+    dataset["matched_pit_in_time"] = pd.to_numeric(
+        dataset["matched_pit_in_time"], errors="coerce"
+    )
+    dataset["matched_pit_out_time"] = pd.to_numeric(
+        dataset["matched_pit_out_time"], errors="coerce"
+    )
     return dataset
 
 
@@ -719,11 +815,13 @@ def _print_summary(
     ml_features_path: Path,
     drop_zones_path: Path,
     pit_evals_path: Path,
+    pit_timings_path: Path,
     output_path: Path,
     output_format: str,
     track_agnostic_mode: str = TRACK_AGNOSTIC_OFF,
     feature_dedup_stats: dict[str, int | str] | None = None,
     pit_eval_dedup_stats: dict[str, int | str] | None = None,
+    pit_timing_dedup_stats: dict[str, int | str] | None = None,
 ) -> None:
     positives = int((dataset["target_y"] == 1).sum())
     negatives = int((dataset["target_y"] == 0).sum())
@@ -739,6 +837,7 @@ def _print_summary(
     print(f"ml_features input : {ml_features_path}")
     print(f"drop_zones input  : {drop_zones_path}")
     print(f"pit_evals input   : {pit_evals_path}")
+    print(f"pit_timings input : {pit_timings_path}")
     print(f"output            : {output_path} ({output_format})")
     print(f"shape             : {dataset.shape}")
     print(f"track agnostic    : {track_agnostic_mode}")
@@ -751,6 +850,10 @@ def _print_summary(
     print("\nlabel coverage diagnostics")
     print(f"rows with pit in look-ahead window: {matched}")
     print(f"rows without pit in look-ahead     : {total - matched}")
+    if "target_pit_any_h2" in dataset.columns:
+        any_positive = int((dataset["target_pit_any_h2"] == 1).sum())
+        print(f"rows with any pit in look-ahead    : {any_positive}")
+        print(f"rows without any pit in look-ahead : {total - any_positive}")
 
     with_drop_zone = (
         int(dataset["has_drop_zone_data"].sum())
@@ -760,7 +863,11 @@ def _print_summary(
     print("\ntraffic context diagnostics")
     print(f"rows with drop-zones context       : {with_drop_zone}")
     print(f"rows without drop-zones context    : {total - with_drop_zone}")
-    if feature_dedup_stats is not None or pit_eval_dedup_stats is not None:
+    if (
+        feature_dedup_stats is not None
+        or pit_eval_dedup_stats is not None
+        or pit_timing_dedup_stats is not None
+    ):
         print("\ndedup diagnostics")
     if feature_dedup_stats is not None:
         print(
@@ -777,6 +884,14 @@ def _print_summary(
             f"excess_before={pit_eval_dedup_stats.get('dedup_excess_rows_before', 0)}, "
             f"after={pit_eval_dedup_stats.get('dedup_keys_after', 0)}, "
             f"excess_after={pit_eval_dedup_stats.get('dedup_excess_rows_after', 0)}"
+        )
+    if pit_timing_dedup_stats is not None:
+        print(
+            "pit_timings keys              : "
+            f"before={pit_timing_dedup_stats.get('dedup_keys_before', 0)}, "
+            f"excess_before={pit_timing_dedup_stats.get('dedup_excess_rows_before', 0)}, "
+            f"after={pit_timing_dedup_stats.get('dedup_keys_after', 0)}, "
+            f"excess_after={pit_timing_dedup_stats.get('dedup_excess_rows_after', 0)}"
         )
 
 
@@ -823,10 +938,12 @@ def main() -> None:
     )
     drop_zones_path = _latest_jsonl(data_lake, "drop_zones", args.year, args.season_tag)
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", args.year, args.season_tag)
+    pit_timings_path = _latest_jsonl(data_lake, "pit_timings", args.year, args.season_tag)
 
     features_raw = _load_jsonl(ml_features_path)
     drop_zones_raw = _load_jsonl(drop_zones_path)
     pit_evals_raw = _load_jsonl(pit_evals_path)
+    pit_timings_raw = _load_jsonl(pit_timings_path)
 
     drop_zones = _prepare_drop_zones(drop_zones_raw)
     features = _prepare_features(
@@ -836,8 +953,9 @@ def main() -> None:
         track_agnostic_mode=args.track_agnostic_mode,
     )
     pit_evals = _prepare_pit_evals(pit_evals_raw)
+    pit_timings = _prepare_pit_timings(pit_timings_raw)
 
-    dataset = _build_targets(features, pit_evals, args.horizon)
+    dataset = _build_targets(features, pit_evals, pit_timings, args.horizon)
 
     output_path = Path(args.output)
     if not output_path.is_absolute():
@@ -852,11 +970,13 @@ def main() -> None:
         ml_features_path=ml_features_path,
         drop_zones_path=drop_zones_path,
         pit_evals_path=pit_evals_path,
+        pit_timings_path=pit_timings_path,
         output_path=saved_path,
         output_format=output_format,
         track_agnostic_mode=args.track_agnostic_mode,
         feature_dedup_stats=features.attrs.get("dedup_stats"),
         pit_eval_dedup_stats=pit_evals.attrs.get("dedup_stats"),
+        pit_timing_dedup_stats=pit_timings.attrs.get("dedup_stats"),
     )
 
 

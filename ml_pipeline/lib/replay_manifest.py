@@ -145,17 +145,18 @@ def validate_frame_against_manifest(
                 f"{context_label}: race keys must be unprefixed; examples={examples}"
             )
 
-    work["_race_unprefixed"] = work[race_column].map(strip_year_prefix)
+    race_unprefixed_col = "race_unprefixed_tmp"
+    work[race_unprefixed_col] = work[race_column].map(strip_year_prefix)
 
     known_races = set(manifest.races_in_order)
-    observed_races = set(work["_race_unprefixed"].dropna().astype(str))
+    observed_races = set(work[race_unprefixed_col].dropna().astype(str))
     missing_races = sorted(known_races - observed_races)
     extra_races = sorted(observed_races - known_races)
 
     invalid_pairs: list[tuple[str, str]] = []
-    pair_frame = work[["_race_unprefixed", driver_column]].drop_duplicates()
+    pair_frame = work[[race_unprefixed_col, driver_column]].drop_duplicates()
     for row in pair_frame.itertuples(index=False):
-        race = str(getattr(row, "_race_unprefixed"))
+        race = str(getattr(row, race_unprefixed_col))
         driver = str(getattr(row, driver_column))
         if race not in known_races:
             continue

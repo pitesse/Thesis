@@ -20,6 +20,7 @@ from pipeline_config import (
 )
 from prep_data import prepare_dataset
 from lib.model_training_cv import TARGET_COLUMN, _load_dataset, _prepare_matrix
+from lib.model_training_cv import DEFAULT_TARGET_COLUMN
 from lib.feature_profiles import (
     DEFAULT_FEATURE_PROFILE,
     DEFAULT_TRACK_AGNOSTIC_MODE,
@@ -79,6 +80,7 @@ def _write_schema_manifest(
     excluded_features: list[str],
     drop_source_year_feature: bool,
     track_agnostic_mode: str,
+    target_column_source: str,
 ) -> None:
     manifest = {
         "relation": "moa_pit_strategy",
@@ -86,6 +88,7 @@ def _write_schema_manifest(
         "csv_output": str(csv_output),
         "arff_output": str(arff_output),
         "target_column": TARGET_COLUMN,
+        "target_column_source": target_column_source,
         "target_labels": [0, 1],
         "row_count": int(len(target)),
         "feature_count": int(features.shape[1]),
@@ -116,6 +119,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token in JSONL filenames")
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="look-ahead horizon in laps")
     parser.add_argument("--dataset", default="", help="prepared training dataset path")
+    parser.add_argument(
+        "--target-column",
+        default=DEFAULT_TARGET_COLUMN,
+        help="binary target column to export as MOA label",
+    )
     parser.add_argument(
         "--prepare-data",
         dest="prepare_data",
@@ -208,6 +216,7 @@ def main() -> None:
     )
     X, y, groups, source_year, _ = _prepare_matrix(
         df,
+        target_column=args.target_column,
         drop_source_year_feature=bool(args.drop_source_year_feature),
         feature_profile=feature_plan.feature_profile,
         exclude_features=list(feature_plan.excluded_features),
@@ -238,12 +247,14 @@ def main() -> None:
         excluded_features=list(feature_plan.excluded_features),
         drop_source_year_feature=bool(args.drop_source_year_feature),
         track_agnostic_mode=feature_plan.track_agnostic_mode,
+        target_column_source=str(args.target_column),
     )
 
     print("=== MOA DATASET EXPORT SUMMARY ===")
     print(f"input dataset : {dataset_path}")
     print(f"rows          : {len(moa_df)}")
     print(f"features      : {X.shape[1]}")
+    print(f"target source : {args.target_column}")
     print(f"drop `_source_year`: {bool(args.drop_source_year_feature)}")
     print(f"feature profile: {feature_plan.feature_profile}")
     print(

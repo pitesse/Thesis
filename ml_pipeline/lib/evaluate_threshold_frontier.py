@@ -19,10 +19,12 @@ from .comparator_heuristic import (
     DEFAULT_HORIZON,
     DEFAULT_SEASON_TAG,
     DEFAULT_YEAR,
+    OUTCOME_MODES,
+    OUTCOME_PIT_ANY_H2,
+    OUTCOME_PIT_SUCCESS_H2,
     _build_comparator_dataset,
     _latest_jsonl,
     _load_jsonl,
-    _prepare_pit_evals,
 )
 from .comparator_ml import _load_ml_decisions
 
@@ -239,6 +241,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--year", type=int, default=DEFAULT_YEAR, help="season year token")
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token")
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="matching horizon in laps")
+    parser.add_argument(
+        "--outcome-mode",
+        choices=sorted(OUTCOME_MODES),
+        default=OUTCOME_PIT_SUCCESS_H2,
+        help="comparator outcome contract: success-only pits or any pit timing in window",
+    )
+    parser.add_argument(
+        "--pit-timings",
+        default="",
+        help="optional pit_timings jsonl path (required for --outcome-mode pit_any_h2)",
+    )
     parser.add_argument("--min-threshold", type=float, default=DEFAULT_MIN_THRESHOLD, help="minimum threshold")
     parser.add_argument("--max-threshold", type=float, default=DEFAULT_MAX_THRESHOLD, help="maximum threshold")
     parser.add_argument("--points", type=int, default=DEFAULT_POINTS, help="number of threshold points")
@@ -277,7 +290,16 @@ def main() -> None:
         thresholds = [float(x) for x in np.linspace(args.min_threshold, args.max_threshold, args.points)]
 
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", args.year, args.season_tag)
-    pit_evals = _prepare_pit_evals(_load_jsonl(pit_evals_path))
+    pit_evals = _load_jsonl(pit_evals_path)
+    pit_timings_path: Path | None = None
+    pit_timings_df: pd.DataFrame | None = None
+    if args.outcome_mode == OUTCOME_PIT_ANY_H2:
+        pit_timings_path = (
+            Path(args.pit_timings)
+            if args.pit_timings
+            else _latest_jsonl(data_lake, "pit_timings", args.year, args.season_tag)
+        )
+        pit_timings_df = _load_jsonl(pit_timings_path)
 
     summary_rows: list[dict[str, float | int]] = []
     by_year_rows: list[dict[str, float | int | str]] = []
@@ -289,7 +311,13 @@ def main() -> None:
             summary_rows.append(_empty_summary(threshold, args.precision_floor, args.sde_scored_baseline))
             continue
 
-        comparator = _build_comparator_dataset(suggestions, pit_evals, args.horizon)
+        comparator = _build_comparator_dataset(
+            suggestions,
+            pit_evals,
+            args.horizon,
+            outcome_mode=args.outcome_mode,
+            pit_timings=pit_timings_df,
+        )
         summary_rows.append(
             _summarize_comparator(
                 comparator,
@@ -313,7 +341,13 @@ def main() -> None:
     if best_suggestions.empty:
         best_comparator = pd.DataFrame()
     else:
-        best_comparator = _build_comparator_dataset(best_suggestions, pit_evals, args.horizon)
+        best_comparator = _build_comparator_dataset(
+            best_suggestions,
+            pit_evals,
+            args.horizon,
+            outcome_mode=args.outcome_mode,
+            pit_timings=pit_timings_df,
+        )
 
     output_path = Path(args.output)
     by_year_output_path = Path(args.by_year_output)
@@ -336,6 +370,8 @@ def main() -> None:
         "=== THRESHOLD FRONTIER REPORT ===",
         f"decisions input    : {decisions_path}",
         f"pit evals input    : {pit_evals_path}",
+        f"pit timings input  : {pit_timings_path if pit_timings_path is not None else 'N/A'}",
+        f"outcome mode       : {args.outcome_mode}",
         f"horizon            : {args.horizon}",
         f"precision floor    : {args.precision_floor:.6f}",
         f"threshold points   : {len(thresholds)}",

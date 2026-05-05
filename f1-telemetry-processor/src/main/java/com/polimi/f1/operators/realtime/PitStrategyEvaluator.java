@@ -89,6 +89,14 @@ public class PitStrategyEvaluator
     private static final double EARLY_ACTION_MIN_PACE_ESCALATION = 18.0;
     private static final double EARLY_ACTION_MIN_TIMING_PRESSURE = 3.5;
     private static final double EARLY_ACTION_MIN_PACE_ACCELERATION = 0.001;
+    private static final int DECISION_EPISODE_HORIZON_LAPS = 2;
+    private static final double MAX_CONFIDENCE_PENALTY = 12.0;
+    private static final double CONFIDENCE_PENALTY_ACTIONABLE = 6.0;
+    private static final double LOW_CONFIDENCE_THRESHOLD = 0.45;
+    private static final double MIN_CONFIDENCE_FOR_ACTIONABLE = 0.30;
+    private static final double MAX_COMPETITIVE_PRESSURE = 8.0;
+    private static final double COMPETITIVE_GAP_REF = 1.8;
+    private static final int COMPETITIVE_RIVAL_PIT_WINDOW = 2;
 
     private static final double MAX_TIMING_PRESSURE_SCORE = 10.0;
     private static final double TIMING_PRESSURE_MIN_URGENCY = 8.0;
@@ -182,6 +190,11 @@ public class PitStrategyEvaluator
     // cache latest observed race progress for broadcast urgency fast-path
     private transient MapState<String, Integer> lastCompletedLap;
 
+    // episode gating state: one actionable decision episode per driver inside H=2.
+    private transient MapState<String, Integer> activeEpisodeStartLap;
+    private transient MapState<String, String> episodeCloseReason;
+    private transient MapState<String, Integer> lastObservedPitLap;
+
     // max observed lap across all events, used as a stall-safe progress trigger
     private transient ValueState<Integer> maxLapState;
 
@@ -248,6 +261,21 @@ public class PitStrategyEvaluator
         lastLapDesc.enableTimeToLive(ttlConfig);
         lastCompletedLap = getRuntimeContext().getMapState(lastLapDesc);
 
+        MapStateDescriptor<String, Integer> episodeStartDesc
+                = new MapStateDescriptor<>("strategy-active-episode-start-lap", Types.STRING, Types.INT);
+        episodeStartDesc.enableTimeToLive(ttlConfig);
+        activeEpisodeStartLap = getRuntimeContext().getMapState(episodeStartDesc);
+
+        MapStateDescriptor<String, String> episodeReasonDesc
+                = new MapStateDescriptor<>("strategy-episode-close-reason", Types.STRING, Types.STRING);
+        episodeReasonDesc.enableTimeToLive(ttlConfig);
+        episodeCloseReason = getRuntimeContext().getMapState(episodeReasonDesc);
+
+        MapStateDescriptor<String, Integer> lastPitLapDesc
+                = new MapStateDescriptor<>("strategy-last-observed-pit-lap", Types.STRING, Types.INT);
+        lastPitLapDesc.enableTimeToLive(ttlConfig);
+        lastObservedPitLap = getRuntimeContext().getMapState(lastPitLapDesc);
+
         ValueStateDescriptor<Integer> maxLapDesc
                 = new ValueStateDescriptor<>("strategy-max-lap", Types.INT);
         maxLapDesc.enableTimeToLive(ttlConfig);
@@ -269,6 +297,8 @@ public class PitStrategyEvaluator
         latestGridState.put(driver, event);
         updateMaxStint(event);
         updateDriverState(event);
+        closeDecisionEpisodeOnPit(event);
+        closeExpiredDecisionEpisodes(event.getLapNumber());
 
         Integer maxLap = maxLapState.value();
         if (maxLap == null) {
@@ -361,6 +391,8 @@ public class PitStrategyEvaluator
             state.setGapToCarAheadDelta(0.0);
             peakScores.put(driver, 0.0);
             lostChanceEmitted.put(driver, false);
+            activeEpisodeStartLap.remove(driver);
+            episodeCloseReason.put(driver, "stint_change");
         }
 
         state.setLastCompound(event.getCompound());
@@ -452,6 +484,9 @@ public class PitStrategyEvaluator
             double urgencyScore = computeUrgencyScore(current);
             double rivalPitReactionBoost = computeRivalPitReactionBoost(current, laps, i);
             double actionUrgencyScore = Math.min(30.0, urgencyScore + rivalPitReactionBoost);
+            double competitivePressure = computeCompetitivePressure(current, laps, i);
+            double signalConfidence = computeSignalConfidence(current, laps, i, driverState);
+            double uncertaintyPenalty = computeUncertaintyPenalty(signalConfidence, currentTrackStatus);
             double timingPressureScore = computeTimingPressureScore(
                     driverState,
                     urgencyScore,
@@ -462,7 +497,8 @@ public class PitStrategyEvaluator
             double endOfRacePenalty = computeEndOfRacePenalty(current);
 
             double totalScore = paceScore + trackStatusScore + traffic.score
-                    + strategyPenalty + actionUrgencyScore + timingPressureScore + endOfRacePenalty;
+                    + strategyPenalty + actionUrgencyScore + timingPressureScore + endOfRacePenalty
+                    + competitivePressure - uncertaintyPenalty;
             totalScore = Math.max(0.0, Math.min(100.0, totalScore));
 
             // update peak score for lost_chance detection
@@ -513,10 +549,20 @@ public class PitStrategyEvaluator
                     rivalPitReactionBoost,
                     timingPressureScore,
                     paceRatioDelta);
+            label = applyAdaptiveRegimeActionabilityGate(
+                    label,
+                    totalScore,
+                    current,
+                    currentTrackStatus,
+                    signalConfidence);
 
             // emit-gate: check if we should suppress this alert
             if (!shouldEmit(driver, current.getStint(), current.getLapNumber(),
                     totalScore, currentTrackStatus, label, timingPressureScore, actionUrgencyScore)) {
+                continue;
+            }
+
+            if (isActionableLabel(label) && isDecisionEpisodeActive(driver, current.getLapNumber())) {
                 continue;
             }
 
@@ -526,6 +572,9 @@ public class PitStrategyEvaluator
             lastEmittedTrackStatus.put(driver, currentTrackStatus);
             lastEmittedLap.put(driver, current.getLapNumber());
             lastEmittedTimingPressure.put(driver, timingPressureScore);
+            if (isActionableLabel(label)) {
+                openDecisionEpisode(driver, current.getLapNumber());
+            }
 
             emitAlert(current, totalScore, paceScore, trackStatusScore,
                     traffic, strategyPenalty, actionUrgencyScore, endOfRacePenalty,
@@ -704,6 +753,182 @@ public class PitStrategyEvaluator
             return label;
         }
         return SuggestionLabel.MONITOR;
+    }
+
+    private SuggestionLabel applyAdaptiveRegimeActionabilityGate(
+            SuggestionLabel label,
+            double totalScore,
+            LapEvent current,
+            String trackStatus,
+            double signalConfidence) {
+        if (!isActionableLabel(label)) {
+            return label;
+        }
+
+        if (signalConfidence < MIN_CONFIDENCE_FOR_ACTIONABLE) {
+            return SuggestionLabel.MONITOR;
+        }
+
+        double requiredScore = adaptiveActionThreshold(current, trackStatus, signalConfidence);
+        if (totalScore < requiredScore) {
+            return SuggestionLabel.MONITOR;
+        }
+
+        return label;
+    }
+
+    private static boolean isActionableLabel(SuggestionLabel label) {
+        return label == SuggestionLabel.PIT_NOW || label == SuggestionLabel.GOOD_PIT;
+    }
+
+    private static double adaptiveActionThreshold(LapEvent current, String trackStatus, double signalConfidence) {
+        double threshold;
+        if (TrackStatusCodes.SAFETY_CAR.equals(trackStatus)) {
+            threshold = 52.0;
+        } else if (TrackStatusCodes.VIRTUAL_SAFETY_CAR.equals(trackStatus)
+                || TrackStatusCodes.VSC_ENDING.equals(trackStatus)) {
+            threshold = 56.0;
+        } else {
+            threshold = 60.0;
+        }
+
+        int totalLaps = Math.max(1, current.getTotalLaps());
+        double raceProgress = Math.max(0.0, Math.min(1.5, (double) current.getLapNumber() / totalLaps));
+        if (raceProgress >= 0.88) {
+            threshold += 4.0;
+        } else if (raceProgress >= 0.75) {
+            threshold += 2.0;
+        }
+
+        if (signalConfidence < LOW_CONFIDENCE_THRESHOLD) {
+            threshold += CONFIDENCE_PENALTY_ACTIONABLE;
+        }
+
+        return Math.max(50.0, Math.min(74.0, threshold));
+    }
+
+    private static double computeUncertaintyPenalty(double signalConfidence, String trackStatus) {
+        double penalty = (1.0 - Math.max(0.0, Math.min(1.0, signalConfidence))) * MAX_CONFIDENCE_PENALTY;
+        if (!TrackStatusCodes.isGreenOrUnknown(trackStatus)) {
+            penalty = Math.max(0.0, penalty - 2.5);
+        }
+        return penalty;
+    }
+
+    private double computeCompetitivePressure(LapEvent current, List<LapEvent> laps, int posIndex) throws Exception {
+        double pressure = 0.0;
+        if (current.getGapToCarAhead() != null && current.getGapToCarAhead() >= 0.0) {
+            pressure += 3.0 * Math.max(0.0, 1.0 - (current.getGapToCarAhead() / COMPETITIVE_GAP_REF));
+        }
+
+        if (posIndex + 1 < laps.size()) {
+            LapEvent behind = laps.get(posIndex + 1);
+            if (behind.getGapToCarAhead() != null && behind.getGapToCarAhead() >= 0.0) {
+                pressure += 2.0 * Math.max(0.0, 1.0 - (behind.getGapToCarAhead() / COMPETITIVE_GAP_REF));
+            }
+            pressure += recentRivalPitComponent(current.getLapNumber(), behind.getDriver(), false);
+        }
+
+        if (posIndex > 0) {
+            LapEvent ahead = laps.get(posIndex - 1);
+            pressure += recentRivalPitComponent(current.getLapNumber(), ahead.getDriver(), true);
+        }
+
+        return Math.max(0.0, Math.min(MAX_COMPETITIVE_PRESSURE, pressure));
+    }
+
+    private double recentRivalPitComponent(int currentLap, String rivalDriver, boolean ahead) throws Exception {
+        Integer rivalPitLap = lastObservedPitLap.get(rivalDriver);
+        if (rivalPitLap == null) {
+            return 0.0;
+        }
+        int lapDelta = currentLap - rivalPitLap;
+        if (lapDelta < 0 || lapDelta > COMPETITIVE_RIVAL_PIT_WINDOW) {
+            return 0.0;
+        }
+        double recencyWeight = 1.0 - ((double) lapDelta / (double) (COMPETITIVE_RIVAL_PIT_WINDOW + 1));
+        return (ahead ? 3.0 : 2.0) * recencyWeight;
+    }
+
+    private static double computeSignalConfidence(
+            LapEvent current,
+            List<LapEvent> laps,
+            int posIndex,
+            DriverPitState state) {
+        double confidence = 1.0;
+
+        if (current.getGapToCarAhead() == null) {
+            confidence -= 0.22;
+        }
+        if (current.getLapTime() == null || current.getLapTime() <= 0) {
+            confidence -= 0.18;
+        }
+        if (current.getPitLoss() == null && current.getVscPitLoss() == null && current.getScPitLoss() == null) {
+            confidence -= 0.20;
+        }
+        if (state == null || state.getConsecutiveSlowLaps() <= 0) {
+            confidence -= 0.12;
+        }
+
+        int localContext = 1;
+        if (posIndex > 0) {
+            localContext++;
+        }
+        if (posIndex + 1 < laps.size()) {
+            localContext++;
+        }
+        if (localContext < 3) {
+            confidence -= 0.10;
+        }
+
+        return Math.max(0.0, Math.min(1.0, confidence));
+    }
+
+    private void closeDecisionEpisodeOnPit(LapEvent event) throws Exception {
+        if (event.getPitInTime() == null) {
+            return;
+        }
+        String driver = event.getDriver();
+        lastObservedPitLap.put(driver, event.getLapNumber());
+        if (activeEpisodeStartLap.contains(driver)) {
+            activeEpisodeStartLap.remove(driver);
+            episodeCloseReason.put(driver, "pit_in");
+        }
+    }
+
+    private void closeExpiredDecisionEpisodes(int currentLap) throws Exception {
+        List<String> toClose = new ArrayList<>();
+        for (String driver : activeEpisodeStartLap.keys()) {
+            Integer startLap = activeEpisodeStartLap.get(driver);
+            if (startLap == null) {
+                continue;
+            }
+            if (currentLap - startLap >= DECISION_EPISODE_HORIZON_LAPS) {
+                toClose.add(driver);
+            }
+        }
+        for (String driver : toClose) {
+            activeEpisodeStartLap.remove(driver);
+            episodeCloseReason.put(driver, "horizon_expiry");
+        }
+    }
+
+    private boolean isDecisionEpisodeActive(String driver, int currentLap) throws Exception {
+        Integer startLap = activeEpisodeStartLap.get(driver);
+        if (startLap == null) {
+            return false;
+        }
+        if (currentLap - startLap >= DECISION_EPISODE_HORIZON_LAPS) {
+            activeEpisodeStartLap.remove(driver);
+            episodeCloseReason.put(driver, "horizon_expiry");
+            return false;
+        }
+        return true;
+    }
+
+    private void openDecisionEpisode(String driver, int lapNumber) throws Exception {
+        activeEpisodeStartLap.put(driver, lapNumber);
+        episodeCloseReason.put(driver, "active");
     }
 
     // decision-window pressure approximates whether the stop window is tightening now.

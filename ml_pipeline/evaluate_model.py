@@ -38,6 +38,9 @@ from lib.feature_profiles import (
     parse_exclude_features,
 )
 
+OUTCOME_PIT_SUCCESS_H2 = "pit_success_h2"
+OUTCOME_PIT_ANY_H2 = "pit_any_h2"
+
 
 @contextmanager
 def _patched_argv(argv: list[str]):
@@ -230,7 +233,7 @@ def _ensure_merged_jsonl(
 
     output_path = data_lake / f"{stream}_{merged_year}_{merged_tag}_{merge_stamp}.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    dedup_enabled = stream in {"pit_evals", "ml_features"}
+    dedup_enabled = stream in {"pit_evals", "pit_timings", "ml_features"}
     deduped_rows: dict[tuple[int, int, str, int | str], dict[str, object]] = {}
     passthrough_rows: list[tuple[int, int, str, int | str, dict[str, object]]] = []
     seen_races_by_year: dict[int, set[str]] = {int(year): set() for year in years}
@@ -318,6 +321,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--years", type=int, nargs="+", default=list(DEFAULT_YEARS))
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG)
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON)
+    parser.add_argument(
+        "--target-column",
+        default="target_y",
+        help="binary target column used by OOF/model artifacts",
+    )
+    parser.add_argument(
+        "--outcome-mode",
+        choices=[OUTCOME_PIT_SUCCESS_H2, OUTCOME_PIT_ANY_H2],
+        default=OUTCOME_PIT_SUCCESS_H2,
+        help="comparator outcome contract: success-only pits or any pit timing in window",
+    )
 
     parser.add_argument("--dataset", default="", help="training dataset used for parity/split audits")
     parser.add_argument("--oof-input", default="", help="winner OOF decisions csv")
@@ -398,7 +412,7 @@ def main() -> None:
     # multi-season evaluations must operate on aligned merged streams, avoids cross-season key collisions.
     if len(years) > 1:
         merge_stamp = pd.Timestamp.utcnow().strftime("%Y%m%d_%H%M%S")
-        for stream in ("pit_suggestions", "pit_evals", "ml_features", "drop_zones"):
+        for stream in ("pit_suggestions", "pit_evals", "pit_timings", "ml_features", "drop_zones"):
             # for merged-tag runs, prefer existing merged streams and only rebuild from per-year season streams if missing.
             if args.season_tag == DEFAULT_MERGED_SEASON_TAG:
                 existing_merged = _latest_jsonl_or_none(data_lake, stream, comparator_year, comparator_tag)
@@ -429,9 +443,15 @@ def main() -> None:
         if args.drop_zones
         else ensured_merged.get("drop_zones", _latest_jsonl(data_lake, "drop_zones", comparator_year, comparator_tag))
     )
+    pit_timings_path = ensured_merged.get(
+        "pit_timings",
+        _latest_jsonl(data_lake, "pit_timings", comparator_year, comparator_tag),
+    )
 
     heuristic_comparator = reports / f"heuristic_comparator_{suffix}.csv"
+    heuristic_comparator_episode = reports / f"heuristic_comparator_episode_{suffix}.csv"
     ml_comparator = reports / f"ml_comparator_{suffix}.csv"
+    ml_comparator_episode = reports / f"ml_comparator_episode_{suffix}.csv"
 
     phase_b_summary = reports / f"significance_summary_{suffix}.csv"
     phase_b_tests = reports / f"significance_tests_{suffix}.csv"
@@ -504,8 +524,14 @@ def main() -> None:
             comparator_tag,
             "--horizon",
             str(args.horizon),
+            "--outcome-mode",
+            args.outcome_mode,
+            "--pit-timings",
+            str(pit_timings_path),
             "--output",
             str(heuristic_comparator.resolve()),
+            "--episode-output",
+            str(heuristic_comparator_episode.resolve()),
         ],
     )
 
@@ -524,8 +550,14 @@ def main() -> None:
             comparator_tag,
             "--horizon",
             str(args.horizon),
+            "--outcome-mode",
+            args.outcome_mode,
+            "--pit-timings",
+            str(pit_timings_path),
             "--output",
             str(ml_comparator.resolve()),
+            "--episode-output",
+            str(ml_comparator_episode.resolve()),
         ],
     )
 
@@ -584,6 +616,10 @@ def main() -> None:
             comparator_tag,
             "--horizon",
             str(args.horizon),
+            "--outcome-mode",
+            args.outcome_mode,
+            "--pit-timings",
+            str(pit_timings_path),
             "--precision-floor",
             str(args.precision_floor),
             "--reference-threshold",
@@ -785,6 +821,12 @@ def main() -> None:
     j_split_gate = j_split[j_split["check"] == "split_integrity_overall"].iloc[0]
     j_comp_gate = j_comp[j_comp["check"] == "comparator_invariance_overall"].iloc[0]
 
+    no_match_gate_ok = (
+        no_match_rate >= 0.90
+        if args.outcome_mode == OUTCOME_PIT_SUCCESS_H2
+        else True
+    )
+    no_match_threshold = 0.90 if args.outcome_mode == OUTCOME_PIT_SUCCESS_H2 else 0.0
     summary_rows = [
         {
             "test_id": "B1",
@@ -819,11 +861,15 @@ def main() -> None:
         {
             "test_id": "C2",
             "test_name": "Lookahead no-match dominance",
-            "why_this_test": "Checks that most exclusions are horizon-related, supporting comparator interpretation.",
-            "status": _status_from_condition(no_match_rate >= 0.90),
+            "why_this_test": (
+                "Checks that most exclusions are horizon-related, supporting comparator interpretation."
+                if args.outcome_mode == OUTCOME_PIT_SUCCESS_H2
+                else "Not applicable for pit_any_h2 strict scoring where no-match rows are false positives."
+            ),
+            "status": _status_from_condition(no_match_gate_ok),
             "metric": "no_match_rate",
             "value": no_match_rate,
-            "threshold": 0.90,
+            "threshold": no_match_threshold,
             "artifact": str(phase_c_sweep),
         },
         {
@@ -936,6 +982,8 @@ def main() -> None:
         f"- Years: {years}",
         f"- Horizon: H={args.horizon}",
         f"- Comparator source token: year={comparator_year}, season_tag={comparator_tag}",
+        f"- Target column: {args.target_column}",
+        f"- Comparator outcome mode: {args.outcome_mode}",
         f"- Feature profile: {feature_plan.feature_profile}",
         f"- Excluded features: {feature_plan.excluded_features_csv() or 'none'}",
         f"- Track-agnostic mode: {feature_plan.track_agnostic_mode}",
@@ -983,6 +1031,7 @@ def main() -> None:
             f"- Dedicated SDE vs ML summary: {phase_b_meeting_summary}",
             f"- Dedicated SDE vs ML by year: {phase_b_meeting_by_year}",
             f"- Comparator files: {heuristic_comparator}, {ml_comparator}",
+            f"- Episode comparator files: {heuristic_comparator_episode}, {ml_comparator_episode}",
             f"- Threshold sweep report: {phase_c_report}",
             f"- Calibration report: {phase_d_report}",
             f"- Parity report: {phase_f_report}",

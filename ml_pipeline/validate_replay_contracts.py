@@ -29,6 +29,7 @@ from lib.replay_manifest import (
 STREAM_KEY_FIELDS: dict[str, tuple[str, ...]] = {
     "ml_features": ("race", "driver", "lapNumber"),
     "pit_suggestions": ("race", "driver", "lapNumber"),
+    "pit_timings": ("race", "driver", "lapNumber"),
     "drop_zones": ("race", "driver", "lapNumber"),
     "pit_evals": ("race", "driver", "pitLapNumber"),
 }
@@ -112,6 +113,7 @@ def _stream_year_checks(
 
     # cross-stream consistency on shared lap keys
     ml = _load_jsonl(stream_paths["ml_features"]).copy()
+    pit_timings = _load_jsonl(stream_paths["pit_timings"]).copy()
     drop = _load_jsonl(stream_paths["drop_zones"]).copy()
     sug = _load_jsonl(stream_paths["pit_suggestions"]).copy()
 
@@ -119,6 +121,16 @@ def _stream_year_checks(
         frame["race"] = frame["race"].astype(str)
         frame["driver"] = frame["driver"].astype(str)
         frame["lapNumber"] = pd.to_numeric(frame["lapNumber"], errors="coerce")
+    pit_timings["pitInTime"] = pd.to_numeric(pit_timings["pitInTime"], errors="coerce")
+    missing_pit_in = int(pit_timings["pitInTime"].isna().sum())
+    rows.append(
+        CheckRow(
+            check=f"{year}:pit_timings:pitInTime_non_null",
+            status=_ok(missing_pit_in == 0),
+            value=float(missing_pit_in),
+            note=f"rows={len(pit_timings)}",
+        )
+    )
     ml = ml[ml["lapNumber"].notna()].copy()
     drop = drop[drop["lapNumber"].notna()].copy()
     sug = sug[sug["lapNumber"].notna()].copy()
@@ -198,7 +210,7 @@ def _dataset_checks(dataset: pd.DataFrame, manifests: dict[int, ReplayManifest])
         )
     )
 
-    work["_year"] = pd.to_numeric(work["race"].str.extract(r"^(\\d{4})")[0], errors="coerce")
+    work["_year"] = pd.to_numeric(work["race"].str.extract(r"^(\d{4})")[0], errors="coerce")
     missing_year = int(work["_year"].isna().sum())
     rows.append(
         CheckRow(

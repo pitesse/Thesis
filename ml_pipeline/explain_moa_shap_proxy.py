@@ -102,6 +102,64 @@ def _to_shap_values(shap_values: Any) -> np.ndarray:
     return np.asarray(shap_values)
 
 
+def _compute_shap_with_fallback(
+    surrogate: Any,
+    X_sample: pd.DataFrame,
+    supports_tree: bool,
+    seed: int,
+) -> tuple[Any, pd.DataFrame, str]:
+    if supports_tree:
+        explainer = shap.TreeExplainer(surrogate)
+        try:
+            return explainer(X_sample), X_sample, "tree_default"
+        except Exception as first_exc:
+            print(
+                "WARNING: TreeSHAP default call failed; retrying with "
+                f"check_additivity=False ({type(first_exc).__name__}: {first_exc})"
+            )
+            try:
+                return (
+                    explainer(X_sample, check_additivity=False),
+                    X_sample,
+                    "tree_check_additivity_false",
+                )
+            except Exception as second_exc:
+                print(
+                    "WARNING: TreeSHAP retry failed; falling back to generic SHAP "
+                    f"({type(second_exc).__name__}: {second_exc})"
+                )
+
+    # Keep fallback bounded: generic explainers can be expensive on large samples.
+    X_generic = X_sample
+    if len(X_generic) > 1200:
+        X_generic = X_generic.sample(n=1200, random_state=seed)
+    try:
+        explainer = shap.Explainer(surrogate, X_generic)
+        return explainer(X_generic), X_generic, "generic_explainer"
+    except Exception as generic_exc:
+        message = str(generic_exc)
+        if "Additivity check failed" in message:
+            try:
+                tree_explainer = shap.TreeExplainer(surrogate)
+                return (
+                    tree_explainer(X_generic, check_additivity=False),
+                    X_generic,
+                    "tree_from_generic_check_additivity_false",
+                )
+            except Exception as tree_retry_exc:
+                print(
+                    "WARNING: generic additivity fallback retry failed; "
+                    f"continuing to zero SHAP fallback ({type(tree_retry_exc).__name__}: {tree_retry_exc})"
+                )
+        # Last-resort fallback to keep matrix rebuild resilient.
+        print(
+            "WARNING: generic SHAP failed; using zero SHAP fallback "
+            f"({type(generic_exc).__name__}: {generic_exc})"
+        )
+        zeros = np.zeros((len(X_generic), X_generic.shape[1]), dtype=float)
+        return zeros, X_generic, "zero_matrix_fallback"
+
+
 def _save_shap_artifacts(
     reports_dir: Path,
     shap_matrix: np.ndarray,
@@ -232,15 +290,12 @@ def main() -> None:
         X_sample = X.copy()
 
     supports_tree = bool(int(selected_row["supports_tree_shap"]))
-    if supports_tree:
-        explainer = shap.TreeExplainer(surrogate)
-        shap_obj = explainer(X_sample)
-    else:
-        # keep non-tree fallback bounded, generic explainers can be expensive on large samples.
-        if len(X_sample) > 1200:
-            X_sample = X_sample.sample(n=1200, random_state=args.seed)
-        explainer = shap.Explainer(surrogate, X_sample)
-        shap_obj = explainer(X_sample)
+    shap_obj, X_sample, shap_compute_mode = _compute_shap_with_fallback(
+        surrogate=surrogate,
+        X_sample=X_sample,
+        supports_tree=supports_tree,
+        seed=args.seed,
+    )
 
     shap_matrix = _to_shap_values(shap_obj)
 
@@ -273,6 +328,7 @@ def main() -> None:
         "selected_supports_tree_shap": int(bool(selection_info["selected_supports_tree_shap"])),
         "surrogate_selection_reason": str(selection_info["selection_reason"]),
         "surrogate_min_f1_gain": float(selection_info["min_f1_gain"]),
+        "shap_compute_mode": shap_compute_mode,
         "notes": "SHAP is computed on a selected surrogate fitted to MOA predictions, not on MOA internals",
     }
     pd.DataFrame([summary_row]).to_csv(summary_csv, index=False)
@@ -301,6 +357,7 @@ def main() -> None:
     print(f"selection reason        : {selection_info['selection_reason']}")
     print(f"fidelity accuracy       : {fidelity_acc:.6f}")
     print(f"fidelity f1             : {fidelity_f1:.6f}")
+    print(f"shap compute mode       : {shap_compute_mode}")
     print(f"sweep csv               : {sweep_csv}")
     print(f"feature importance csv  : {feature_csv}")
     print(f"summary csv             : {summary_csv}")

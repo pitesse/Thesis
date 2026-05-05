@@ -7,11 +7,23 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import urllib.request
 
 
 def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
     print("[RUN]", " ".join(cmd))
     subprocess.run(cmd, check=True, env=env)
+
+
+def _ensure_moa_jar(data_lake: Path) -> None:
+    moa_jar = data_lake / "tools" / "moa.jar"
+    if moa_jar.exists():
+        return
+    moa_jar.parent.mkdir(parents=True, exist_ok=True)
+    url = "https://repo1.maven.org/maven2/nz/ac/waikato/cms/moa/moa/2024.07.0/moa-2024.07.0.jar"
+    print(f"[INFO] MOA jar missing, downloading from {url}")
+    urllib.request.urlretrieve(url, moa_jar)
+    print(f"[INFO] Downloaded MOA jar -> {moa_jar}")
 
 
 def _ablation_run(
@@ -24,6 +36,8 @@ def _ablation_run(
     track_mode: str,
     prepare_data: bool,
     extra_excludes: list[str],
+    target_column: str = "target_y",
+    outcome_mode: str = "pit_success_h2",
 ) -> None:
     years_args = [str(year) for year in years]
     suffix = f"{years[0]}_{years[-1]}_no_source_year_{tag}"
@@ -49,6 +63,9 @@ def _ablation_run(
         "--season-tag",
         "season",
         *prep_flags,
+        "--skip-replay-validation",
+        "--target-column",
+        str(target_column),
         "--drop-source-year-feature",
         "--feature-profile",
         profile,
@@ -103,6 +120,10 @@ def _ablation_run(
         str(dataset_path),
         "--bundle",
         str(bundle_path),
+        "--target-column",
+        str(target_column),
+        "--outcome-mode",
+        str(outcome_mode),
         "--drop-source-year-feature",
         "--feature-profile",
         profile,
@@ -169,6 +190,8 @@ def _ablation_run(
         "--skip-prepare-data",
         "--dataset",
         str(dataset_path),
+        "--target-column",
+        str(target_column),
         "--drop-source-year-feature",
         "--feature-profile",
         profile,
@@ -232,6 +255,10 @@ def _ablation_run(
             str(moa_pred),
             "--year",
             "9999",
+            "--target-column",
+            str(target_column),
+            "--outcome-mode",
+            str(outcome_mode),
             "--output",
             str(reports_dir / f"moa_comparator_{suffix}.csv"),
             "--diagnostics-output",
@@ -250,7 +277,7 @@ def _ablation_run(
             "--season-tag",
             "season",
             "--sde-comparator",
-            str(data_lake / "reports" / "heuristic_comparator_2022_2025_merged.csv"),
+            str(reports_dir / f"heuristic_comparator_{suffix}.csv"),
             "--ml-comparator",
             str(reports_dir / f"ml_comparator_{suffix}.csv"),
             "--moa-comparator",
@@ -341,6 +368,7 @@ def main() -> None:
 
     env = dict(os.environ)
     env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    _ensure_moa_jar(data_lake)
 
     # Baseline pretrain + racewise
     _run(
@@ -356,6 +384,7 @@ def main() -> None:
             "--prepare-data",
             "--dataset",
             str(data_lake / "ml_training_dataset_2022_2025_merged.parquet"),
+            "--skip-replay-validation",
             "--split-protocol",
             "expanding_race",
             "--leaderboard-output",
@@ -380,6 +409,7 @@ def main() -> None:
             "--skip-prepare-data",
             "--dataset",
             str(data_lake / "ml_training_dataset_2022_2025_merged.parquet"),
+            "--skip-replay-validation",
             "--split-protocol",
             "expanding_race_sequential",
             "--leaderboard-output",
@@ -440,6 +470,18 @@ def main() -> None:
 
     # E-family + P-family
     _ablation_run(py, data_lake=data_lake, years=years, tag="baseline", profile="baseline", track_mode="off", prepare_data=False, extra_excludes=[])
+    _ablation_run(
+        py,
+        data_lake=data_lake,
+        years=years,
+        tag="baseline_pit_any_h2",
+        profile="baseline",
+        track_mode="off",
+        prepare_data=False,
+        extra_excludes=[],
+        target_column="target_pit_any_h2",
+        outcome_mode="pit_any_h2",
+    )
     _ablation_run(py, data_lake=data_lake, years=years, tag="drop_medium_v1", profile="drop_medium_v1", track_mode="off", prepare_data=False, extra_excludes=[])
     _ablation_run(py, data_lake=data_lake, years=years, tag="drop_medium_track_agnostic_v1", profile="track_agnostic_v1", track_mode="track_agnostic_v1", prepare_data=True, extra_excludes=[])
     _ablation_run(py, data_lake=data_lake, years=years, tag="track_agnostic_v1_strict", profile="track_agnostic_v1", track_mode="track_agnostic_v1", prepare_data=True, extra_excludes=["trackTemp", "airTemp", "humidity", "speedTrap", "lapTime"])

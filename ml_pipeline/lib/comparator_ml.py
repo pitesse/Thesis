@@ -16,10 +16,12 @@ from .comparator_heuristic import (
     DEFAULT_HORIZON,
     DEFAULT_SEASON_TAG,
     DEFAULT_YEAR,
+    OUTCOME_MODES,
+    OUTCOME_PIT_ANY_H2,
+    OUTCOME_PIT_SUCCESS_H2,
     _build_comparator_dataset,
     _latest_jsonl,
     _load_jsonl,
-    _prepare_pit_evals,
     _print_summary,
 )
 
@@ -93,6 +95,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--year", type=int, default=DEFAULT_YEAR, help="season year")
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token")
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="look ahead horizon in laps")
+    parser.add_argument(
+        "--outcome-mode",
+        choices=sorted(OUTCOME_MODES),
+        default=OUTCOME_PIT_SUCCESS_H2,
+        help="comparator outcome contract: success-only pits or any pit timing in window",
+    )
+    parser.add_argument(
+        "--pit-timings",
+        default="",
+        help="optional pit_timings jsonl path (required for --outcome-mode pit_any_h2)",
+    )
+    parser.add_argument(
+        "--episode-output",
+        default="",
+        help="optional output csv for episode-level comparator view",
+    )
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="output csv name or absolute path")
     return parser.parse_args()
 
@@ -112,10 +130,36 @@ def main() -> None:
     )
 
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", args.year, args.season_tag)
-    pit_evals = _prepare_pit_evals(_load_jsonl(pit_evals_path))
+    pit_evals = _load_jsonl(pit_evals_path)
+    pit_timings_path: Path | None = None
+    pit_timings_df: pd.DataFrame | None = None
+    if args.outcome_mode == OUTCOME_PIT_ANY_H2:
+        pit_timings_path = (
+            Path(args.pit_timings)
+            if args.pit_timings
+            else _latest_jsonl(data_lake, "pit_timings", args.year, args.season_tag)
+        )
+        pit_timings_df = _load_jsonl(pit_timings_path)
 
     # reuse the exact heuristic matcher to preserve a fair ML-vs-heuristic contract.
-    comparator = _build_comparator_dataset(suggestions, pit_evals, args.horizon)
+    comparator = _build_comparator_dataset(
+        suggestions,
+        pit_evals,
+        args.horizon,
+        outcome_mode=args.outcome_mode,
+        pit_timings=pit_timings_df,
+    )
+    episode_comparator: pd.DataFrame | None = None
+    episode_output_path: Path | None = None
+    if args.episode_output:
+        episode_comparator = _build_comparator_dataset(
+            suggestions,
+            pit_evals,
+            args.horizon,
+            outcome_mode=args.outcome_mode,
+            pit_timings=pit_timings_df,
+            episode_level=True,
+        )
 
     output_path = Path(args.output)
     if not output_path.is_absolute():
@@ -123,10 +167,21 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     comparator.to_csv(output_path, index=False)
+    if args.episode_output and episode_comparator is not None:
+        episode_output_path = Path(args.episode_output)
+        if not episode_output_path.is_absolute():
+            episode_output_path = data_lake / episode_output_path
+        episode_output_path.parent.mkdir(parents=True, exist_ok=True)
+        episode_comparator.to_csv(episode_output_path, index=False)
 
     print(f"ML decisions input: {decisions_path}")
     print(f"pit evals input  : {pit_evals_path}")
+    if pit_timings_path is not None:
+        print(f"pit timings input: {pit_timings_path}")
+    print(f"outcome mode     : {args.outcome_mode}")
     print(f"output csv       : {output_path}")
+    if episode_output_path is not None:
+        print(f"episode csv      : {episode_output_path}")
     _print_summary(comparator, suggestions, args.horizon)
 
 

@@ -11,6 +11,7 @@ DEFAULT_DATA_LAKE = Path("data_lake")
 SINK_DIRS = [
     "pit_evals",
     "pit_suggestions",
+    "pit_timings",
     "tire_drops",
     "lift_coast",
     "drop_zones",
@@ -32,6 +33,7 @@ def _collect_paths(data_lake: Path) -> list[Path]:
     patterns = [
         "pit_evals_*.jsonl",
         "pit_suggestions_*.jsonl",
+        "pit_timings_*.jsonl",
         "tire_drops_*.jsonl",
         "lift_coast_*.jsonl",
         "drop_zones_*.jsonl",

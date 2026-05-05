@@ -78,6 +78,7 @@ public class PitStopEvaluator
     private static final double UNDERCUT_THRESHOLD_PCT = 0.5;
     private static final double DEFEND_BAND_PCT = 0.5;
     private static final double MAX_STRATEGIC_GAP_DELTA_PCT = 20.0;
+    private static final double MAX_STRATEGIC_GAP_DELTA_PCT_CAUTION = 28.0;
 
     // free stop threshold: pit under sc/vsc with gap change < 1% of baseline
     private static final double FREE_STOP_THRESHOLD_PCT = 1.0;
@@ -95,6 +96,14 @@ public class PitStopEvaluator
     private static final String RESOLUTION_SAFETY_TIMER_PACE_SHIFT = "SAFETY_TIMER_PACE_SHIFT";
     private static final String RESOLUTION_OFFSET_TIMEOUT_PACE_SHIFT = "OFFSET_TIMEOUT_PACE_SHIFT";
     private static final String RESOLUTION_POSITIONAL_FALLBACK = "POSITIONAL_FALLBACK";
+    private static final String PROVENANCE_DIRECT_GAP = "DIRECT_GAP";
+    private static final String PROVENANCE_PACE_SHIFT = "PACE_SHIFT";
+    private static final String PROVENANCE_POSITIONAL = "POSITIONAL";
+    private static final String PROVENANCE_REFERENCE = "REFERENCE";
+    private static final String PROVENANCE_UNKNOWN = "UNKNOWN";
+    private static final String CONFIDENCE_HIGH = "HIGH";
+    private static final String CONFIDENCE_MEDIUM = "MEDIUM";
+    private static final String CONFIDENCE_LOW = "LOW";
 
     private static int readIntSetting(String key, int defaultValue, int minValue, int maxValue) {
         String raw = System.getProperty(key);
@@ -331,7 +340,8 @@ public class PitStopEvaluator
                         cycle.setGreenLapsSincePit(cycle.getGreenLapsSincePit() + 1);
                     }
 
-                    if (cycle.getGreenLapsSincePit() >= SETTLE_LAPS) {
+                    int requiredSettleLaps = requiredSettleLaps(cycle);
+                    if (cycle.getGreenLapsSincePit() >= requiredSettleLaps) {
                         cycle.setSettleLap(trigger.getLapNumber());
                         cycle.setState(CycleState.PENDING_RIVAL);
                         pendingCycles.put(entry.getKey(), cycle);
@@ -376,8 +386,9 @@ public class PitStopEvaluator
         boolean rivalPittedAfter = hasRivalPitted(cycle.getPrimaryRival(), cycle.getPrimaryRivalStintAtPit(),
                 cycle.getPitLap(), currentLap);
 
-        // overcut check: rival pitted in the window before our pit (within SETTLE_LAPS + 2 laps)
-        int lookbackStart = Math.max(1, cycle.getPitLap() - SETTLE_LAPS - RIVAL_LOOKBACK_EXTRA_LAPS);
+        int dynamicSettleLaps = requiredSettleLaps(cycle);
+        // overcut check: rival pitted in the window before our pit (within dynamic settle + margin).
+        int lookbackStart = Math.max(1, cycle.getPitLap() - dynamicSettleLaps - RIVAL_LOOKBACK_EXTRA_LAPS);
         boolean rivalPittedBefore = hasRivalPittedInRange(cycle.getPrimaryRival(),
                 lookbackStart, cycle.getPitLap());
 
@@ -394,7 +405,8 @@ public class PitStopEvaluator
             cycle.setDriverPittedFirst(rivalPitLap < 0 || cycle.getPitLap() <= rivalPitLap);
 
             // wait for rival to also complete settle_laps green laps before comparing gaps
-            int rivalSettleLap = calculateRivalSettleLap(cycle.getPrimaryRival(), rivalPitLap, currentLap);
+            int rivalSettleLap = calculateRivalSettleLap(
+                    cycle.getPrimaryRival(), rivalPitLap, currentLap, dynamicSettleLaps);
             if (rivalSettleLap < 0) {
                 return false;
             }
@@ -449,7 +461,7 @@ public class PitStopEvaluator
                     return true;
                 }
                 result = Result.UNRESOLVED_MISSING_POST_GAP;
-            } else if (isIncidentGapDeltaPct(gapDeltaPct)) {
+            } else if (isIncidentGapDeltaPct(gapDeltaPct, cycle.getTrackStatusAtPit())) {
                 result = Result.UNRESOLVED_INCIDENT_FILTER;
             } else if (gapDeltaPct < -DEFEND_BAND_PCT) {
                 result = Result.OFFSET_ADVANTAGE;
@@ -493,7 +505,7 @@ public class PitStopEvaluator
         }
 
         Result result;
-        if (isIncidentGapDeltaPct(gapDeltaPct)) {
+        if (isIncidentGapDeltaPct(gapDeltaPct, cycle.getTrackStatusAtPit())) {
             result = Result.UNRESOLVED_INCIDENT_FILTER;
         } else if (gapDeltaPct < -DEFEND_BAND_PCT) {
             result = Result.OFFSET_ADVANTAGE;
@@ -530,7 +542,7 @@ public class PitStopEvaluator
         if (gapDeltaPct == null) {
             return Result.UNRESOLVED_MISSING_POST_GAP;
         }
-        if (isIncidentGapDeltaPct(gapDeltaPct)) {
+        if (isIncidentGapDeltaPct(gapDeltaPct, trackStatus)) {
             return Result.UNRESOLVED_INCIDENT_FILTER;
         }
 
@@ -567,7 +579,7 @@ public class PitStopEvaluator
         if (gapDeltaPct == null) {
             return Result.UNRESOLVED_MISSING_POST_GAP;
         }
-        if (isIncidentGapDeltaPct(gapDeltaPct)) {
+        if (isIncidentGapDeltaPct(gapDeltaPct, trackStatus)) {
             return Result.UNRESOLVED_INCIDENT_FILTER;
         }
         if (TrackStatusCodes.isCaution(trackStatus) && Math.abs(gapDeltaPct) < FREE_STOP_THRESHOLD_PCT) {
@@ -577,6 +589,29 @@ public class PitStopEvaluator
             return Result.SUCCESS_DEFEND;
         }
         return Result.FAILURE_PACE_DEFICIT;
+    }
+
+    // dynamic settle policy keeps legacy defaults but adapts to regime and data sufficiency.
+    private int requiredSettleLaps(PitCycle cycle) {
+        int settle = SETTLE_LAPS;
+        if (TrackStatusCodes.isCaution(cycle.getTrackStatusAtPit())) {
+            settle += 1;
+        }
+        if (isWetCompound(cycle.getCompoundAfterPit())) {
+            settle += 1;
+        }
+        if (cycle.getCompoundAfterPit() == null || cycle.getCompoundAfterPit().isBlank()) {
+            settle += 1;
+        }
+
+        int remainingLaps = cycle.getTotalLaps() - cycle.getPitLap();
+        if (remainingLaps > 0 && remainingLaps <= 6) {
+            settle = Math.min(settle, 2);
+        } else if (remainingLaps > 0 && remainingLaps <= 10) {
+            settle = Math.min(settle, 3);
+        }
+
+        return Math.max(2, Math.min(6, settle));
     }
 
     // ensures the cycle has a comparable rival and a valid pre-pit directed gap.
@@ -629,7 +664,7 @@ public class PitStopEvaluator
             Collector<PitStopEvaluationAlert> out) throws Exception {
         int comparisonLap = cycle.getSettleLap() > 0
                 ? cycle.getSettleLap()
-                : cycle.getPitLap() + SETTLE_LAPS;
+                : cycle.getPitLap() + requiredSettleLaps(cycle);
 
         if (currentLap < comparisonLap) {
             return false;
@@ -801,7 +836,7 @@ public class PitStopEvaluator
             return true;
         }
 
-        int lookbackStart = Math.max(1, cycle.getPitLap() - SETTLE_LAPS - RIVAL_LOOKBACK_EXTRA_LAPS);
+        int lookbackStart = Math.max(1, cycle.getPitLap() - requiredSettleLaps(cycle) - RIVAL_LOOKBACK_EXTRA_LAPS);
         return hasRivalPittedInRange(cycle.getPrimaryRival(), lookbackStart, cycle.getPitLap());
     }
 
@@ -1112,8 +1147,14 @@ public class PitStopEvaluator
         return "INTERMEDIATE".equalsIgnoreCase(compound) || "WET".equalsIgnoreCase(compound);
     }
 
-    private static boolean isIncidentGapDeltaPct(Double gapDeltaPct) {
-        return gapDeltaPct != null && Math.abs(gapDeltaPct) > MAX_STRATEGIC_GAP_DELTA_PCT;
+    private static boolean isIncidentGapDeltaPct(Double gapDeltaPct, String trackStatus) {
+        if (gapDeltaPct == null) {
+            return false;
+        }
+        double limit = TrackStatusCodes.isCaution(trackStatus)
+                ? MAX_STRATEGIC_GAP_DELTA_PCT_CAUTION
+                : MAX_STRATEGIC_GAP_DELTA_PCT;
+        return Math.abs(gapDeltaPct) > limit;
     }
 
     // checks if the rival's stint changed between pitLap and currentLap
@@ -1169,7 +1210,8 @@ public class PitStopEvaluator
     }
 
     // calculates the rival settle lap as the lap where rival reaches settle_laps green laps after pit
-    private int calculateRivalSettleLap(String rival, int rivalPitLap, int currentLap) throws Exception {
+    private int calculateRivalSettleLap(String rival, int rivalPitLap, int currentLap, int settleLapsRequired)
+            throws Exception {
         if (rivalPitLap < 0) {
             return -1;
         }
@@ -1179,7 +1221,7 @@ public class PitStopEvaluator
             LapEvent e = lapEvents.get(lapKey(l, rival));
             if (e != null && TrackStatusCodes.isGreenOrUnknown(e.getTrackStatus())) {
                 greenLaps++;
-                if (greenLaps >= SETTLE_LAPS) {
+                if (greenLaps >= settleLapsRequired) {
                     return l;
                 }
             }
@@ -1377,7 +1419,7 @@ public class PitStopEvaluator
         if (!ensurePrimaryRivalContext(cycle)) {
             int settleOrDefault = cycle.getSettleLap() > 0
                 ? cycle.getSettleLap()
-                : cycle.getPitLap() + SETTLE_LAPS;
+                : cycle.getPitLap() + requiredSettleLaps(cycle);
             int forcedCurrentLap = settleOrDefault + GAP_SEARCH_WINDOW;
             if (!tryResolveWithReferenceFallback(cycle, forcedCurrentLap, out)) {
                 emitResult(cycle, null, null, Result.UNRESOLVED_MISSING_RIVAL,
@@ -1395,7 +1437,7 @@ public class PitStopEvaluator
 
         int settleLap = cycle.getSettleLap();
         if (settleLap < 0) {
-            settleLap = cycle.getPitLap() + SETTLE_LAPS;
+            settleLap = cycle.getPitLap() + requiredSettleLaps(cycle);
         }
 
         Double postGap = null;
@@ -1453,6 +1495,9 @@ public class PitStopEvaluator
         alert.setDriverPittedFirst(cycle.isDriverPittedFirst());
         alert.setOffsetStrategy(isOffset);
         alert.setResolvedVia(resolvedVia);
+        String provenance = deriveResolutionProvenance(resolvedVia);
+        alert.setResolutionProvenance(provenance);
+        alert.setResolutionConfidence(deriveResolutionConfidence(result, provenance, gapDeltaPct));
 
         out.collect(alert);
         LOG.info("pit eval: {} lap {} -> {} (rival: {}, delta: {}%, via: {})",
@@ -1460,6 +1505,45 @@ public class PitStopEvaluator
                 cycle.getPrimaryRival(),
                 gapDeltaPct != null ? String.format("%.2f", gapDeltaPct) : "N/A",
                 resolvedVia);
+    }
+
+    private static String deriveResolutionProvenance(String resolvedVia) {
+        if (resolvedVia == null || resolvedVia.isBlank()) {
+            return PROVENANCE_UNKNOWN;
+        }
+        if (resolvedVia.contains("PACE_SHIFT")) {
+            return PROVENANCE_PACE_SHIFT;
+        }
+        if (RESOLUTION_POSITIONAL_FALLBACK.equals(resolvedVia)) {
+            return PROVENANCE_POSITIONAL;
+        }
+        if (RESOLUTION_REFERENCE_FALLBACK.equals(resolvedVia)) {
+            return PROVENANCE_REFERENCE;
+        }
+        if ("RIVAL_PIT".equals(resolvedVia) || "OFFSET_TIMEOUT".equals(resolvedVia) || "SAFETY_TIMER".equals(resolvedVia)) {
+            return PROVENANCE_DIRECT_GAP;
+        }
+        return PROVENANCE_UNKNOWN;
+    }
+
+    private static String deriveResolutionConfidence(Result result, String provenance, Double gapDeltaPct) {
+        if (result == null) {
+            return CONFIDENCE_LOW;
+        }
+        if (result.name().startsWith("UNRESOLVED_")) {
+            return CONFIDENCE_LOW;
+        }
+
+        if (PROVENANCE_DIRECT_GAP.equals(provenance)) {
+            return gapDeltaPct == null ? CONFIDENCE_MEDIUM : CONFIDENCE_HIGH;
+        }
+        if (PROVENANCE_PACE_SHIFT.equals(provenance)) {
+            return CONFIDENCE_MEDIUM;
+        }
+        if (PROVENANCE_POSITIONAL.equals(provenance) || PROVENANCE_REFERENCE.equals(provenance)) {
+            return CONFIDENCE_LOW;
+        }
+        return CONFIDENCE_MEDIUM;
     }
 
     private void emitWarmupUnresolved(LapEvent event, Collector<PitStopEvaluationAlert> out) {
