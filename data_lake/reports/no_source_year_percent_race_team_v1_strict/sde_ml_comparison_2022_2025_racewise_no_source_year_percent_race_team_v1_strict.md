@@ -1,6 +1,6 @@
 # Dedicated SDE vs ML Comparison Report
 
-Generated at (UTC): 2026-05-05T19:36:55.818991+00:00
+Generated at (UTC): 2026-05-06T15:17:10.876413+00:00
 
 ## Scope
 - Purpose: meeting-ready, fairness-locked SDE vs ML comparison summary.
@@ -16,43 +16,44 @@ Generated at (UTC): 2026-05-05T19:36:55.818991+00:00
 ## Headline Comparison
 | Model | Actionable | Scored | Excluded | TP | FP | Precision | Wilson CI 95% |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| SDE | 5453 | 487 | 4966 | 306 | 181 | 0.628337 | [0.584569, 0.670095] |
-| ML | 1319 | 167 | 1152 | 114 | 53 | 0.682635 | [0.608612, 0.748444] |
+| SDE | 5453 | 486 | 4967 | 305 | 181 | 0.627572 | [0.583747, 0.669396] |
+| ML | 1169 | 152 | 1017 | 111 | 41 | 0.730263 | [0.654675, 0.794499] |
 
 ## Statistical Evidence
 | Test | Pairing Scope | Statistic | P-value | Note |
 | --- | --- | ---: | ---: | --- |
-| two_proportion_z | independent_scored_rows | 1.263172 | 0.206527 | tests precision difference on scored rows, ignores pairing |
-| mcnemar_cc | overlap_scored_keys_only | 0.000000 | 1 | paired only on shared race driver lap keys, overlap_n=35, discordant=0 |
+| two_proportion_z | independent_scored_rows | 2.319851 | 0.0203489 | tests precision difference on scored rows, ignores pairing |
+| mcnemar_cc | overlap_scored_keys_only | 0.000000 | 1 | paired only on shared race driver lap keys, overlap_n=38, discordant=0 |
 | mcnemar_exact | overlap_scored_keys_only | 0.000000 | 1 | exact binomial mcnemar p value on discordant overlap pairs, sde_success_ml_failure=0, sde_failure_ml_success=0 |
 
 ## Coverage and Overlap Diagnostics
-- Precision delta (ML - SDE): 0.054298
-- Scored-row delta (ML - SDE): -320
-- Actionable-row delta (ML - SDE): -4134
-- Scored ratio (ML / SDE): 0.342916
-- Actionable ratio (ML / SDE): 0.241885
-- Overlap scored keys: 35
-- Overlap ratio vs SDE scored: 0.071869, vs ML scored: 0.209581
+- Precision delta (ML - SDE): 0.102691
+- Scored-row delta (ML - SDE): -334
+- Actionable-row delta (ML - SDE): -4284
+- Scored ratio (ML / SDE): 0.312757
+- Actionable ratio (ML / SDE): 0.214377
+- Overlap scored keys: 38
+- Overlap ratio vs SDE scored: 0.078189, vs ML scored: 0.250000
 
 ## Per-Year Comparison
 | Year | SDE Scored | SDE Precision | ML Scored | ML Precision | Delta Precision (ML-SDE) | Delta Scored (ML-SDE) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2022 | 136 | 0.632353 | 68 | 0.647059 | 0.014706 | -68 |
-| 2023 | 89 | 0.662921 | 49 | 0.734694 | 0.071773 | -40 |
-| 2024 | 136 | 0.632353 | 47 | 0.680851 | 0.048498 | -89 |
-| 2025 | 126 | 0.595238 | 3 | 0.666667 | 0.071429 | -123 |
+| 2022 | 133 | 0.624060 | 52 | 0.711538 | 0.087478 | -81 |
+| 2023 | 91 | 0.670330 | 36 | 0.750000 | 0.079670 | -55 |
+| 2024 | 134 | 0.634328 | 58 | 0.724138 | 0.089810 | -76 |
+| 2025 | 128 | 0.593750 | 6 | 0.833333 | 0.239583 | -122 |
 
 ## Top Exclusion Reasons
 | Model | Exclusion Reason | Count | Share Within Model Exclusions |
 | --- | --- | ---: | ---: |
-| SDE | NO_MATCH_WITHIN_HORIZON | 4619 | 0.930125 |
-| SDE | UNRESOLVED_MISSING_POST_GAP | 186 | 0.037455 |
-| SDE | UNRESOLVED_INCIDENT_FILTER | 126 | 0.025373 |
-| SDE | WEATHER_SURVIVAL_STOP | 35 | 0.007048 |
-| ML | NO_MATCH_WITHIN_HORIZON | 1087 | 0.943576 |
-| ML | UNRESOLVED_INCIDENT_FILTER | 33 | 0.028646 |
-| ML | UNRESOLVED_MISSING_POST_GAP | 32 | 0.027778 |
+| SDE | NO_MATCH_WITHIN_HORIZON | 4619 | 0.929938 |
+| SDE | UNRESOLVED_MISSING_POST_GAP | 186 | 0.037447 |
+| SDE | UNRESOLVED_INCIDENT_FILTER | 127 | 0.025569 |
+| SDE | WEATHER_SURVIVAL_STOP | 35 | 0.007047 |
+| ML | NO_MATCH_WITHIN_HORIZON | 962 | 0.945919 |
+| ML | UNRESOLVED_INCIDENT_FILTER | 27 | 0.026549 |
+| ML | UNRESOLVED_MISSING_POST_GAP | 27 | 0.026549 |
+| ML | WEATHER_SURVIVAL_STOP | 1 | 0.000983 |
 
 ## Interpretation and Limits
 - Primary inferential claim should be based on two-proportion z under independent scored-row assumption.

@@ -19,15 +19,15 @@
 ## Results
 | Test ID | Test | Why | Status | Metric | Value | Threshold | Artifact |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| B1 | ML precision delta vs SDE | Checks if ML improves precision under the same comparator semantics. | PASS | precision_delta | 0.013454 | 0.000000 | data_lake/reports/significance_summary_2022_2025_racewise.csv |
-| B2 | Two-proportion z significance | Tests whether observed precision difference is statistically significant. | FAIL | p_value | 0.830657 | 0.050000 | data_lake/reports/significance_tests_2022_2025_racewise.csv |
-| C1 | Reference precision floor | Verifies threshold policy remains at or above the SDE precision floor. | PASS | reference_precision | 0.633094 | 0.628337 | data_lake/reports/threshold_frontier_2022_2025_racewise.csv |
-| C2 | Lookahead no-match dominance | Checks that most exclusions are horizon-related, supporting comparator interpretation. | PASS | no_match_rate | 0.965764 | 0.900000 | data_lake/reports/threshold_frontier_2022_2025_racewise.csv |
-| D1 | Constrained precision | Ensures calibrated constrained policy is precise enough for strategy actions. | FAIL | constrained_precision | 0.136986 | 0.600000 | data_lake/reports/calibration_policy_summary_2022_2025_racewise.csv |
-| D2 | Precision-floor reachability | Measures whether candidate thresholds can reliably satisfy precision constraints. | FAIL | reachability_ratio | 0.406815 | 0.900000 | data_lake/reports/calibration_policy_summary_2022_2025_racewise.csv |
-| D3 | Fallback rate | Checks constrained policy stability when precision floor is hard to satisfy. | PASS | fallback_rate | 0.054945 | 0.100000 | data_lake/reports/calibration_policy_summary_2022_2025_racewise.csv |
+| B1 | ML precision delta vs SDE | Checks if ML improves precision under the same comparator semantics. | PASS | precision_delta | 0.031252 | 0.000000 | data_lake/reports/significance_summary_2022_2025_racewise.csv |
+| B2 | Two-proportion z significance | Tests whether observed precision difference is statistically significant. | FAIL | p_value | 0.581458 | 0.050000 | data_lake/reports/significance_tests_2022_2025_racewise.csv |
+| C1 | Reference precision floor | Verifies threshold policy remains at or above the SDE precision floor. | PASS | reference_precision | 0.629213 | 0.627572 | data_lake/reports/threshold_frontier_2022_2025_racewise.csv |
+| C2 | Lookahead no-match dominance | Checks that most exclusions are horizon-related, supporting comparator interpretation. | PASS | no_match_rate | 0.964905 | 0.900000 | data_lake/reports/threshold_frontier_2022_2025_racewise.csv |
+| D1 | Constrained precision | Ensures calibrated constrained policy is precise enough for strategy actions. | FAIL | constrained_precision | 0.143984 | 0.600000 | data_lake/reports/calibration_policy_summary_2022_2025_racewise.csv |
+| D2 | Precision-floor reachability | Measures whether candidate thresholds can reliably satisfy precision constraints. | FAIL | reachability_ratio | 0.415029 | 0.900000 | data_lake/reports/calibration_policy_summary_2022_2025_racewise.csv |
+| D3 | Fallback rate | Checks constrained policy stability when precision floor is hard to satisfy. | PASS | fallback_rate | 0.076923 | 0.100000 | data_lake/reports/calibration_policy_summary_2022_2025_racewise.csv |
 | F1 | Training-serving parity gate | Guards against feature/schema skew between offline training and live serving. | PASS | feature_parity_overall_gate | 1.000000 | 1.000000 | data_lake/reports/feature_parity_summary_2022_2025_racewise.csv |
-| G1 | Latency gate | Checks p95 end-to-end inference latency against operational budget. | PASS | latency_p95_total_ms | 14.358216 | 500.000000 | data_lake/reports/live_latency_summary_2022_2025_racewise.csv |
+| G1 | Latency gate | Checks p95 end-to-end inference latency against operational budget. | PASS | latency_p95_total_ms | 9.007989 | 500.000000 | data_lake/reports/live_latency_summary_2022_2025_racewise.csv |
 | G2 | Availability gate | Ensures prediction path remains available across replayed events. | PASS | availability_pct | 100.000000 | 99.000000 | data_lake/reports/live_latency_summary_2022_2025_racewise.csv |
 | H1 | Integrated deployment decision | Combines B/C/D/F/G evidence into one actionable readiness decision. | NO_GO | integrated_gate_decision | N/A | N/A | data_lake/reports/integrated_gate_2022_2025_racewise.csv |
 | J1 | Split-integrity gate | Verifies grouped race CV and OOF coverage assumptions are preserved. | FAIL | split_integrity_overall | 0.000000 | 1.000000 | data_lake/reports/split_integrity_summary_2022_2025_racewise.csv |
