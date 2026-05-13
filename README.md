@@ -1,89 +1,22 @@
-# Thesis Reproducibility Guide (Final Phase 2B Dual-Contract)
+# F1 Thesis Experiment (Final Phase 2B)
 
-This README is the **current, minimal, reproducible path** for the experiment that produced `results_comparison_newest.md`.
+This repo contains the final experiment used for the thesis comparison between:
+- Final SDE (deterministic baseline)
+- Batch ML
+- MOA (streaming)
 
-It intentionally excludes plotting/report-polish tooling and focuses only on:
-- data replay/dataset generation,
-- Batch ML training/evaluation,
-- MOA/SML training/evaluation,
-- canonical truth-universe evaluation outputs.
-
-## 1) What This Reproduces
-
-- Final protocol: dual-contract `H=2`
+Main setup:
+- Years: `2022 2023 2024 2025`
+- Horizon: `H=2`
+- Contracts:
   - `pit_any_h2` (episode-level, `pit_now_only`)
   - `pit_success_h2` (row-level, `pit_now_plus_good_pit`)
-- Final profiles:
+- Headline truth universe: `canonical_sde_truth`
+- Profiles:
   - `e0_no_source_year` (`baseline`, drop `_source_year`)
   - `p1_percent_conservative_v1` (`percent_conservative_v1`, drop `_source_year`)
-- Final headline truth mode:
-  - `canonical_sde_truth` using SDE c6 fixed truth universe/events
 
-## 2) Minimal Code Files To Keep In GitHub
-
-If you want a **straight necessary** commit for this pipeline, keep at least the files below.
-
-### 2.1 Infra + replay (Flink/Kafka + producer)
-
-- `docker-compose.yml`
-- `run_simulation.sh`
-- `simulate_season.sh`
-- `scripts/precache_2022_2025.sh`
-- `scripts/f1_race_calendar_2022_2025.json`
-- `f1-telemetry-producer/src/prepare_race.py`
-- `f1-telemetry-producer/src/stream_race.py`
-- `f1-telemetry-producer/src/precache_seasons.py`
-
-Flink processor (keep the full job module):
-- `f1-telemetry-processor/pom.xml`
-- `f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java`
-- `f1-telemetry-processor/src/main/java/com/polimi/f1/model/**/*.java`
-- `f1-telemetry-processor/src/main/java/com/polimi/f1/operators/**/*.java`
-- `f1-telemetry-processor/src/main/java/com/polimi/f1/state/**/*.java`
-- `f1-telemetry-processor/src/main/java/com/polimi/f1/utils/**/*.java`
-
-### 2.2 ML/MOA pipeline core
-
-Top-level scripts:
-- `ml_pipeline/pipeline_config.py`
-- `ml_pipeline/prep_data.py`
-- `ml_pipeline/train_model.py`
-- `ml_pipeline/export_moa_dataset.py`
-- `ml_pipeline/run_moa_arf.py`
-- `ml_pipeline/run_moa_vote_logger.py`
-- `ml_pipeline/evaluate_batch_dual_contract_run.py`
-- `ml_pipeline/evaluate_moa_dual_contract_run.py`
-- `ml_pipeline/build_batch_phase2a_matrix.py`
-- `ml_pipeline/build_shared_truth_universe.py`
-- `ml_pipeline/phase2b_threshold_frontier.py`
-- `ml_pipeline/run_sml_phase2b_dual_contract.py`
-- `ml_pipeline/java_src/MoaPrequentialVoteLogger.java`
-
-Required libs used by the scripts above:
-- `ml_pipeline/lib/data_preparation.py`
-- `ml_pipeline/lib/feature_profiles.py`
-- `ml_pipeline/lib/replay_manifest.py`
-- `ml_pipeline/lib/report_label_contract_summary.py`
-- `ml_pipeline/lib/race_metadata.py`
-- `ml_pipeline/lib/model_training_cv.py`
-- `ml_pipeline/lib/comparator_heuristic.py`
-- `ml_pipeline/lib/pit_truth_eligibility.py`
-- `ml_pipeline/lib/moa_predictions.py`
-- `ml_pipeline/lib/evaluate_batch_dual_contract_run.py`
-- `ml_pipeline/lib/evaluate_moa_dual_contract_run.py`
-- `ml_pipeline/lib/build_batch_phase2a_matrix.py`
-- `ml_pipeline/lib/build_shared_truth_universe.py`
-- `ml_pipeline/lib/phase2b_threshold_frontier.py`
-- `ml_pipeline/lib/run_moa_vote_logger.py`
-- `ml_pipeline/lib/run_sml_phase2b_dual_contract.py`
-
-### 2.3 Root essentials
-
-- `requirements.txt`
-- `README.md`
-- `results_comparison_newest.md`
-
-## 3) Environment
+## 1) Setup
 
 ```bash
 python3 -m venv .venv
@@ -91,36 +24,31 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-MOA jar required:
+MOA jar is required at:
 
 ```bash
-mkdir -p data_lake/tools
-# put jar here:
-# data_lake/tools/moa.jar
+data_lake/tools/moa.jar
 ```
 
-## 4) Data Inputs Required
+## 2) Required inputs
 
 You need either:
+- replayed JSONL streams in `data_lake/` (`ml_features_*`, `drop_zones_*`, `pit_evals_*`, `pit_timings_*`) + replay manifests,
 
-1. Replayed stream JSONL artifacts in `data_lake/` (`ml_features_*`, `drop_zones_*`, `pit_evals_*`, `pit_timings_*`) plus replay manifests.
-
-or
-
-2. Already prepared parquet datasets:
+or already prepared datasets:
 - `data_lake/ml_training_dataset_2022_2025_dual_contract.parquet`
 - `data_lake/ml_training_dataset_2022_2025_dual_contract_p1_percent.parquet`
 
-For canonical SDE-truth evaluation also required:
+For canonical SDE-truth evaluation, these files must exist:
 - `data_lake/reports/pit_truth_eligibility_audit_2022_c6_cfg120_fixed.csv`
 - `data_lake/reports/pit_truth_eligibility_audit_2023_c6_cfg120_fixed.csv`
 - `data_lake/reports/pit_truth_eligibility_audit_2024_c6_cfg120_fixed.csv`
 - `data_lake/reports/pit_truth_eligibility_audit_2025_c6_cfg120_fixed.csv`
 - `data_lake/reports/fastf1_prepared_pit_stats_2022_2025/fastf1_prepared_pit_events.csv`
 
-## 5) Reproduce Dataset Preparation (Dual-Contract)
+## 3) Build the two Phase 2B datasets
 
-### E0 dataset
+### E0
 
 ```bash
 .venv/bin/python ml_pipeline/prep_data.py \
@@ -132,7 +60,7 @@ For canonical SDE-truth evaluation also required:
   --track-agnostic-mode off
 ```
 
-### P1 dataset
+### P1
 
 ```bash
 .venv/bin/python ml_pipeline/prep_data.py \
@@ -144,9 +72,9 @@ For canonical SDE-truth evaluation also required:
   --track-agnostic-mode track_percentage_v1
 ```
 
-## 6) Reproduce Batch ML (Phase 2A matrix)
+## 4) Run Batch ML (Phase 2A matrix)
 
-Use racewise sequential only (`expanding_race_sequential`), no pretrain.
+This runs both profiles and all six targets with `expanding_race_sequential`.
 
 ```bash
 bash <<'BASH'
@@ -155,6 +83,15 @@ set -euo pipefail
 OUT="data_lake/reports/ml_phase2a_dual_contract_2022_2025"
 YEARS=(2022 2023 2024 2025)
 mkdir -p "$OUT"/{oof,leaderboard,eval,by_year,matrix,logs}
+
+TARGETS=(
+  target_pit_any_h2_raw
+  target_pit_any_h2_clean_actionable
+  target_pit_any_h2_clean_dry_strategy
+  target_pit_success_h2_raw
+  target_pit_success_h2_clean_actionable
+  target_pit_success_h2_clean_dry_strategy
+)
 
 run_batch () {
   local profile="$1"
@@ -190,15 +127,6 @@ run_batch () {
     --output-by-year-csv "$OUT/by_year/${run_id}.csv"
 }
 
-TARGETS=(
-  target_pit_any_h2_raw
-  target_pit_any_h2_clean_actionable
-  target_pit_any_h2_clean_dry_strategy
-  target_pit_success_h2_raw
-  target_pit_success_h2_clean_actionable
-  target_pit_success_h2_clean_dry_strategy
-)
-
 for t in "${TARGETS[@]}"; do
   run_batch e0_no_source_year baseline data_lake/ml_training_dataset_2022_2025_dual_contract.parquet "$t"
   run_batch p1_percent_conservative_v1 percent_conservative_v1 data_lake/ml_training_dataset_2022_2025_dual_contract_p1_percent.parquet "$t"
@@ -228,9 +156,7 @@ done
 BASH
 ```
 
-## 7) Canonical SDE-Truth Universe + Batch Phase 2B Frontier
-
-Build universe CSVs:
+## 5) Build canonical SDE truth universe + Batch Phase 2B frontier
 
 ```bash
 .venv/bin/python ml_pipeline/build_shared_truth_universe.py \
@@ -241,8 +167,6 @@ Build universe CSVs:
   --output-shared-universe-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/audits/shared_universe_sde_ml_2022_2025.csv \
   --output-summary-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/audits/shared_universe_summary_2022_2025.csv
 ```
-
-Batch Phase 2B threshold frontier (canonical SDE truth):
 
 ```bash
 .venv/bin/python ml_pipeline/phase2b_threshold_frontier.py \
@@ -263,9 +187,7 @@ Batch Phase 2B threshold frontier (canonical SDE truth):
   --output-md data_lake/reports/ml_phase2b_dual_contract_2022_2025/phase2b_threshold_frontier_report.md
 ```
 
-## 8) Reproduce MOA/SML Phase 2B (Canonical + Native Sensitivity)
-
-This is the exact orchestrator path used:
+## 6) Run MOA/SML Phase 2B
 
 ```bash
 .venv/bin/python ml_pipeline/run_sml_phase2b_dual_contract.py \
@@ -283,21 +205,14 @@ This is the exact orchestrator path used:
   --resume
 ```
 
-## 9) Expected Output Roots (Experiment Only)
+## 7) Main outputs
 
 - Batch Phase 2A:
   - `data_lake/reports/ml_phase2a_dual_contract_2022_2025/`
-- Batch Phase 2B frontier:
+- Batch Phase 2B:
   - `data_lake/reports/ml_phase2b_dual_contract_2022_2025/`
 - MOA/SML Phase 2B:
   - `data_lake/reports/sml_phase2b_dual_contract_2022_2025/`
 
-## 10) Out Of Scope In This README
-
-Not included on purpose:
-- figure generation,
-- presentation graph polishing,
-- markdown/image report assembly,
-- thesis-writing helper scripts.
-
-Those are downstream of the core experiment and are not required to reproduce model/data/comparator results.
+Current master report:
+- `results_comparison_newest.md`
