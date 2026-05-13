@@ -14,14 +14,16 @@ try:
         DEFAULT_HORIZON,
         DEFAULT_SEASON_TAG,
         DEFAULT_YEAR,
+        OUTCOME_MODES,
+        OUTCOME_PIT_ANY_H2,
+        OUTCOME_PIT_SUCCESS_H2,
         _build_comparator_dataset,
         _latest_jsonl,
         _load_jsonl,
-        _prepare_pit_evals,
         _print_summary,
     )
     from .moa_predictions import decode_moa_predictions
-    from .model_training_cv import _load_dataset, _prepare_matrix
+    from .model_training_cv import DEFAULT_TARGET_COLUMN, _load_dataset, _prepare_matrix
     from ..pipeline_config import default_dataset_path, normalize_years
 except ImportError:
     import sys
@@ -38,14 +40,20 @@ except ImportError:
         DEFAULT_HORIZON,
         DEFAULT_SEASON_TAG,
         DEFAULT_YEAR,
+        OUTCOME_MODES,
+        OUTCOME_PIT_ANY_H2,
+        OUTCOME_PIT_SUCCESS_H2,
         _build_comparator_dataset,
         _latest_jsonl,
         _load_jsonl,
-        _prepare_pit_evals,
         _print_summary,
     )
     from lib.moa_predictions import decode_moa_predictions  # type: ignore
-    from lib.model_training_cv import _load_dataset, _prepare_matrix  # type: ignore
+    from lib.model_training_cv import (  # type: ignore
+        DEFAULT_TARGET_COLUMN,
+        _load_dataset,
+        _prepare_matrix,
+    )
     from pipeline_config import default_dataset_path, normalize_years  # type: ignore
 
 
@@ -61,7 +69,7 @@ def _resolve_output_path(data_lake: Path, requested: str) -> Path:
     if path.is_absolute():
         return path
     if path.parts and path.parts[0] == data_lake.name:
-        return path
+        return data_lake.parent / path
     return data_lake / path
 
 
@@ -70,9 +78,10 @@ def _prepare_moa_suggestions(
     pred_path: Path,
     actionable_label: str,
     min_mapping_purity: float,
+    target_column: str,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     df = _load_dataset(dataset_path)
-    _, y_true, _, _, meta = _prepare_matrix(df)
+    _, y_true, _, _, meta = _prepare_matrix(df, target_column=target_column)
 
     pred_binary, diagnostics = decode_moa_predictions(
         pred_path=pred_path,
@@ -111,11 +120,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--years", type=int, nargs="+", default=list(DEFAULT_YEARS), help="season years")
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token")
     parser.add_argument("--dataset", default="", help="prepared dataset path used to align race/driver/lap rows")
+    parser.add_argument(
+        "--target-column",
+        default=DEFAULT_TARGET_COLUMN,
+        help="binary target column used to align MOA prediction decoding",
+    )
     parser.add_argument("--moa-predictions", default=DEFAULT_MOA_PREDICTIONS, help="MOA prediction file path")
     parser.add_argument("--actionable-label", default=DEFAULT_ACTIONABLE_LABEL, help="label for MOA actions")
     parser.add_argument("--min-mapping-purity", type=float, default=0.99, help="minimum purity to accept MOA code map")
     parser.add_argument("--year", type=int, default=DEFAULT_YEAR, help="comparator source year token for pit_evals")
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="look ahead horizon in laps")
+    parser.add_argument(
+        "--outcome-mode",
+        choices=sorted(OUTCOME_MODES),
+        default=OUTCOME_PIT_SUCCESS_H2,
+        help="comparator outcome contract: success-only pits or any pit timing in window",
+    )
+    parser.add_argument(
+        "--pit-timings",
+        default="",
+        help="optional pit_timings jsonl path (required for --outcome-mode pit_any_h2)",
+    )
+    parser.add_argument(
+        "--episode-output",
+        default="",
+        help="optional output comparator csv path for episode-level view",
+    )
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="output comparator csv path")
     parser.add_argument("--diagnostics-output", default=DEFAULT_OUTPUT_DIAGNOSTICS, help="output diagnostics json path")
     return parser.parse_args()
@@ -138,23 +168,57 @@ def main() -> None:
         pred_path=pred_path,
         actionable_label=args.actionable_label,
         min_mapping_purity=args.min_mapping_purity,
+        target_column=args.target_column,
     )
 
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", args.year, args.season_tag)
-    pit_evals = _prepare_pit_evals(_load_jsonl(pit_evals_path))
-    comparator = _build_comparator_dataset(suggestions, pit_evals, args.horizon)
+    pit_evals = _load_jsonl(pit_evals_path)
+    pit_timings_path: Path | None = None
+    pit_timings_df: pd.DataFrame | None = None
+    if args.outcome_mode == OUTCOME_PIT_ANY_H2:
+        pit_timings_path = (
+            Path(args.pit_timings)
+            if args.pit_timings
+            else _latest_jsonl(data_lake, "pit_timings", args.year, args.season_tag)
+        )
+        pit_timings_df = _load_jsonl(pit_timings_path)
+    comparator = _build_comparator_dataset(
+        suggestions,
+        pit_evals,
+        args.horizon,
+        outcome_mode=args.outcome_mode,
+        pit_timings=pit_timings_df,
+    )
+    episode_comparator: pd.DataFrame | None = None
+    if args.episode_output:
+        episode_comparator = _build_comparator_dataset(
+            suggestions,
+            pit_evals,
+            args.horizon,
+            outcome_mode=args.outcome_mode,
+            pit_timings=pit_timings_df,
+            episode_level=True,
+        )
 
     output_path = _resolve_output_path(data_lake, args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     comparator.to_csv(output_path, index=False)
+    episode_output_path: Path | None = None
+    if args.episode_output and episode_comparator is not None:
+        episode_output_path = _resolve_output_path(data_lake, args.episode_output)
+        episode_output_path.parent.mkdir(parents=True, exist_ok=True)
+        episode_comparator.to_csv(episode_output_path, index=False)
 
     diagnostics_path = _resolve_output_path(data_lake, args.diagnostics_output)
     diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
     diagnostics_payload = {
         "dataset": str(dataset_path),
+        "target_column": str(args.target_column),
         "moa_predictions": str(pred_path),
         "pit_evals": str(pit_evals_path),
+        "pit_timings": str(pit_timings_path) if pit_timings_path is not None else "",
         "horizon": int(args.horizon),
+        "outcome_mode": str(args.outcome_mode),
         "diagnostics": diagnostics,
     }
     diagnostics_path.write_text(
@@ -165,7 +229,13 @@ def main() -> None:
     print(f"MOA predictions input: {pred_path}")
     print(f"dataset input        : {dataset_path}")
     print(f"pit evals input      : {pit_evals_path}")
+    if pit_timings_path is not None:
+        print(f"pit timings input    : {pit_timings_path}")
+    print(f"target column        : {args.target_column}")
+    print(f"outcome mode         : {args.outcome_mode}")
     print(f"output csv           : {output_path}")
+    if episode_output_path is not None:
+        print(f"episode csv          : {episode_output_path}")
     print(f"diagnostics json     : {diagnostics_path}")
     _print_summary(comparator, suggestions, args.horizon)
 

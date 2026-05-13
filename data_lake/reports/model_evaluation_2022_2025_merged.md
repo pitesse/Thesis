@@ -4,6 +4,11 @@
 - Years: [2022, 2023, 2024, 2025]
 - Horizon: H=2
 - Comparator source token: year=9999, season_tag=merged
+- Target column: target_y
+- Comparator outcome mode: pit_success_h2
+- Feature profile: baseline
+- Excluded features: none
+- Track-agnostic mode: off
 
 ## Why These Tests
 - Leakage-safe grouped validation by race (Roberts et al., 2017).
@@ -14,15 +19,15 @@
 ## Results
 | Test ID | Test | Why | Status | Metric | Value | Threshold | Artifact |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| B1 | ML precision delta vs SDE | Checks if ML improves precision under the same comparator semantics. | PASS | precision_delta | 0.208543 | 0.000000 | data_lake/reports/significance_summary_2022_2025_merged.csv |
-| B2 | Two-proportion z significance | Tests whether observed precision difference is statistically significant. | PASS | p_value | 0.000000 | 0.050000 | data_lake/reports/significance_tests_2022_2025_merged.csv |
-| C1 | Reference precision floor | Verifies threshold policy remains at or above the SDE precision floor. | PASS | reference_precision | 0.877658 | 0.734314 | data_lake/reports/threshold_frontier_2022_2025_merged.csv |
-| C2 | Lookahead no-match dominance | Checks that most exclusions are horizon-related, supporting comparator interpretation. | PASS | no_match_rate | 0.968374 | 0.900000 | data_lake/reports/threshold_frontier_2022_2025_merged.csv |
-| D1 | Constrained precision | Ensures calibrated constrained policy is precise enough for strategy actions. | PASS | constrained_precision | 0.803150 | 0.600000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
-| D2 | Precision-floor reachability | Measures whether candidate thresholds can reliably satisfy precision constraints. | FAIL | reachability_ratio | 0.899672 | 0.900000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
-| D3 | Fallback rate | Checks constrained policy stability when precision floor is hard to satisfy. | PASS | fallback_rate | 0.000000 | 0.100000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
+| B1 | ML precision delta vs SDE | Checks if ML improves precision under the same comparator semantics. | PASS | precision_delta | 0.078310 | 0.000000 | data_lake/reports/significance_summary_2022_2025_merged.csv |
+| B2 | Two-proportion z significance | Tests whether observed precision difference is statistically significant. | FAIL | p_value | 0.269113 | 0.050000 | data_lake/reports/significance_tests_2022_2025_merged.csv |
+| C1 | Reference precision floor | Verifies threshold policy remains at or above the SDE precision floor. | PASS | reference_precision | 0.647059 | 0.627572 | data_lake/reports/threshold_frontier_2022_2025_merged.csv |
+| C2 | Lookahead no-match dominance | Checks that most exclusions are horizon-related, supporting comparator interpretation. | PASS | no_match_rate | 0.966057 | 0.900000 | data_lake/reports/threshold_frontier_2022_2025_merged.csv |
+| D1 | Constrained precision | Ensures calibrated constrained policy is precise enough for strategy actions. | FAIL | constrained_precision | 0.204762 | 0.600000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
+| D2 | Precision-floor reachability | Measures whether candidate thresholds can reliably satisfy precision constraints. | FAIL | reachability_ratio | 0.403608 | 0.900000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
+| D3 | Fallback rate | Checks constrained policy stability when precision floor is hard to satisfy. | PASS | fallback_rate | 0.057143 | 0.100000 | data_lake/reports/calibration_policy_summary_2022_2025_merged.csv |
 | F1 | Training-serving parity gate | Guards against feature/schema skew between offline training and live serving. | PASS | feature_parity_overall_gate | 1.000000 | 1.000000 | data_lake/reports/feature_parity_summary_2022_2025_merged.csv |
-| G1 | Latency gate | Checks p95 end-to-end inference latency against operational budget. | PASS | latency_p95_total_ms | 10.268393 | 500.000000 | data_lake/reports/live_latency_summary_2022_2025_merged.csv |
+| G1 | Latency gate | Checks p95 end-to-end inference latency against operational budget. | PASS | latency_p95_total_ms | 7.997869 | 500.000000 | data_lake/reports/live_latency_summary_2022_2025_merged.csv |
 | G2 | Availability gate | Ensures prediction path remains available across replayed events. | PASS | availability_pct | 100.000000 | 99.000000 | data_lake/reports/live_latency_summary_2022_2025_merged.csv |
 | H1 | Integrated deployment decision | Combines B/C/D/F/G evidence into one actionable readiness decision. | NO_GO | integrated_gate_decision | N/A | N/A | data_lake/reports/integrated_gate_2022_2025_merged.csv |
 | J1 | Split-integrity gate | Verifies grouped race CV and OOF coverage assumptions are preserved. | FAIL | split_integrity_overall | 0.000000 | 1.000000 | data_lake/reports/split_integrity_summary_2022_2025_merged.csv |
@@ -30,7 +35,7 @@
 
 ## Integrated Decision
 - Decision: NO_GO
-- Note: confidence=LOW; core validity gate failed in D
+- Note: confidence=LOW; core validity gate failed in B/D
 
 ## Core Artifacts
 - Unified summary CSV: data_lake/reports/model_evaluation_2022_2025_merged.csv
@@ -39,6 +44,7 @@
 - Dedicated SDE vs ML summary: data_lake/reports/sde_ml_comparison_summary_2022_2025_merged.csv
 - Dedicated SDE vs ML by year: data_lake/reports/sde_ml_comparison_by_year_2022_2025_merged.csv
 - Comparator files: data_lake/reports/heuristic_comparator_2022_2025_merged.csv, data_lake/reports/ml_comparator_2022_2025_merged.csv
+- Episode comparator files: data_lake/reports/heuristic_comparator_episode_2022_2025_merged.csv, data_lake/reports/ml_comparator_episode_2022_2025_merged.csv
 - Threshold sweep report: data_lake/reports/threshold_frontier_report_2022_2025_merged.txt
 - Calibration report: data_lake/reports/calibration_policy_report_2022_2025_merged.txt
 - Parity report: data_lake/reports/feature_parity_report_2022_2025_merged.txt

@@ -1,8 +1,0 @@
-check,status,value,note
-schema_bundle_training_exact,PASS,1.0,order-sensitive exact column match
-schema_live_payload_required_fields,PASS,1.0,missing=
-point_in_time_pace_trend_lag2,PASS,1.0,"mismatch_rows=0, initial_rows_violation=0"
-point_in_time_gapAhead_trend_lag2,PASS,1.0,"mismatch_rows=0, initial_rows_violation=0"
-schema_serving_transform_feature_coverage,PASS,1.0,missing=
-offline_live_parity_overall,FAIL,0.8150864197530865,"sample_rows=3000, features=27, threshold=0.9500"
-feature_parity_overall_gate,FAIL,0.0,"all schema, PIT, and parity checks must pass"

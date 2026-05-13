@@ -1,6 +1,8 @@
 package com.polimi.f1;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
@@ -28,6 +30,7 @@ import com.polimi.f1.model.input.TrackStatusEvent;
 import com.polimi.f1.model.output.DropZoneAlert;
 import com.polimi.f1.model.output.LiftCoastAlert;
 import com.polimi.f1.model.output.MLFeatureRow;
+import com.polimi.f1.model.output.PitTimingEvent;
 import com.polimi.f1.model.output.PitStopEvaluationAlert;
 import com.polimi.f1.model.output.PitSuggestionAlert;
 import com.polimi.f1.model.output.RivalInfoAlert;
@@ -239,6 +242,14 @@ public class F1StreamingJob {
                 .process(new PitStrategyEvaluator())
                 .name("Pit Strategy Evaluation");
 
+        // fastf1 pit timing truth stream: one row per detected pit-in lap.
+        // this is the authoritative "pit happened" signal for the pit_any_h2 target.
+        DataStream<PitTimingEvent> pitTimings = lapWithWatermarks
+                .filter(lap -> lap.getPitInTime() != null)
+                .map(PitTimingEvent::fromLapEvent)
+                .returns(PitTimingEvent.class)
+                .name("Pit Timing Truth Extraction");
+
         // sinks (print to taskmanager stdout for development)
         // pitEvals and tireDropAlerts are persisted via FileSink and routed via KafkaSink,
         // so their print sinks are removed to avoid redundant stdout noise.
@@ -336,6 +347,25 @@ public class F1StreamingJob {
 
         pitSuggestionsJsonStream.sinkTo(pitSuggestionsSink)
                 .name("FileSink: Pit Suggestions").uid("sink-pit-suggestions");
+
+        // pit timings jsonl sink
+        DataStream<String> pitTimingsJsonStream = pitTimings
+                .map(new JsonSerializer<>())
+                .returns(String.class)
+                .name("Serialize Pit Timings (JSONL)");
+
+        FileSink<String> pitTimingsSink = FileSink
+                .forRowFormat(new Path("/opt/flink/data_lake/pit_timings"),
+                        new SimpleStringEncoder<String>("UTF-8"))
+                .withRollingPolicy(buildJsonlRollingPolicy())
+                .withOutputFileConfig(OutputFileConfig.builder()
+                        .withPartPrefix("pit-timing")
+                        .withPartSuffix(".jsonl")
+                        .build())
+                .build();
+
+        pitTimingsJsonStream.sinkTo(pitTimingsSink)
+                .name("FileSink: Pit Timings").uid("sink-pit-timings");
 
         // ml features jsonl sink (denormalized per-lap feature rows for model training)
         DataStream<String> mlFeaturesJsonStream = mlFeatures
@@ -457,7 +487,12 @@ public class F1StreamingJob {
     }
 
     private static String raceKey(LapEvent lap) {
-        return lap.getRace() != null ? lap.getRace() : "UNKNOWN_RACE";
+        String race = lap.getRace() != null ? lap.getRace() : "UNKNOWN_RACE";
+        int year = extractYearFromLap(lap);
+        if (year > 0) {
+            return year + " :: " + race;
+        }
+        return "UNKNOWN_YEAR :: " + race;
     }
 
     private static String raceLapKey(LapEvent lap) {
@@ -466,6 +501,36 @@ public class F1StreamingJob {
 
     private static String raceLapKey(String race, int lapNumber) {
         return race + "|" + lapNumber;
+    }
+
+    private static int extractYearFromLap(LapEvent lap) {
+        String date = lap.getDate();
+        if (date != null && date.length() >= 4) {
+            String yearToken = date.substring(0, 4);
+            if (yearToken.chars().allMatch(Character::isDigit)) {
+                return Integer.parseInt(yearToken);
+            }
+        }
+
+        long eventTimeMillis = lap.getEventTimeMillis();
+        if (eventTimeMillis > 0) {
+            return Instant.ofEpochMilli(eventTimeMillis).atZone(ZoneOffset.UTC).getYear();
+        }
+
+        return extractYearFromRaceLabel(lap.getRace());
+    }
+
+    private static int extractYearFromRaceLabel(String raceLabel) {
+        if (raceLabel == null || raceLabel.length() < 4) {
+            return -1;
+        }
+        String yearToken = raceLabel.substring(0, 4);
+        if (yearToken.chars().allMatch(Character::isDigit)
+                && raceLabel.length() > 7
+                && raceLabel.substring(4, 8).equals(" :: ")) {
+            return Integer.parseInt(yearToken);
+        }
+        return -1;
     }
 
 }

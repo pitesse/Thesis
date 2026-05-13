@@ -594,14 +594,17 @@ def _temporal_drift_by_race(
     reports_dir: Path,
     sde_cmp: pd.DataFrame,
     ml_cmp: pd.DataFrame,
-    moa_cmp: pd.DataFrame,
+    moa_cmp: pd.DataFrame | None,
     formats: list[str],
 ) -> tuple[pd.DataFrame, list[Path], list[dict[str, object]]]:
     sde_r = _comparator_summary_by_race(sde_cmp, "SDE")
     ml_r = _comparator_summary_by_race(ml_cmp, "Batch ML")
-    moa_r = _comparator_summary_by_race(moa_cmp, "MOA")
+    frames = [sde_r, ml_r]
+    if moa_cmp is not None:
+        moa_r = _comparator_summary_by_race(moa_cmp, "MOA")
+        frames.append(moa_r)
 
-    drift_df = pd.concat([sde_r, ml_r, moa_r], ignore_index=True)
+    drift_df = pd.concat(frames, ignore_index=True)
     drift_df.to_csv(reports_dir / "advanced_temporal_drift_by_race.csv", index=False)
 
     fig, axes = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
@@ -678,10 +681,19 @@ def main() -> None:
         "SDE comparator",
     )
     ml_cmp = _load_comparator(reports_dir / f"ml_comparator_{suffix}.csv", "Batch comparator")
-    moa_cmp = _load_comparator(_resolve_moa_comparator(reports_dir, suffix), "MOA comparator")
+    moa_cmp_path = _resolve_moa_comparator(reports_dir, suffix)
+    moa_cmp: pd.DataFrame | None = None
+    if moa_cmp_path.exists():
+        moa_cmp = _load_comparator(moa_cmp_path, "MOA comparator")
+    else:
+        print(f"[WARN] missing MOA comparator: {moa_cmp_path} (skipping MOA temporal drift)")
 
     holdout_path = reports_dir / "moa_surrogate_holdout_predictions.csv"
-    holdout_df = _load_csv(holdout_path, "MOA surrogate holdout predictions")
+    holdout_df: pd.DataFrame | None = None
+    if holdout_path.exists():
+        holdout_df = _load_csv(holdout_path, "MOA surrogate holdout predictions")
+    else:
+        print(f"[WARN] missing MOA surrogate holdout predictions: {holdout_path} (skipping MOA calibration/decision curves)")
 
     thresholds = np.arange(args.threshold_min, args.threshold_max + (args.threshold_step / 2.0), args.threshold_step)
 
@@ -699,15 +711,16 @@ def main() -> None:
     generated.extend(outputs)
     summary_rows.extend(rows)
 
-    _, outputs, rows = _calibration_moa_surrogate(
-        reports_dir,
-        holdout_df,
-        n_bins=args.n_bins,
-        binning_strategy=args.binning_strategy,
-        formats=args.formats,
-    )
-    generated.extend(outputs)
-    summary_rows.extend(rows)
+    if holdout_df is not None:
+        _, outputs, rows = _calibration_moa_surrogate(
+            reports_dir,
+            holdout_df,
+            n_bins=args.n_bins,
+            binning_strategy=args.binning_strategy,
+            formats=args.formats,
+        )
+        generated.extend(outputs)
+        summary_rows.extend(rows)
 
     _, outputs, rows = _pr_gain_batch(reports_dir, pretrain_oof, racewise_oof, args.formats)
     generated.extend(outputs)
@@ -723,14 +736,15 @@ def main() -> None:
     generated.extend(outputs)
     summary_rows.extend(rows)
 
-    _, outputs, rows = _decision_curve_moa_surrogate(
-        reports_dir,
-        holdout_df,
-        thresholds,
-        args.formats,
-    )
-    generated.extend(outputs)
-    summary_rows.extend(rows)
+    if holdout_df is not None:
+        _, outputs, rows = _decision_curve_moa_surrogate(
+            reports_dir,
+            holdout_df,
+            thresholds,
+            args.formats,
+        )
+        generated.extend(outputs)
+        summary_rows.extend(rows)
 
     _, outputs, rows = _temporal_drift_by_race(reports_dir, sde_cmp, ml_cmp, moa_cmp, args.formats)
     generated.extend(outputs)

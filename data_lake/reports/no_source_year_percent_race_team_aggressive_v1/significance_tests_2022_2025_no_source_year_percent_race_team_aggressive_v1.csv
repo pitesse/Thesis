@@ -1,4 +1,0 @@
-test,pairing_scope,n_sde,n_ml,statistic,p_value,note
-two_proportion_z,independent_scored_rows,1020,190,6.7178073578686,1.844790986638145e-11,"tests precision difference on scored rows, ignores pairing"
-mcnemar_cc,overlap_scored_keys_only,1020,190,0.0,1.0,"paired only on shared race driver lap keys, overlap_n=29, discordant=0"
-mcnemar_exact,overlap_scored_keys_only,1020,190,0.0,1.0,"exact binomial mcnemar p value on discordant overlap pairs, sde_success_ml_failure=0, sde_failure_ml_success=0"

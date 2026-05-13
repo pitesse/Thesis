@@ -1,6 +1,6 @@
 # Dedicated SDE vs ML Comparison Report
 
-Generated at (UTC): 2026-04-28T12:10:57.300324+00:00
+Generated at (UTC): 2026-05-06T13:55:27.644949+00:00
 
 ## Scope
 - Purpose: meeting-ready, fairness-locked SDE vs ML comparison summary.
@@ -16,44 +16,43 @@ Generated at (UTC): 2026-04-28T12:10:57.300324+00:00
 ## Headline Comparison
 | Model | Actionable | Scored | Excluded | TP | FP | Precision | Wilson CI 95% |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| SDE | 6323 | 1020 | 5303 | 749 | 271 | 0.734314 | [0.706365, 0.760504] |
-| ML | 1016 | 595 | 421 | 561 | 34 | 0.942857 | [0.921210, 0.958823] |
+| SDE | 5453 | 486 | 4967 | 305 | 181 | 0.627572 | [0.583747, 0.669396] |
+| ML | 210 | 51 | 159 | 36 | 15 | 0.705882 | [0.570009, 0.812913] |
 
 ## Statistical Evidence
 | Test | Pairing Scope | Statistic | P-value | Note |
 | --- | --- | ---: | ---: | --- |
-| two_proportion_z | independent_scored_rows | 10.328940 | <1e-16 (underflow) | tests precision difference on scored rows, ignores pairing |
-| mcnemar_cc | overlap_scored_keys_only | 0.500000 | 0.4795 | paired only on shared race driver lap keys, overlap_n=92, discordant=2 |
-| mcnemar_exact | overlap_scored_keys_only | 2.000000 | 1 | exact binomial mcnemar p value on discordant overlap pairs, sde_success_ml_failure=1, sde_failure_ml_success=1 |
+| two_proportion_z | independent_scored_rows | 1.105107 | 0.269113 | tests precision difference on scored rows, ignores pairing |
+| mcnemar_cc | overlap_scored_keys_only | 0.000000 | 1 | paired only on shared race driver lap keys, overlap_n=11, discordant=0 |
+| mcnemar_exact | overlap_scored_keys_only | 0.000000 | 1 | exact binomial mcnemar p value on discordant overlap pairs, sde_success_ml_failure=0, sde_failure_ml_success=0 |
 
 ## Coverage and Overlap Diagnostics
-- Precision delta (ML - SDE): 0.208543
-- Scored-row delta (ML - SDE): -425
-- Actionable-row delta (ML - SDE): -5307
-- Scored ratio (ML / SDE): 0.583333
-- Actionable ratio (ML / SDE): 0.160683
-- Overlap scored keys: 92
-- Overlap ratio vs SDE scored: 0.090196, vs ML scored: 0.154622
+- Precision delta (ML - SDE): 0.078310
+- Scored-row delta (ML - SDE): -435
+- Actionable-row delta (ML - SDE): -5243
+- Scored ratio (ML / SDE): 0.104938
+- Actionable ratio (ML / SDE): 0.038511
+- Overlap scored keys: 11
+- Overlap ratio vs SDE scored: 0.022634, vs ML scored: 0.215686
 
 ## Per-Year Comparison
 | Year | SDE Scored | SDE Precision | ML Scored | ML Precision | Delta Precision (ML-SDE) | Delta Scored (ML-SDE) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2022 | 155 | 0.645161 | N/A | N/A | N/A | N/A |
-| 2023 | 226 | 0.721239 | 52 | 0.980769 | 0.259530 | -174 |
-| 2024 | 299 | 0.759197 | 155 | 0.954839 | 0.195641 | -144 |
-| 2025 | 340 | 0.761765 | 388 | 0.932990 | 0.171225 | 48 |
+| 2022 | 133 | 0.624060 | N/A | N/A | N/A | N/A |
+| 2023 | 91 | 0.670330 | 31 | 0.806452 | 0.136122 | -60 |
+| 2024 | 134 | 0.634328 | 17 | 0.529412 | -0.104917 | -117 |
+| 2025 | 128 | 0.593750 | 3 | 0.666667 | 0.072917 | -125 |
 
 ## Top Exclusion Reasons
 | Model | Exclusion Reason | Count | Share Within Model Exclusions |
 | --- | --- | ---: | ---: |
-| SDE | NO_MATCH_WITHIN_HORIZON | 4873 | 0.918914 |
-| SDE | UNRESOLVED_MISSING_POST_GAP | 240 | 0.045257 |
-| SDE | UNRESOLVED_INCIDENT_FILTER | 148 | 0.027909 |
-| SDE | WEATHER_SURVIVAL_STOP | 42 | 0.007920 |
-| ML | NO_MATCH_WITHIN_HORIZON | 403 | 0.957245 |
-| ML | UNRESOLVED_MISSING_POST_GAP | 11 | 0.026128 |
-| ML | WEATHER_SURVIVAL_STOP | 4 | 0.009501 |
-| ML | UNRESOLVED_INCIDENT_FILTER | 3 | 0.007126 |
+| SDE | NO_MATCH_WITHIN_HORIZON | 4619 | 0.929938 |
+| SDE | UNRESOLVED_MISSING_POST_GAP | 186 | 0.037447 |
+| SDE | UNRESOLVED_INCIDENT_FILTER | 127 | 0.025569 |
+| SDE | WEATHER_SURVIVAL_STOP | 35 | 0.007047 |
+| ML | NO_MATCH_WITHIN_HORIZON | 152 | 0.955975 |
+| ML | UNRESOLVED_MISSING_POST_GAP | 4 | 0.025157 |
+| ML | UNRESOLVED_INCIDENT_FILTER | 3 | 0.018868 |
 
 ## Interpretation and Limits
 - Primary inferential claim should be based on two-proportion z under independent scored-row assumption.

@@ -179,6 +179,35 @@ def _extract_final_row(learning_curve_path: Path) -> dict[str, Any]:
     return {str(k): _json_safe(v) for k, v in frame.iloc[-1].to_dict().items()}
 
 
+def _inspect_prediction_file(pred_path: Path) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "prediction_file_rows_sampled": 0,
+        "prediction_file_column_count_first_row": pd.NA,
+        "prediction_file_has_vote_columns": False,
+        "prediction_file_format_note": "missing_or_unreadable",
+    }
+    if not pred_path.exists():
+        return info
+    try:
+        sample = pd.read_csv(pred_path, header=None, nrows=256)
+    except Exception:
+        return info
+    if sample.empty:
+        info["prediction_file_format_note"] = "empty"
+        return info
+    col_count = int(sample.shape[1])
+    info["prediction_file_rows_sampled"] = int(len(sample))
+    info["prediction_file_column_count_first_row"] = col_count
+    info["prediction_file_has_vote_columns"] = bool(col_count > 2)
+    if col_count > 2:
+        info["prediction_file_format_note"] = "includes_extra_columns_maybe_votes"
+    elif col_count == 2:
+        info["prediction_file_format_note"] = "hard_label_only_pred_true_codes"
+    else:
+        info["prediction_file_format_note"] = "unexpected_column_count"
+    return info
+
+
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -257,6 +286,7 @@ def main() -> None:
     _write_text(stderr_output, stderr_text)
 
     final_row = _extract_final_row(learning_curve)
+    pred_info = _inspect_prediction_file(predictions_output)
 
     summary_row: dict[str, Any] = {
         "status": run_status,
@@ -275,6 +305,7 @@ def main() -> None:
         "stderr_output": str(stderr_output),
         "predictions_output": str(predictions_output),
     }
+    summary_row.update(pred_info)
     for key, value in final_row.items():
         summary_row[f"final_{key}"] = value
 
@@ -292,6 +323,7 @@ def main() -> None:
         "stdout_output": str(stdout_output),
         "stderr_output": str(stderr_output),
         "predictions_output": str(predictions_output),
+        "prediction_file_inspection": pred_info,
         "final_learning_curve_row": final_row,
         "started_at_utc": started_at.isoformat(),
         "finished_at_utc": finished_at.isoformat(),
@@ -309,6 +341,16 @@ def main() -> None:
     print(f"stderr output      : {stderr_output}")
     print(f"predictions output : {predictions_output}")
     print(f"metadata output    : {metadata_output}")
+    if pred_info.get("prediction_file_has_vote_columns") is False:
+        print(
+            "prediction format  : hard-label only (predicted_class,true_class). "
+            "No continuous vote scores detected in this MOA output."
+        )
+    else:
+        print(
+            "prediction format  : includes extra columns beyond predicted/true labels "
+            "(candidate vote/probability fields)."
+        )
 
     if run_status == "FAILED":
         raise RuntimeError(f"MOA ARF run failed with exit code {exit_code}")

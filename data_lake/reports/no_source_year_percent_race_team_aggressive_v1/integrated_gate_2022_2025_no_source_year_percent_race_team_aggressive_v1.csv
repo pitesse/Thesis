@@ -1,7 +1,0 @@
-phase,status,checks_passed,checks_total,checks_hold,checks_failed,note
-B,PASS,2,2,0,0,integrated from by-layer criteria
-C,PASS,2,2,0,0,integrated from by-layer criteria
-D,FAIL,2,3,0,1,integrated from by-layer criteria
-F,PASS,2,2,0,0,integrated from by-layer criteria
-G,PASS,3,3,0,0,integrated from by-layer criteria
-PHASE_H_DECISION,NO_GO,11,12,0,1,confidence=LOW; core validity gate failed in D

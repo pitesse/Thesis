@@ -1,4 +1,0 @@
-paradigm,comparison_mode,actionable,scored,excluded,tp,fp,precision,eval_instances,accuracy_pct,kappa_pct,source_artifact,notes
-SDE,full_h2_actionable_one_to_one,6323,1020,5303,749,271,0.734313725490196,,,,data_lake/reports/heuristic_comparator_2022_2025_merged.csv,direct comparator metrics under fixed H=2 contract
-ML_BATCH,full_h2_actionable_one_to_one,196,137,59,131,6,0.9562043795620438,,,,data_lake/reports/no_source_year_percent_race_team_v1_strict/ml_comparator_2022_2025_no_source_year_percent_race_team_v1_strict.csv,direct comparator metrics under fixed H=2 contract
-MOA_ARF,prequential_stream_baseline,,,,,,,124136.0,89.25855513307985,19.716673419813983,data_lake/reports/no_source_year_percent_race_team_v1_strict/moa_arf_summary_2022_2025_no_source_year_percent_race_team_v1_strict.csv,"prequential stream metrics, not yet mapped to comparator semantics; use as baseline until MOA decision mapping is added"

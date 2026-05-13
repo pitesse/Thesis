@@ -29,6 +29,7 @@ from pipeline_config import (
     run_suffix,
 )
 from lib.data_preparation import _latest_jsonl
+from lib.replay_manifest import load_latest_manifest, strip_year_prefix
 from lib.feature_profiles import (
     DEFAULT_FEATURE_PROFILE,
     DEFAULT_TRACK_AGNOSTIC_MODE,
@@ -36,6 +37,9 @@ from lib.feature_profiles import (
     build_feature_plan,
     parse_exclude_features,
 )
+
+OUTCOME_PIT_SUCCESS_H2 = "pit_success_h2"
+OUTCOME_PIT_ANY_H2 = "pit_any_h2"
 
 
 @contextmanager
@@ -186,6 +190,29 @@ def _existing_merged_ml_features_is_deduped(path: Path) -> bool:
     return _existing_merged_stream_is_deduped(path, "lapNumber")
 
 
+def _load_manifest_for_merge(data_lake: Path, year: int, season_tag: str):
+    try:
+        return load_latest_manifest(data_lake, year=year, season_tag=season_tag)
+    except FileNotFoundError:
+        if season_tag == DEFAULT_SEASON_TAG:
+            raise
+    return load_latest_manifest(data_lake, year=year, season_tag=DEFAULT_SEASON_TAG)
+
+
+def _lap_field_for_stream(stream: str) -> str:
+    if stream == "pit_evals":
+        return "pitLapNumber"
+    return "lapNumber"
+
+
+def _row_lap_key(row: dict[str, object], stream: str) -> int | str:
+    lap_raw = row.get(_lap_field_for_stream(stream))
+    try:
+        return int(float(lap_raw))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(lap_raw)
+
+
 def _ensure_merged_jsonl(
     data_lake: Path,
     stream: str,
@@ -195,75 +222,78 @@ def _ensure_merged_jsonl(
     merged_tag: str,
     merge_stamp: str,
 ) -> Path:
-    source_paths = [(year, _latest_jsonl(data_lake, stream, year, season_tag)) for year in years]
-    existing_merged = _latest_jsonl_or_none(data_lake, stream, merged_year, merged_tag)
-
-    newest_source_mtime = max(path.stat().st_mtime for _, path in source_paths)
-    existing_valid = False
-    # reuse merged files when source streams did not change, avoids hidden drift across repeated evaluations.
-    if existing_merged is not None and existing_merged.stat().st_mtime >= newest_source_mtime:
-        existing_valid = _existing_merged_has_prefixed_race(existing_merged)
-        if existing_valid and stream == "pit_evals":
-            existing_valid = _existing_merged_pit_evals_is_deduped(existing_merged)
-        if existing_valid and stream == "ml_features":
-            existing_valid = _existing_merged_ml_features_is_deduped(existing_merged)
-
-    if existing_valid:
-        return existing_merged
+    source_paths = [
+        (year, _latest_jsonl(data_lake, stream, year, season_tag))
+        for year in years
+    ]
+    manifest_by_year = {
+        int(year): _load_manifest_for_merge(data_lake, int(year), season_tag)
+        for year in years
+    }
 
     output_path = data_lake / f"{stream}_{merged_year}_{merged_tag}_{merge_stamp}.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    dedup_enabled = stream in {"pit_evals", "pit_timings", "ml_features"}
+    deduped_rows: dict[tuple[int, int, str, int | str], dict[str, object]] = {}
+    passthrough_rows: list[tuple[int, int, str, int | str, dict[str, object]]] = []
+    seen_races_by_year: dict[int, set[str]] = {int(year): set() for year in years}
 
-    if stream in {"pit_evals", "ml_features"}:
-        dedup_field = "pitLapNumber" if stream == "pit_evals" else "lapNumber"
-        deduped_rows: dict[tuple[str, str, int | str], dict[str, object]] = {}
-        passthrough_rows: list[dict[str, object]] = []
+    for year, src in source_paths:
+        manifest = manifest_by_year[int(year)]
+        race_order = {race: idx for idx, race in enumerate(manifest.races_in_order)}
 
-        for year, src in source_paths:
-            with src.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    text = line.strip()
-                    if not text:
-                        continue
-                    row = json.loads(text)
-                    if not isinstance(row, dict):
-                        continue
+        with src.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                row = json.loads(text)
+                if not isinstance(row, dict):
+                    continue
+                if "race" not in row or "driver" not in row:
+                    continue
 
-                    if "race" in row and not _race_is_year_prefixed(row.get("race")):
-                        row["race"] = f"{year} :: {row['race']}"
+                race_name = strip_year_prefix(row.get("race"))
+                driver = str(row.get("driver", "")).strip()
+                if not race_name or not driver:
+                    continue
+                if race_name not in race_order:
+                    raise ValueError(
+                        f"merge contract failed for {stream}: race {race_name!r} "
+                        f"not present in replay manifest year={year}"
+                    )
+                if driver not in set(manifest.drivers_by_race.get(race_name, ())):
+                    raise ValueError(
+                        f"merge contract failed for {stream}: driver/race mismatch "
+                        f"year={year}, race={race_name!r}, driver={driver!r}"
+                    )
 
-                    race = str(row.get("race", ""))
-                    driver = str(row.get("driver", ""))
-                    lap_raw = row.get(dedup_field)
-                    try:
-                        lap_key: int | str = int(float(lap_raw))
-                    except (TypeError, ValueError):
-                        lap_key = str(lap_raw)
+                prefixed_race = f"{year} :: {race_name}"
+                row["race"] = prefixed_race
+                lap_key = _row_lap_key(row, stream)
+                lap_key_norm = str(lap_key)
+                sort_key = (int(year), int(race_order[race_name]), driver, lap_key_norm)
+                seen_races_by_year[int(year)].add(race_name)
 
-                    if race and driver and lap_raw is not None:
-                        # keep the latest row per pit key, enforces deterministic one to one comparator inputs.
-                        deduped_rows[(race, driver, lap_key)] = row
-                    else:
-                        passthrough_rows.append(row)
+                if dedup_enabled and lap_key_norm != "None":
+                    deduped_rows[sort_key] = row
+                else:
+                    passthrough_rows.append((*sort_key, row))
 
-        ordered_keys = sorted(deduped_rows.keys(), key=lambda key: (key[0], key[1], str(key[2])))
-        with output_path.open("w", encoding="utf-8") as dst:
-            for key in ordered_keys:
-                dst.write(json.dumps(deduped_rows[key]) + "\n")
-            for row in passthrough_rows:
-                dst.write(json.dumps(row) + "\n")
-    else:
-        with output_path.open("w", encoding="utf-8") as dst:
-            for year, src in source_paths:
-                with src.open("r", encoding="utf-8") as handle:
-                    for line in handle:
-                        text = line.strip()
-                        if not text:
-                            continue
-                        row = json.loads(text)
-                        if isinstance(row, dict) and "race" in row and not _race_is_year_prefixed(row.get("race")):
-                            row["race"] = f"{year} :: {row['race']}"
-                        dst.write(json.dumps(row) + "\n")
+    for year in years:
+        manifest = manifest_by_year[int(year)]
+        missing = sorted(set(manifest.races_in_order) - seen_races_by_year[int(year)])
+        if stream in {"ml_features", "pit_evals"} and missing:
+            raise ValueError(
+                f"merge contract failed for {stream}: missing races for year={year}: {missing[:8]}"
+            )
+
+    with output_path.open("w", encoding="utf-8") as dst:
+        for key in sorted(deduped_rows.keys()):
+            dst.write(json.dumps(deduped_rows[key]) + "\n")
+        passthrough_rows.sort(key=lambda item: (item[0], item[1], item[2], str(item[3])))
+        for _, _, _, _, row in passthrough_rows:
+            dst.write(json.dumps(row) + "\n")
 
     print(f"merged {stream} jsonl: {output_path}")
     return output_path
@@ -291,6 +321,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--years", type=int, nargs="+", default=list(DEFAULT_YEARS))
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG)
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON)
+    parser.add_argument(
+        "--target-column",
+        default="target_y",
+        help="binary target column used by OOF/model artifacts",
+    )
+    parser.add_argument(
+        "--outcome-mode",
+        choices=[OUTCOME_PIT_SUCCESS_H2, OUTCOME_PIT_ANY_H2],
+        default=OUTCOME_PIT_SUCCESS_H2,
+        help="comparator outcome contract: success-only pits or any pit timing in window",
+    )
 
     parser.add_argument("--dataset", default="", help="training dataset used for parity/split audits")
     parser.add_argument("--oof-input", default="", help="winner OOF decisions csv")
@@ -371,7 +412,7 @@ def main() -> None:
     # multi-season evaluations must operate on aligned merged streams, avoids cross-season key collisions.
     if len(years) > 1:
         merge_stamp = pd.Timestamp.utcnow().strftime("%Y%m%d_%H%M%S")
-        for stream in ("pit_suggestions", "pit_evals", "ml_features", "drop_zones"):
+        for stream in ("pit_suggestions", "pit_evals", "pit_timings", "ml_features", "drop_zones"):
             # for merged-tag runs, prefer existing merged streams and only rebuild from per-year season streams if missing.
             if args.season_tag == DEFAULT_MERGED_SEASON_TAG:
                 existing_merged = _latest_jsonl_or_none(data_lake, stream, comparator_year, comparator_tag)
@@ -402,9 +443,15 @@ def main() -> None:
         if args.drop_zones
         else ensured_merged.get("drop_zones", _latest_jsonl(data_lake, "drop_zones", comparator_year, comparator_tag))
     )
+    pit_timings_path = ensured_merged.get(
+        "pit_timings",
+        _latest_jsonl(data_lake, "pit_timings", comparator_year, comparator_tag),
+    )
 
     heuristic_comparator = reports / f"heuristic_comparator_{suffix}.csv"
+    heuristic_comparator_episode = reports / f"heuristic_comparator_episode_{suffix}.csv"
     ml_comparator = reports / f"ml_comparator_{suffix}.csv"
+    ml_comparator_episode = reports / f"ml_comparator_episode_{suffix}.csv"
 
     phase_b_summary = reports / f"significance_summary_{suffix}.csv"
     phase_b_tests = reports / f"significance_tests_{suffix}.csv"
@@ -477,8 +524,14 @@ def main() -> None:
             comparator_tag,
             "--horizon",
             str(args.horizon),
+            "--outcome-mode",
+            args.outcome_mode,
+            "--pit-timings",
+            str(pit_timings_path),
             "--output",
             str(heuristic_comparator.resolve()),
+            "--episode-output",
+            str(heuristic_comparator_episode.resolve()),
         ],
     )
 
@@ -497,8 +550,14 @@ def main() -> None:
             comparator_tag,
             "--horizon",
             str(args.horizon),
+            "--outcome-mode",
+            args.outcome_mode,
+            "--pit-timings",
+            str(pit_timings_path),
             "--output",
             str(ml_comparator.resolve()),
+            "--episode-output",
+            str(ml_comparator_episode.resolve()),
         ],
     )
 
@@ -557,6 +616,10 @@ def main() -> None:
             comparator_tag,
             "--horizon",
             str(args.horizon),
+            "--outcome-mode",
+            args.outcome_mode,
+            "--pit-timings",
+            str(pit_timings_path),
             "--precision-floor",
             str(args.precision_floor),
             "--reference-threshold",
@@ -758,6 +821,12 @@ def main() -> None:
     j_split_gate = j_split[j_split["check"] == "split_integrity_overall"].iloc[0]
     j_comp_gate = j_comp[j_comp["check"] == "comparator_invariance_overall"].iloc[0]
 
+    no_match_gate_ok = (
+        no_match_rate >= 0.90
+        if args.outcome_mode == OUTCOME_PIT_SUCCESS_H2
+        else True
+    )
+    no_match_threshold = 0.90 if args.outcome_mode == OUTCOME_PIT_SUCCESS_H2 else 0.0
     summary_rows = [
         {
             "test_id": "B1",
@@ -792,11 +861,15 @@ def main() -> None:
         {
             "test_id": "C2",
             "test_name": "Lookahead no-match dominance",
-            "why_this_test": "Checks that most exclusions are horizon-related, supporting comparator interpretation.",
-            "status": _status_from_condition(no_match_rate >= 0.90),
+            "why_this_test": (
+                "Checks that most exclusions are horizon-related, supporting comparator interpretation."
+                if args.outcome_mode == OUTCOME_PIT_SUCCESS_H2
+                else "Not applicable for pit_any_h2 strict scoring where no-match rows are false positives."
+            ),
+            "status": _status_from_condition(no_match_gate_ok),
             "metric": "no_match_rate",
             "value": no_match_rate,
-            "threshold": 0.90,
+            "threshold": no_match_threshold,
             "artifact": str(phase_c_sweep),
         },
         {
@@ -909,6 +982,8 @@ def main() -> None:
         f"- Years: {years}",
         f"- Horizon: H={args.horizon}",
         f"- Comparator source token: year={comparator_year}, season_tag={comparator_tag}",
+        f"- Target column: {args.target_column}",
+        f"- Comparator outcome mode: {args.outcome_mode}",
         f"- Feature profile: {feature_plan.feature_profile}",
         f"- Excluded features: {feature_plan.excluded_features_csv() or 'none'}",
         f"- Track-agnostic mode: {feature_plan.track_agnostic_mode}",
@@ -956,6 +1031,7 @@ def main() -> None:
             f"- Dedicated SDE vs ML summary: {phase_b_meeting_summary}",
             f"- Dedicated SDE vs ML by year: {phase_b_meeting_by_year}",
             f"- Comparator files: {heuristic_comparator}, {ml_comparator}",
+            f"- Episode comparator files: {heuristic_comparator_episode}, {ml_comparator_episode}",
             f"- Threshold sweep report: {phase_c_report}",
             f"- Calibration report: {phase_d_report}",
             f"- Parity report: {phase_f_report}",

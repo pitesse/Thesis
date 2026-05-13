@@ -57,6 +57,7 @@ DEFAULT_SPLIT_PROTOCOL = "grouped_race"
 DEFAULT_ROLLING_MIN_TRAIN_YEARS = 1
 
 TARGET_COLUMN = "target_y"
+DEFAULT_TARGET_COLUMN = TARGET_COLUMN
 GROUP_COLUMN = "race"
 
 METADATA_DROP_COLUMNS = {
@@ -66,9 +67,42 @@ METADATA_DROP_COLUMNS = {
     "compound",
     "trackStatus",
     "matched_pit_lap",
+    "matched_pit_lap_success",
+    "matched_pit_lap_any",
     "matched_pit_result",
+    "matched_pit_in_time",
+    "matched_pit_out_time",
     "label_horizon_laps",
+    "target_pit_success_h2",
+    "target_pit_any_h2",
 }
+
+LEAKAGE_COLUMN_MARKERS = (
+    "matched_pit",
+    "matched_lap",
+    "matched_reason",
+    "truth_lens",
+    "eligibility",
+    "train_eligible",
+)
+
+
+def _is_label_or_leakage_column(column: str, *, target_column: str) -> bool:
+    name = str(column).strip()
+    lower = name.lower()
+    target_lower = str(target_column).strip().lower()
+
+    if lower == target_lower:
+        return True
+    if lower.startswith("target_"):
+        return True
+    if lower.startswith("pit_any_h2_") or lower.startswith("pit_success_h2_"):
+        return True
+    if "label_horizon" in lower:
+        return True
+    if any(marker in lower for marker in LEAKAGE_COLUMN_MARKERS):
+        return True
+    return False
 
 
 def _load_dataset(path: Path) -> pd.DataFrame:
@@ -88,13 +122,18 @@ def _load_dataset(path: Path) -> pd.DataFrame:
 def _select_feature_columns(
     columns: Iterable[str],
     *,
+    target_column: str = DEFAULT_TARGET_COLUMN,
     drop_source_year_feature: bool = False,
     excluded_features: Iterable[str] | None = None,
 ) -> list[str]:
     excluded = {str(item).strip() for item in (excluded_features or []) if str(item).strip()}
-    feature_cols = [
-        c for c in columns if c != TARGET_COLUMN and c not in METADATA_DROP_COLUMNS
-    ]
+    feature_cols = []
+    for column in columns:
+        if column in METADATA_DROP_COLUMNS:
+            continue
+        if _is_label_or_leakage_column(str(column), target_column=target_column):
+            continue
+        feature_cols.append(column)
     if drop_source_year_feature:
         feature_cols = [c for c in feature_cols if c != "_source_year"]
     if excluded:
@@ -113,12 +152,13 @@ def _compute_scale_pos_weight(y: pd.Series) -> float:
 def _prepare_matrix(
     df: pd.DataFrame,
     *,
+    target_column: str = DEFAULT_TARGET_COLUMN,
     drop_source_year_feature: bool = False,
     feature_profile: str = DEFAULT_FEATURE_PROFILE,
     exclude_features: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series, pd.DataFrame]:
-    if TARGET_COLUMN not in df.columns:
-        raise ValueError(f"missing target column: {TARGET_COLUMN}")
+    if target_column not in df.columns:
+        raise ValueError(f"missing target column: {target_column}")
     if GROUP_COLUMN not in df.columns:
         raise ValueError(f"missing group column: {GROUP_COLUMN}")
     if "driver" not in df.columns:
@@ -128,9 +168,9 @@ def _prepare_matrix(
 
     work = df.copy()
 
-    work[TARGET_COLUMN] = pd.to_numeric(work[TARGET_COLUMN], errors="coerce")
-    work = work[work[TARGET_COLUMN].isin([0, 1])].copy()
-    work[TARGET_COLUMN] = work[TARGET_COLUMN].astype(int)
+    work[target_column] = pd.to_numeric(work[target_column], errors="coerce")
+    work = work[work[target_column].isin([0, 1])].copy()
+    work[target_column] = work[target_column].astype(int)
 
     work[GROUP_COLUMN] = work[GROUP_COLUMN].astype(str)
     source_year = _infer_source_year(work)
@@ -142,6 +182,7 @@ def _prepare_matrix(
 
     feature_cols = _select_feature_columns(
         work.columns,
+        target_column=target_column,
         drop_source_year_feature=drop_source_year_feature,
         excluded_features=feature_plan.excluded_features,
     )
@@ -164,7 +205,7 @@ def _prepare_matrix(
     if len(bool_cols) > 0:
         X[bool_cols] = X[bool_cols].astype(int)
 
-    y = work[TARGET_COLUMN]
+    y = work[target_column]
     groups = work[GROUP_COLUMN]
     meta = work[["race", "driver", "lapNumber"]].copy()
     meta["race"] = meta["race"].astype(str)
@@ -1017,6 +1058,7 @@ def _run_grouped_cv_for_config(
                     if pd.notna(source_year)
                     else pd.NA,
                     "target_y": int(target_value),
+                    "target_column_used": str(y.name) if y.name else TARGET_COLUMN,
                     "raw_proba": float(raw_score),
                     "calibrated_proba": float(cal_score),
                     "baseline_threshold": float(baseline_threshold),
@@ -1172,6 +1214,11 @@ def parse_args() -> argparse.Namespace:
         "--dataset",
         default=DEFAULT_DATASET,
         help="path to ML training dataset (csv or parquet)",
+    )
+    parser.add_argument(
+        "--target-column",
+        default=DEFAULT_TARGET_COLUMN,
+        help="binary target column to train on (e.g. target_y, target_pit_success_h2, target_pit_any_h2)",
     )
     parser.add_argument(
         "--folds", type=int, default=DEFAULT_FOLDS, help="number of group folds"
@@ -1421,6 +1468,7 @@ def main() -> None:
     )
     X, y, groups, source_year, meta = _prepare_matrix(
         df,
+        target_column=args.target_column,
         drop_source_year_feature=bool(args.drop_source_year_feature),
         feature_profile=feature_plan.feature_profile,
         exclude_features=list(feature_plan.excluded_features),
@@ -1455,6 +1503,7 @@ def main() -> None:
     print(f"rows                    : {len(df)}")
     print(f"usable rows             : {len(y)}")
     print(f"feature columns         : {X.shape[1]}")
+    print(f"target column           : {args.target_column}")
     print(
         f"drop `_source_year` feat: {bool(args.drop_source_year_feature)}"
     )
@@ -1593,6 +1642,7 @@ def main() -> None:
     leaderboard_df["excluded_features"] = feature_plan.excluded_features_csv()
     leaderboard_df["track_agnostic_mode"] = feature_plan.track_agnostic_mode
     leaderboard_df["drop_source_year_feature"] = int(bool(args.drop_source_year_feature))
+    leaderboard_df["target_column"] = str(args.target_column)
 
     top_k = min(args.top_k, len(leaderboard_df))
     display_cols = [
@@ -1664,6 +1714,7 @@ def main() -> None:
         oof_df["excluded_features"] = feature_plan.excluded_features_csv()
         oof_df["track_agnostic_mode"] = feature_plan.track_agnostic_mode
         oof_df["drop_source_year_feature"] = int(bool(args.drop_source_year_feature))
+        oof_df["target_column"] = str(args.target_column)
         oof_output_path = Path(args.oof_output)
         oof_output_path.parent.mkdir(parents=True, exist_ok=True)
         oof_df.to_csv(oof_output_path, index=False)

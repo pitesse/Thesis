@@ -36,6 +36,7 @@ from lib.model_training_cv import (
     DEFAULT_PROBA_THRESHOLD,
     DEFAULT_ROLLING_MIN_TRAIN_YEARS,
     DEFAULT_SPLIT_PROTOCOL,
+    DEFAULT_TARGET_COLUMN,
     DEFAULT_SWEEP_MAX,
     DEFAULT_SWEEP_MIN,
     DEFAULT_SWEEP_POINTS,
@@ -99,6 +100,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset", default="", help="training dataset path")
     parser.add_argument(
+        "--target-column",
+        default=DEFAULT_TARGET_COLUMN,
+        help="binary target column to train on (e.g. target_y, target_pit_success_h2, target_pit_any_h2)",
+    )
+    parser.add_argument(
         "--strict-parquet",
         action="store_true",
         help="fail if parquet backend is unavailable",
@@ -117,6 +123,11 @@ def parse_args() -> argparse.Namespace:
         help="use existing dataset",
     )
     parser.set_defaults(prepare_data=True)
+    parser.add_argument(
+        "--skip-replay-validation",
+        action="store_true",
+        help="skip strict replay-contract validation gate before training",
+    )
 
     parser.add_argument("--folds", type=int, default=DEFAULT_FOLDS)
     parser.add_argument(
@@ -316,6 +327,23 @@ def main() -> None:
         if not dataset_path.exists():
             raise FileNotFoundError(f"dataset not found: {dataset_path}")
 
+    if not args.skip_replay_validation:
+        validate_cmd = [
+            "--data-lake",
+            str(data_lake),
+            "--years",
+            *[str(year) for year in years],
+            "--season-tag",
+            args.season_tag,
+            "--dataset",
+            str(dataset_path),
+        ]
+        _run_step(
+            "Replay contract validation (fail-fast)",
+            "validate_replay_contracts",
+            validate_cmd,
+        )
+
     leaderboard_output = (
         Path(args.leaderboard_output)
         if args.leaderboard_output
@@ -333,6 +361,8 @@ def main() -> None:
     train_cmd = [
         "--dataset",
         str(dataset_path),
+        "--target-column",
+        str(args.target_column),
         "--folds",
         str(args.folds),
         "--split-protocol",
@@ -405,6 +435,8 @@ def main() -> None:
         serving_cmd = [
             "--dataset",
             str(dataset_path),
+            "--target-column",
+            str(args.target_column),
             "--output",
             str(serving_bundle_output),
             "--threshold",
@@ -449,6 +481,7 @@ def main() -> None:
     print(f"winner oof csv      : {oof_output}")
     print(f"drop `_source_year` : {bool(args.drop_source_year_feature)}")
     print(f"feature profile     : {feature_plan.feature_profile}")
+    print(f"target column       : {args.target_column}")
     print(
         "excluded features   : "
         f"{','.join(str(v) for v in parsed_exclude_features) if parsed_exclude_features else 'none'}"

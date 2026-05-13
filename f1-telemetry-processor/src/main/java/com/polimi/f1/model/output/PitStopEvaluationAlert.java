@@ -13,7 +13,7 @@ public class PitStopEvaluationAlert {
             = "driver,pitLapNumber,rivalAhead,rivalBehind,prePitGapAhead,prePitGapBehind,"
             + "postPitGapToRival,compound,result,trackStatusAtPit,tyreAgeAtPit,"
             + "gapToCarAheadAtPit,race,gapDeltaPct,baselineLapTime,"
-            + "driverPittedFirst,isOffsetStrategy,resolvedVia";
+            + "driverPittedFirst,isOffsetStrategy,resolvedVia,resolutionConfidence,resolutionProvenance";
 
     public enum Result {
         @JsonProperty("SUCCESS_UNDERCUT")
@@ -80,6 +80,8 @@ public class PitStopEvaluationAlert {
     private boolean driverPittedFirst;      // true if this driver entered pit before primary rival
     private boolean isOffsetStrategy;       // true if resolved via timeout (1-stop vs 2-stop)
     private String resolvedVia;             // "RIVAL_PIT", "OFFSET_TIMEOUT", "SAFETY_TIMER"
+    private String resolutionConfidence;    // HIGH, MEDIUM, LOW
+    private String resolutionProvenance;    // DIRECT_GAP, PACE_SHIFT, POSITIONAL, REFERENCE
 
     public PitStopEvaluationAlert() {
     }
@@ -237,6 +239,22 @@ public class PitStopEvaluationAlert {
         this.resolvedVia = resolvedVia;
     }
 
+    public String getResolutionConfidence() {
+        return resolutionConfidence;
+    }
+
+    public void setResolutionConfidence(String resolutionConfidence) {
+        this.resolutionConfidence = resolutionConfidence;
+    }
+
+    public String getResolutionProvenance() {
+        return resolutionProvenance;
+    }
+
+    public void setResolutionProvenance(String resolutionProvenance) {
+        this.resolutionProvenance = resolutionProvenance;
+    }
+
     // ml-ready csv row
     public String toCsvRow() {
         return String.join(",",
@@ -257,7 +275,9 @@ public class PitStopEvaluationAlert {
                 fmtDouble(baselineLapTime),
                 String.valueOf(driverPittedFirst),
                 String.valueOf(isOffsetStrategy),
-                safe(resolvedVia)
+                safe(resolvedVia),
+                safe(resolutionConfidence),
+                safe(resolutionProvenance)
         );
     }
 
@@ -265,13 +285,13 @@ public class PitStopEvaluationAlert {
     public String toString() {
         return String.format(
                 "PIT EVAL | %s Lap %d | %s | GapDelta: %s%% | Rivals: [%s, %s] | "
-                + "PreGap: %s/%s | PostGap: %s | Offset: %s | Via: %s",
+                + "PreGap: %s/%s | PostGap: %s | Offset: %s | Via: %s | Conf: %s | Prov: %s",
                 driver, pitLapNumber, result,
                 fmtDouble(gapDeltaPct),
                 safe(rivalAhead), safe(rivalBehind),
                 fmtDouble(prePitGapAhead), fmtDouble(prePitGapBehind),
                 fmtDouble(postPitGapToRival),
-                isOffsetStrategy, safe(resolvedVia));
+                isOffsetStrategy, safe(resolvedVia), safe(resolutionConfidence), safe(resolutionProvenance));
     }
 
     private static String safe(String s) {

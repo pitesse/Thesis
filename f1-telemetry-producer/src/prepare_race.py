@@ -11,12 +11,14 @@ separating etl from streaming avoids re-running the expensive fastf1 extraction
 
 import argparse
 import logging
+import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastf1 import Cache, get_session
+from fastf1 import Cache, get_event_schedule, get_session
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout
 
@@ -70,6 +72,27 @@ POST_RACE_BUFFER_SECONDS = 120
 TRACK_STATUS_SEVERITY_ORDER = ("5", "4", "7", "6", "2", "1")
 TRACK_STATUS_DEFAULT = "1"
 WEATHER_COLUMNS = ("AirTemp", "TrackTemp", "Humidity", "Rainfall")
+FASTF1_RECOVERABLE_ERROR_NAMES = {
+    "DataNotLoadedError",
+    "NoLapDataError",
+    "RateLimitExceededError",
+    "SessionNotAvailableError",
+}
+FASTF1_BACKEND_CANDIDATES = (None, "f1timing", "fastf1")
+CACHE_WRITE_TEST_FILENAME = ".fastf1_cache_write_test"
+FASTF1_CACHE_ENABLED = False
+WEATHER_MODE_OFF = "off"
+WEATHER_MODE_OPTIONAL = "optional"
+WEATHER_MODE_REQUIRED = "required"
+WEATHER_MODE_CHOICES = (
+    WEATHER_MODE_OFF,
+    WEATHER_MODE_OPTIONAL,
+    WEATHER_MODE_REQUIRED,
+)
+
+
+class SessionLapsUnavailableError(RuntimeError):
+    """Raised when a session loads but lap timing data is still unavailable."""
 
 
 def get_pit_losses(race_name: str) -> dict:
@@ -121,6 +144,18 @@ def parse_args() -> argparse.Namespace:
             "to preserve cooldown telemetry while trimming post-race dead time"
         ),
     )
+    parser.add_argument(
+        "--weather-mode",
+        choices=WEATHER_MODE_CHOICES,
+        default=WEATHER_MODE_OPTIONAL,
+        help=(
+            "weather enrichment behavior: "
+            "'off' disables weather loading, "
+            "'optional' tries weather but continues if unavailable, "
+            "'required' fails session load if weather data is unavailable "
+            "(default: optional)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -132,40 +167,292 @@ def configure_logging() -> None:
 
 
 def configure_cache() -> Path:
-    """enable fastf1 disk cache in the project-level data/ directory to avoid redundant api calls."""
-    cache_dir = Path(__file__).resolve().parents[2] / "data"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    Cache.enable_cache(str(cache_dir))
-    return cache_dir
+    """
+    Enable FastF1 cache if a writable cache directory is available.
+
+    Preferred order:
+    1) project-local data/fastf1_cache
+    2) FASTF1_CACHE env var (if set)
+    3) /tmp/fastf1_cache_<user>
+
+    If no candidate is writable, proceed with cache disabled.
+    """
+    global FASTF1_CACHE_ENABLED
+
+    project_cache = Path(__file__).resolve().parents[2] / "data" / "fastf1_cache"
+    env_cache = os.environ.get("FASTF1_CACHE", "").strip()
+    tmp_cache = Path("/tmp") / f"fastf1_cache_{os.environ.get('USER', 'user')}"
+
+    candidates: list[Path] = []
+    if project_cache:
+        candidates.append(project_cache)
+    if env_cache:
+        candidates.append(Path(env_cache))
+    if tmp_cache not in candidates:
+        candidates.append(tmp_cache)
+
+    for cache_dir in candidates:
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            probe = cache_dir / CACHE_WRITE_TEST_FILENAME
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+
+            Cache.enable_cache(str(cache_dir))
+            FASTF1_CACHE_ENABLED = True
+            return cache_dir
+        except Exception as exc:
+            logging.warning("FastF1 cache path unusable: %s (%s)", cache_dir, exc)
+
+    FASTF1_CACHE_ENABLED = False
+    logging.warning("FastF1 cache disabled: no writable cache directory found.")
+    return project_cache
 
 
 def load_session(
-    year: int = 2023, race: str = "Italian Grand Prix", session_type: str = "R"
+    year: int = 2023,
+    race: str = "Italian Grand Prix",
+    session_type: str = "R",
+    weather_mode: str = WEATHER_MODE_OPTIONAL,
 ):
     """load a fastf1 session, configurable via cli args for replaying different historical races."""
+    if weather_mode not in WEATHER_MODE_CHOICES:
+        raise ValueError(
+            f"unsupported weather_mode={weather_mode!r}, expected one of {WEATHER_MODE_CHOICES}"
+        )
+
     last_exception: Exception | None = None
+    session_candidates = _build_session_candidates(year=year, race=race)
+    weather_requested = weather_mode != WEATHER_MODE_OFF
 
     for attempt in range(1, MAX_FASTF1_LOAD_ATTEMPTS + 1):
-        try:
-            session = get_session(year, race, session_type)
-            session.load()
-            return session
-        except (Timeout, RequestsConnectionError) as exc:
-            last_exception = exc
-            if attempt == MAX_FASTF1_LOAD_ATTEMPTS:
-                break
-            logging.warning(
-                "FastF1 load attempt %d/%d failed (%s), retrying in %ds",
-                attempt,
-                MAX_FASTF1_LOAD_ATTEMPTS,
-                exc,
-                FASTF1_RETRY_DELAY_SECONDS,
-            )
-            time.sleep(FASTF1_RETRY_DELAY_SECONDS)
+        use_cache = FASTF1_CACHE_ENABLED and attempt < MAX_FASTF1_LOAD_ATTEMPTS
+        cache_mode = "enabled" if use_cache else "disabled"
+
+        for gp_value, backend in session_candidates:
+            try:
+                session = _get_session_with_backend(
+                    year=year,
+                    gp_value=gp_value,
+                    session_type=session_type,
+                    backend=backend,
+                )
+                event_name = getattr(session.event, "EventName", None)
+                round_number = getattr(session.event, "RoundNumber", None)
+                api_path = getattr(session, "api_path", "<missing>")
+                f1_api_support = getattr(session, "f1_api_support", None)
+                logging.info(
+                    "FastF1 candidate resolve: backend=%s gp=%s -> event=%s round=%s f1_api_support=%s api_path=%s",
+                    backend or "default",
+                    gp_value,
+                    event_name,
+                    round_number,
+                    f1_api_support,
+                    api_path,
+                )
+
+                cache_context = nullcontext() if use_cache else Cache.disabled()
+                with cache_context:
+                    # Keep weather/messages optional to reduce endpoint fragility.
+                    # Core replay requirements are laps + telemetry.
+                    session.load(
+                        laps=True,
+                        telemetry=True,
+                        weather=weather_requested,
+                        messages=False,
+                    )
+
+                _assert_session_laps_available(session, year=year, race=race)
+                _assert_session_telemetry_available(session, year=year, race=race)
+                if weather_mode == WEATHER_MODE_REQUIRED:
+                    _assert_session_weather_available(session, year=year, race=race)
+                return session
+            except Exception as exc:
+                last_exception = exc
+                backend_label = backend or "default"
+                logging.warning(
+                    "FastF1 candidate failed (attempt=%d/%d, cache=%s, backend=%s, gp=%s): %s",
+                    attempt,
+                    MAX_FASTF1_LOAD_ATTEMPTS,
+                    cache_mode,
+                    backend_label,
+                    gp_value,
+                    exc,
+                )
+                if not _is_recoverable_fastf1_error(exc):
+                    raise
 
     raise RuntimeError(
         f"Failed to load FastF1 session after {MAX_FASTF1_LOAD_ATTEMPTS} attempts"
     ) from last_exception
+
+
+def _assert_session_weather_available(session, year: int, race: str) -> None:
+    """
+    Ensure weather data exists when weather mode is REQUIRED.
+    """
+    try:
+        weather = session.laps.get_weather_data()
+    except Exception as exc:
+        raise SessionLapsUnavailableError(
+            f"session weather unavailable for {year} {race}: {exc}"
+        ) from exc
+
+    if weather is None or weather.empty:
+        raise SessionLapsUnavailableError(
+            f"session weather empty for {year} {race}"
+        )
+
+    available_weather = [column for column in WEATHER_COLUMNS if column in weather.columns]
+    if not available_weather:
+        raise SessionLapsUnavailableError(
+            f"session weather missing required columns for {year} {race}: {WEATHER_COLUMNS}"
+        )
+
+    if not weather[available_weather].notna().any().any():
+        raise SessionLapsUnavailableError(
+            f"session weather has no non-null values for {year} {race}"
+        )
+
+
+def _build_session_candidates(year: int, race: str) -> list[tuple[int | str, str | None]]:
+    """
+    Build deterministic candidate session lookups.
+
+    We try both race-name and round-number lookup because race-name matching can
+    occasionally degrade with backend/source inconsistencies.
+    """
+    round_number = _resolve_round_number(year=year, race=race)
+    candidates: list[tuple[int | str, str | None]] = []
+    seen: set[tuple[int | str, str | None]] = set()
+
+    def _add_candidate(gp_value: int | str, backend: str | None) -> None:
+        key = (gp_value, backend)
+        if key not in seen:
+            seen.add(key)
+            candidates.append(key)
+
+    for backend in FASTF1_BACKEND_CANDIDATES:
+        _add_candidate(race, backend)
+        if round_number is not None:
+            _add_candidate(round_number, backend)
+
+    return candidates
+
+
+def _resolve_round_number(year: int, race: str) -> int | None:
+    """
+    Resolve exact round number for a race name using the event schedule.
+    """
+    try:
+        schedule = get_event_schedule(year, include_testing=False)
+    except Exception as exc:
+        logging.warning("Failed to fetch event schedule for %d: %s", year, exc)
+        return None
+
+    if "EventName" not in schedule.columns or "RoundNumber" not in schedule.columns:
+        return None
+
+    exact_mask = schedule["EventName"].astype(str).str.casefold() == race.casefold()
+    exact_matches = schedule[exact_mask]
+    if exact_matches.empty:
+        return None
+
+    value = exact_matches.iloc[0]["RoundNumber"]
+    try:
+        round_number = int(value)
+    except Exception:
+        return None
+    if round_number <= 0:
+        return None
+    return round_number
+
+
+def _get_session_with_backend(
+    year: int, gp_value: int | str, session_type: str, backend: str | None
+):
+    """
+    Create a FastF1 session with optional backend hint.
+
+    For compatibility with older FastF1 versions, retry without backend if the
+    keyword is unsupported.
+    """
+    if backend is None:
+        return get_session(year, gp_value, session_type)
+    try:
+        return get_session(year, gp_value, session_type, backend=backend)
+    except TypeError:
+        return get_session(year, gp_value, session_type)
+
+
+def _assert_session_laps_available(session, year: int, race: str) -> None:
+    """
+    Ensure lap timing data exists and has minimum required columns.
+
+    FastF1 can soft-fail internally and still return from session.load(), leaving
+    session.laps unavailable. We treat that state as a recoverable load failure.
+    """
+    try:
+        laps = session.laps
+    except Exception as exc:
+        raise SessionLapsUnavailableError(
+            f"session.laps unavailable for {year} {race}: {exc}"
+        ) from exc
+
+    if laps is None or laps.empty:
+        raise SessionLapsUnavailableError(
+            f"session.laps empty for {year} {race}"
+        )
+
+    required_columns = {"Driver", "LapNumber"}
+    missing = sorted(required_columns - set(laps.columns))
+    if missing:
+        raise SessionLapsUnavailableError(
+            f"session.laps missing required columns for {year} {race}: {missing}"
+        )
+
+    if laps["Driver"].dropna().empty:
+        raise SessionLapsUnavailableError(
+            f"session.laps has no driver rows for {year} {race}"
+        )
+
+
+def _assert_session_telemetry_available(session, year: int, race: str) -> None:
+    """
+    Ensure telemetry dictionaries are actually available after session.load().
+
+    FastF1 can soft-fail telemetry loading (logging a warning only), leaving
+    car_data/pos_data unavailable. Detect that early and retry load candidates.
+    """
+    try:
+        car_data = session.car_data
+        pos_data = session.pos_data
+    except Exception as exc:
+        raise SessionLapsUnavailableError(
+            f"session telemetry unavailable for {year} {race}: {exc}"
+        ) from exc
+
+    if not isinstance(car_data, dict) or not isinstance(pos_data, dict):
+        raise SessionLapsUnavailableError(
+            f"session telemetry malformed for {year} {race}"
+        )
+
+    if len(car_data) == 0 or len(pos_data) == 0:
+        raise SessionLapsUnavailableError(
+            f"session telemetry empty for {year} {race}"
+        )
+
+
+def _is_recoverable_fastf1_error(exc: Exception) -> bool:
+    """
+    Classify temporary FastF1/data-source failures that are worth retrying.
+    """
+    if isinstance(
+        exc,
+        (Timeout, RequestsConnectionError, SessionLapsUnavailableError, PermissionError),
+    ):
+        return True
+    return exc.__class__.__name__ in FASTF1_RECOVERABLE_ERROR_NAMES
 
 
 def build_driver_telemetry(session, driver: str) -> pd.DataFrame:
@@ -554,13 +841,23 @@ if __name__ == "__main__":
     args = parse_args()
     configure_logging()
     cache_path = configure_cache()
-    logging.info("FastF1 cache enabled at: %s", cache_path)
+    if FASTF1_CACHE_ENABLED:
+        logging.info("FastF1 cache enabled at: %s", cache_path)
+    else:
+        logging.warning("FastF1 cache is running disabled for this process.")
 
     logging.info(
-        "Loading FastF1 session: %d %s - %s", args.year, args.race, args.session
+        "Loading FastF1 session: %d %s - %s (weather_mode=%s)",
+        args.year,
+        args.race,
+        args.session,
+        args.weather_mode,
     )
     race_session = load_session(
-        year=args.year, race=args.race, session_type=args.session
+        year=args.year,
+        race=args.race,
+        session_type=args.session,
+        weather_mode=args.weather_mode,
     )
     replay_df = build_replay_dataframe(race_session)
     replay_df = enrich_with_pit_losses(replay_df, args.race)

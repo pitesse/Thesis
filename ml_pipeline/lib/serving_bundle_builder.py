@@ -19,6 +19,7 @@ from xgboost import XGBClassifier
 from .model_training_cv import (
     DEFAULT_DATASET,
     DEFAULT_RANDOM_STATE,
+    DEFAULT_TARGET_COLUMN,
     _compute_scale_pos_weight,
     _fit_isotonic_calibrator,
     _load_dataset,
@@ -48,6 +49,11 @@ DEFAULT_SCALE_POS_WEIGHT_VALUE = 30.0
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="build serving bundle for live ml inference")
     parser.add_argument("--dataset", default=DEFAULT_DATASET, help="path to prepared training dataset")
+    parser.add_argument(
+        "--target-column",
+        default=DEFAULT_TARGET_COLUMN,
+        help="binary target column used to train the serving model",
+    )
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="output joblib path")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="default serving threshold")
     parser.add_argument("--n-estimators", type=int, default=DEFAULT_N_ESTIMATORS, help="model n_estimators")
@@ -154,6 +160,7 @@ def main() -> None:
     )
     X, y, _, _, _ = _prepare_matrix(
         df,
+        target_column=args.target_column,
         drop_source_year_feature=bool(args.drop_source_year_feature),
         feature_profile=feature_plan.feature_profile,
         exclude_features=list(feature_plan.excluded_features),
@@ -212,6 +219,7 @@ def main() -> None:
         "feature_profile": feature_plan.feature_profile,
         "excluded_features": list(feature_plan.excluded_features),
         "track_agnostic_mode": feature_plan.track_agnostic_mode,
+        "target_column": str(args.target_column),
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -219,6 +227,7 @@ def main() -> None:
 
     print("=== SERVING BUNDLE SUMMARY ===")
     print(f"dataset          : {dataset_path}")
+    print(f"target column    : {bundle['target_column']}")
     print(f"output           : {output_path}")
     print(f"rows             : {bundle['row_count']}")
     print(f"feature columns  : {len(bundle['feature_columns'])}")

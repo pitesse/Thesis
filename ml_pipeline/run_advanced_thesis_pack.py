@@ -6,6 +6,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 try:
     from lib.run_catalog import RUN_SET_ALL_FAMILIES, list_runs
@@ -41,6 +42,23 @@ def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
+def _resolve_moa_pr_inputs(reports_dir: Path) -> tuple[Optional[Path], Optional[Path], Optional[str]]:
+    summary = reports_dir / "moa_shap_proxy_summary.csv"
+    if summary.exists():
+        return None, None, None
+
+    datasets = sorted(reports_dir.glob("moa_dataset_*.csv"))
+    preds = sorted(reports_dir.glob("moa_arf_predictions_*.pred"))
+    if len(datasets) == 1 and len(preds) == 1:
+        return datasets[0], preds[0], None
+
+    if not datasets and not preds:
+        reason = "missing moa_shap_proxy_summary.csv and no dataset/prediction files"
+    else:
+        reason = f"ambiguous inputs (datasets={len(datasets)}, preds={len(preds)})"
+    return None, None, reason
+
+
 def main() -> None:
     args = parse_args()
     reports_root = args.reports_root.resolve()
@@ -52,8 +70,11 @@ def main() -> None:
     for run in runs:
         print(f"\n=== RUN {run.run_id.upper()} :: {run.label} ===")
 
-        _run(
-            [
+        dataset_override, pred_override, skip_reason = _resolve_moa_pr_inputs(run.reports_dir)
+        if skip_reason:
+            print(f"[SKIP] moa surrogate PR curve: {skip_reason} ({run.reports_dir})")
+        else:
+            cmd = [
                 py,
                 "ml_pipeline/plot_moa_surrogate_pr_curve.py",
                 "--reports-dir",
@@ -63,7 +84,14 @@ def main() -> None:
                 "--formats",
                 *formats,
             ]
-        )
+            if dataset_override is not None and pred_override is not None:
+                cmd += [
+                    "--moa-dataset-csv",
+                    str(dataset_override),
+                    "--moa-predictions",
+                    str(pred_override),
+                ]
+            _run(cmd)
 
         _run(
             [

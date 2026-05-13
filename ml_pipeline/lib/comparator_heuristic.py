@@ -32,6 +32,18 @@ LABEL_PRIORITY = {
 }
 ACTIONABLE_LABELS = {"PIT_NOW", "GOOD_PIT"}
 
+ACTIONABLE_MODE_PIT_NOW_ONLY = "pit_now_only"
+ACTIONABLE_MODE_GOOD_PIT_ONLY = "good_pit_only"
+ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT = "pit_now_plus_good_pit"
+ACTIONABLE_MODES = {
+    ACTIONABLE_MODE_PIT_NOW_ONLY,
+    ACTIONABLE_MODE_GOOD_PIT_ONLY,
+    ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
+}
+DEFAULT_ACTIONABLE_MODE = ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT
+
+DEFAULT_EPISODE_COOLDOWN_LAPS = 5
+
 POSITIVE_RESULTS = {
     "SUCCESS_UNDERCUT",
     "SUCCESS_OVERCUT",
@@ -44,6 +56,42 @@ NEGATIVE_RESULTS = {
     "FAILURE_TRAFFIC",
     "OFFSET_DISADVANTAGE",
 }
+
+OUTCOME_PIT_SUCCESS_H2 = "pit_success_h2"
+OUTCOME_PIT_ANY_H2 = "pit_any_h2"
+OUTCOME_MODES = {OUTCOME_PIT_SUCCESS_H2, OUTCOME_PIT_ANY_H2}
+
+
+def _resolve_actionable_labels(actionable_mode: str) -> set[str]:
+    if actionable_mode == ACTIONABLE_MODE_PIT_NOW_ONLY:
+        return {"PIT_NOW"}
+    if actionable_mode == ACTIONABLE_MODE_GOOD_PIT_ONLY:
+        return {"GOOD_PIT"}
+    if actionable_mode == ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT:
+        return {"PIT_NOW", "GOOD_PIT"}
+    raise ValueError(
+        f"unsupported actionable_mode={actionable_mode!r}; expected one of {sorted(ACTIONABLE_MODES)}"
+    )
+
+
+def _empty_comparator_dataset() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "race",
+            "driver",
+            "suggestion_lap",
+            "suggestion_label",
+            "totalScore",
+            "trackStatus",
+            "matched_pit_lap",
+            "match_distance",
+            "nearest_future_pit_lap",
+            "nearest_future_pit_distance",
+            "pit_in_window_before_consumption",
+            "outcome_class",
+            "exclusion_reason",
+        ]
+    )
 
 
 def _normalize_label(value: object) -> str:
@@ -133,6 +181,96 @@ def _prepare_pit_evals(pit_evals: pd.DataFrame) -> pd.DataFrame:
     return work
 
 
+def _prepare_pit_timings(pit_timings: pd.DataFrame) -> pd.DataFrame:
+    _require_columns(
+        pit_timings,
+        ["race", "driver", "lapNumber", "pitInTime", "pitOutTime"],
+        "pit_timings",
+    )
+
+    work = pit_timings.copy()
+    work["pit_lap_num"] = pd.to_numeric(work["lapNumber"], errors="coerce")
+    work = work[work["pit_lap_num"].notna()].copy()
+    work["pit_lap_num"] = work["pit_lap_num"].astype(int)
+    work["pitInTime"] = pd.to_numeric(work["pitInTime"], errors="coerce")
+    work["pitOutTime"] = pd.to_numeric(work["pitOutTime"], errors="coerce")
+    work["_eval_id"] = range(len(work))
+
+    work.sort_values(
+        by=["race", "driver", "pit_lap_num", "_eval_id"],
+        ascending=[True, True, True, True],
+        inplace=True,
+    )
+    work.reset_index(drop=True, inplace=True)
+    return work
+
+
+def _extract_eval_lap_arrays(evals: pd.DataFrame) -> dict[tuple[str, str], list[int]]:
+    grouped: dict[tuple[str, str], list[int]] = {}
+    for (race, driver), grp in evals.groupby(["race", "driver"], sort=False):
+        grouped[(str(race), str(driver))] = [
+            int(value)
+            for value in pd.to_numeric(grp["pit_lap_num"], errors="coerce").dropna().astype(int).tolist()
+        ]
+    return grouped
+
+
+def _build_episode_actionable(
+    actionable: pd.DataFrame,
+    pit_laps_by_driver: dict[tuple[str, str], list[int]],
+    episode_cooldown_laps: int,
+) -> pd.DataFrame:
+    if actionable.empty:
+        return actionable.copy()
+
+    rows: list[pd.Series] = []
+    for (race, driver), grp in actionable.groupby(["race", "driver"], sort=False):
+        work = grp.sort_values(by=["lap_num", "priority_rank", "score_num"], ascending=[True, False, False]).copy()
+        pit_laps = pit_laps_by_driver.get((str(race), str(driver)), [])
+
+        episode_active = False
+        episode_start = -1
+        episode_expiry = -1
+        pit_index = 0
+
+        for _, row in work.iterrows():
+            lap = int(row["lap_num"])
+
+            if episode_active:
+                while pit_index < len(pit_laps) and pit_laps[pit_index] < episode_start:
+                    pit_index += 1
+
+                pit_closes_episode = (
+                    pit_index < len(pit_laps)
+                    and pit_laps[pit_index] >= episode_start
+                    and pit_laps[pit_index] <= lap
+                )
+                horizon_expired = lap >= episode_expiry
+
+                if pit_closes_episode or horizon_expired:
+                    episode_active = False
+                    if pit_closes_episode:
+                        pit_index += 1
+
+            if not episode_active:
+                rows.append(row)
+                episode_active = True
+                episode_start = lap
+                episode_expiry = lap + episode_cooldown_laps
+
+    if not rows:
+        return actionable.iloc[0:0].copy()
+
+    episode_df = pd.DataFrame(rows)
+    episode_df.sort_values(
+        by=["race", "driver", "lap_num", "priority_rank", "score_num", "_row_id"],
+        ascending=[True, True, True, False, False, True],
+        inplace=True,
+    )
+    episode_df.reset_index(drop=True, inplace=True)
+    return episode_df
+
+
 def _map_outcome(result_norm: str) -> tuple[str, str]:
     if result_norm in POSITIVE_RESULTS:
         return "1", ""
@@ -148,15 +286,16 @@ def _map_outcome(result_norm: str) -> tuple[str, str]:
     return "EXCLUDED", f"UNMAPPED_RESULT_{result_norm}"
 
 
-def _build_comparator_dataset(
-    suggestions: pd.DataFrame,
-    pit_evals: pd.DataFrame,
+def _match_actionable_to_outcomes(
+    actionable: pd.DataFrame,
+    evals: pd.DataFrame,
     horizon: int,
+    *,
+    outcome_mode: str,
+    include_same_lap: bool = True,
 ) -> pd.DataFrame:
-    deduped = _dedup_suggestions(suggestions)
-    evals = _prepare_pit_evals(pit_evals)
-
-    actionable = deduped[deduped["label_norm"].isin(ACTIONABLE_LABELS)].copy()
+    if actionable.empty:
+        return _empty_comparator_dataset()
 
     grouped_evals = {key: grp.copy() for key, grp in evals.groupby(["race", "driver"], sort=False)}
 
@@ -164,12 +303,11 @@ def _build_comparator_dataset(
     used_eval_ids: set[int] = set()
     rows: list[dict[str, object]] = []
 
-    # this horizon reasoning is from brookshire 2024 and roberts et al 2017,
-    # each decision at lap k can only consume outcomes in [k, k plus horizon].
     for _, decision in actionable.iterrows():
         race = str(decision["race"])
         driver = str(decision["driver"])
         lap = int(decision["lap_num"])
+        window_start = lap if include_same_lap else (lap + 1)
         candidates_df = grouped_evals.get((race, driver))
 
         matched_pit_lap: int | None = None
@@ -180,20 +318,20 @@ def _build_comparator_dataset(
         exclusion_reason = "NO_MATCH_WITHIN_HORIZON"
 
         if candidates_df is not None and not candidates_df.empty:
-            future = candidates_df[candidates_df["pit_lap_num"] >= lap]
+            future = candidates_df[candidates_df["pit_lap_num"] >= window_start]
             if not future.empty:
                 nearest_future_pit_lap = int(future.iloc[0]["pit_lap_num"])
                 nearest_future_pit_distance = nearest_future_pit_lap - lap
 
             window_all = candidates_df[
-                (candidates_df["pit_lap_num"] >= lap)
+                (candidates_df["pit_lap_num"] >= window_start)
                 & (candidates_df["pit_lap_num"] <= (lap + horizon))
             ]
             pit_in_window_before_consumption = not window_all.empty
 
             # keep one-to-one pairing by dropping targets already consumed by earlier rows.
             window = candidates_df[
-                (candidates_df["pit_lap_num"] >= lap)
+                (candidates_df["pit_lap_num"] >= window_start)
                 & (candidates_df["pit_lap_num"] <= (lap + horizon))
                 & (~candidates_df["_eval_id"].isin(used_eval_ids))
             ]
@@ -202,7 +340,14 @@ def _build_comparator_dataset(
                 matched = window.iloc[0]
                 matched_pit_lap = int(matched["pit_lap_num"])
                 used_eval_ids.add(int(matched["_eval_id"]))
-                outcome_class, exclusion_reason = _map_outcome(str(matched["result_norm"]))
+                if outcome_mode == OUTCOME_PIT_SUCCESS_H2:
+                    outcome_class, exclusion_reason = _map_outcome(str(matched["result_norm"]))
+                else:
+                    outcome_class, exclusion_reason = "1", ""
+
+        if outcome_mode == OUTCOME_PIT_ANY_H2 and matched_pit_lap is None:
+            outcome_class = "0"
+            exclusion_reason = ""
 
         rows.append(
             {
@@ -213,6 +358,7 @@ def _build_comparator_dataset(
                 "totalScore": float(decision["score_num"])
                 if decision["score_num"] != float("-inf")
                 else None,
+                "trackStatus": str(decision.get("trackStatus", "")).strip(),
                 "matched_pit_lap": matched_pit_lap,
                 "match_distance": (matched_pit_lap - lap) if matched_pit_lap is not None else None,
                 "nearest_future_pit_lap": nearest_future_pit_lap,
@@ -223,7 +369,53 @@ def _build_comparator_dataset(
             }
         )
 
-    result = pd.DataFrame(rows)
+    return pd.DataFrame(rows)
+
+
+def _build_comparator_dataset(
+    suggestions: pd.DataFrame,
+    pit_evals: pd.DataFrame,
+    horizon: int,
+    *,
+    outcome_mode: str = OUTCOME_PIT_SUCCESS_H2,
+    pit_timings: pd.DataFrame | None = None,
+    actionable_mode: str = DEFAULT_ACTIONABLE_MODE,
+    episode_level: bool = False,
+    episode_cooldown_laps: int = DEFAULT_EPISODE_COOLDOWN_LAPS,
+    include_same_lap: bool = True,
+) -> pd.DataFrame:
+    deduped = _dedup_suggestions(suggestions)
+    if outcome_mode not in OUTCOME_MODES:
+        raise ValueError(
+            f"unsupported outcome_mode={outcome_mode!r}; expected one of {sorted(OUTCOME_MODES)}"
+        )
+    actionable_labels = _resolve_actionable_labels(actionable_mode)
+    if episode_cooldown_laps < 1:
+        raise ValueError("episode_cooldown_laps must be >= 1")
+
+    if outcome_mode == OUTCOME_PIT_SUCCESS_H2:
+        evals = _prepare_pit_evals(pit_evals)
+    else:
+        if pit_timings is None:
+            raise ValueError("pit_timings is required for outcome_mode=pit_any_h2")
+        evals = _prepare_pit_timings(pit_timings)
+
+    actionable = deduped[deduped["label_norm"].isin(actionable_labels)].copy()
+    if episode_level:
+        pit_laps_by_driver = _extract_eval_lap_arrays(evals)
+        actionable = _build_episode_actionable(
+            actionable,
+            pit_laps_by_driver,
+            episode_cooldown_laps=episode_cooldown_laps,
+        )
+
+    result = _match_actionable_to_outcomes(
+        actionable,
+        evals,
+        horizon,
+        outcome_mode=outcome_mode,
+        include_same_lap=include_same_lap,
+    )
 
     if not result.empty:
         matched = result[result["matched_pit_lap"].notna()].copy()
@@ -239,9 +431,18 @@ def _build_comparator_dataset(
     return result
 
 
-def _print_summary(dataset: pd.DataFrame, suggestions: pd.DataFrame, horizon: int) -> None:
+def _print_summary(
+    dataset: pd.DataFrame,
+    suggestions: pd.DataFrame,
+    horizon: int,
+    *,
+    comparator_view: str = "row_level",
+    actionable_mode: str = DEFAULT_ACTIONABLE_MODE,
+) -> None:
     deduped = _dedup_suggestions(suggestions)
-    actionable_total = int(deduped[deduped["label_norm"].isin(ACTIONABLE_LABELS)].shape[0])
+    actionable_labels = _resolve_actionable_labels(actionable_mode)
+    actionable_total_raw = int(deduped[deduped["label_norm"].isin(actionable_labels)].shape[0])
+    actionable_total = int(len(dataset))
 
     scored = dataset[dataset["outcome_class"].isin(["1", "0"])]
     excluded = dataset[dataset["outcome_class"] == "EXCLUDED"]
@@ -251,8 +452,11 @@ def _print_summary(dataset: pd.DataFrame, suggestions: pd.DataFrame, horizon: in
     precision = (tp / (tp + fp)) if (tp + fp) else 0.0
 
     print("=== HEURISTIC COMPARATOR SUMMARY ===")
+    print(f"comparator view                 : {comparator_view}")
+    print(f"actionable mode                 : {actionable_mode}")
     print(f"deduped suggestions rows         : {len(deduped)}")
     print(f"actionable suggestions rows      : {actionable_total}")
+    print(f"raw actionable before view gate  : {actionable_total_raw}")
     print(f"scored comparator rows           : {len(scored)}")
     print(f"excluded comparator rows         : {len(excluded)}")
     print(f"matching horizon                 : {horizon} laps")
@@ -313,9 +517,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token")
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="look ahead horizon in laps")
     parser.add_argument(
+        "--actionable-mode",
+        choices=sorted(ACTIONABLE_MODES),
+        default=DEFAULT_ACTIONABLE_MODE,
+        help="which suggestion labels are treated as actionable for comparator scoring",
+    )
+    parser.add_argument(
+        "--episode-cooldown-laps",
+        type=int,
+        default=DEFAULT_EPISODE_COOLDOWN_LAPS,
+        help="episode suppression cooldown in laps (independent from scoring horizon)",
+    )
+    parser.add_argument(
+        "--strict-future",
+        action="store_true",
+        help="diagnostic mode only: match in [suggestion_lap+1, suggestion_lap+h] instead of including same lap",
+    )
+    parser.add_argument(
         "--output",
         default=DEFAULT_OUTPUT,
         help="output csv name or absolute path",
+    )
+    parser.add_argument(
+        "--outcome-mode",
+        choices=sorted(OUTCOME_MODES),
+        default=OUTCOME_PIT_SUCCESS_H2,
+        help="comparator outcome contract: success-only pits or any pit timing in window",
+    )
+    parser.add_argument(
+        "--pit-timings",
+        default="",
+        help="optional pit_timings jsonl path (required for --outcome-mode pit_any_h2)",
+    )
+    parser.add_argument(
+        "--episode-output",
+        default="",
+        help="optional output csv for episode-level comparator view",
     )
     return parser.parse_args()
 
@@ -329,8 +566,25 @@ def main() -> None:
 
     suggestions = _load_jsonl(suggestions_path)
     pit_evals = _load_jsonl(pit_evals_path)
+    pit_timings_path: Path | None = None
+    pit_timings_df: pd.DataFrame | None = None
+    if args.outcome_mode == OUTCOME_PIT_ANY_H2:
+        pit_timings_path = (
+            Path(args.pit_timings)
+            if args.pit_timings
+            else _latest_jsonl(data_lake, "pit_timings", args.year, args.season_tag)
+        )
+        pit_timings_df = _load_jsonl(pit_timings_path)
 
-    comparator = _build_comparator_dataset(suggestions, pit_evals, args.horizon)
+    comparator = _build_comparator_dataset(
+        suggestions,
+        pit_evals,
+        args.horizon,
+        outcome_mode=args.outcome_mode,
+        pit_timings=pit_timings_df,
+        actionable_mode=args.actionable_mode,
+        include_same_lap=not args.strict_future,
+    )
 
     output_path = Path(args.output)
     if not output_path.is_absolute():
@@ -339,10 +593,50 @@ def main() -> None:
 
     comparator.to_csv(output_path, index=False)
 
+    episode_output_path: Path | None = None
+    episode_comparator: pd.DataFrame | None = None
+    if args.episode_output:
+        episode_comparator = _build_comparator_dataset(
+            suggestions,
+            pit_evals,
+            args.horizon,
+            outcome_mode=args.outcome_mode,
+            pit_timings=pit_timings_df,
+            actionable_mode=args.actionable_mode,
+            episode_level=True,
+            episode_cooldown_laps=args.episode_cooldown_laps,
+            include_same_lap=not args.strict_future,
+        )
+        episode_output_path = Path(args.episode_output)
+        if not episode_output_path.is_absolute():
+            episode_output_path = data_lake / episode_output_path
+        episode_output_path.parent.mkdir(parents=True, exist_ok=True)
+        episode_comparator.to_csv(episode_output_path, index=False)
+
     print(f"suggestions input: {suggestions_path}")
     print(f"pit evals input  : {pit_evals_path}")
+    if pit_timings_path is not None:
+        print(f"pit timings input: {pit_timings_path}")
+    print(f"outcome mode     : {args.outcome_mode}")
+    print(f"actionable mode  : {args.actionable_mode}")
+    print(f"strict future    : {args.strict_future}")
     print(f"output csv       : {output_path}")
-    _print_summary(comparator, suggestions, args.horizon)
+    _print_summary(
+        comparator,
+        suggestions,
+        args.horizon,
+        comparator_view="row_level",
+        actionable_mode=args.actionable_mode,
+    )
+    if episode_output_path is not None and episode_comparator is not None:
+        print(f"episode csv      : {episode_output_path}")
+        _print_summary(
+            episode_comparator,
+            suggestions,
+            args.horizon,
+            comparator_view="episode_level",
+            actionable_mode=args.actionable_mode,
+        )
 
 
 if __name__ == "__main__":

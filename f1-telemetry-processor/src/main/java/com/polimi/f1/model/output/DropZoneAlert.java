@@ -22,7 +22,7 @@ public class DropZoneAlert {
     public static final String CSV_HEADER
             = "race,driver,lapNumber,currentPosition,emergencePosition,positionsLost,"
             + "netRival,physicalCarAhead,gapToPhysicalCar,physicalCarCompound,"
-            + "physicalCarTyreLife,trackStatus,pitLoss";
+            + "physicalCarTyreLife,dropZoneStatus,trackStatus,pitLoss";
 
     private String race;
     private String driver;
@@ -35,6 +35,7 @@ public class DropZoneAlert {
     private double gapToPhysicalCar;
     private String physicalCarCompound;
     private int physicalCarTyreLife;
+    private String dropZoneStatus;
     private String trackStatus;
     private double pitLoss;
 
@@ -45,7 +46,7 @@ public class DropZoneAlert {
             int emergencePosition, int positionsLost, String netRival,
             String physicalCarAhead, double gapToPhysicalCar,
             String physicalCarCompound, int physicalCarTyreLife,
-            String trackStatus, double pitLoss) {
+            String dropZoneStatus, String trackStatus, double pitLoss) {
         this.race = race;
         this.driver = driver;
         this.lapNumber = lapNumber;
@@ -57,6 +58,7 @@ public class DropZoneAlert {
         this.gapToPhysicalCar = gapToPhysicalCar;
         this.physicalCarCompound = physicalCarCompound;
         this.physicalCarTyreLife = physicalCarTyreLife;
+        this.dropZoneStatus = dropZoneStatus;
         this.trackStatus = trackStatus;
         this.pitLoss = pitLoss;
     }
@@ -149,6 +151,14 @@ public class DropZoneAlert {
         this.physicalCarTyreLife = physicalCarTyreLife;
     }
 
+    public String getDropZoneStatus() {
+        return dropZoneStatus;
+    }
+
+    public void setDropZoneStatus(String dropZoneStatus) {
+        this.dropZoneStatus = dropZoneStatus;
+    }
+
     public String getTrackStatus() {
         return trackStatus;
     }
@@ -184,6 +194,7 @@ public class DropZoneAlert {
                 String.format("%.3f", gapToPhysicalCar),
                 safe(physicalCarCompound),
                 String.valueOf(physicalCarTyreLife),
+                safe(dropZoneStatus),
                 TrackStatusCodes.normalizeOrGreen(trackStatus),
                 String.format("%.1f", pitLoss)
         );
@@ -192,10 +203,12 @@ public class DropZoneAlert {
     @Override
     public String toString() {
         return String.format(
-                "DROP ZONE | %s | %s P%d -> P%d (-%d) | Net rival: %s | "
-                + "Emerges behind: %s (%s L%d) gap=%.1fs | PitLoss=%.1fs (status: %s)",
+                "DROP ZONE | %s | %s | mode=%s | P%d -> P%d (-%d) | Net rival: %s | "
+                + "Emerges behind: %s (%s L%d) gap=%.1fs | PitLoss=%.1fs (track: %s)",
                 race != null ? race : "?",
-                driver, currentPosition, emergencePosition, positionsLost,
+                driver,
+                dropZoneStatus != null ? dropZoneStatus : "?",
+                currentPosition, emergencePosition, positionsLost,
                 netRival != null ? netRival : "P1",
                 physicalCarAhead != null ? physicalCarAhead : "?",
                 physicalCarCompound != null ? physicalCarCompound : "?",

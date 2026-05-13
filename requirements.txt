@@ -8,7 +8,8 @@
 kafka-python-ng
 
 # producer: fastf1 api access, data preparation
-fastf1
+# pin to a known stable build for historical-session extraction reproducibility
+fastf1==3.8.2
 pandas
 pyarrow
 

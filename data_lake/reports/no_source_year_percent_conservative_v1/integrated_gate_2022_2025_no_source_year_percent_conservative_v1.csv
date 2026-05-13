@@ -1,7 +1,0 @@
-phase,status,checks_passed,checks_total,checks_hold,checks_failed,note
-B,PASS,2,2,0,0,integrated from by-layer criteria
-C,PASS,2,2,0,0,integrated from by-layer criteria
-D,PASS,3,3,0,0,integrated from by-layer criteria
-F,PASS,2,2,0,0,integrated from by-layer criteria
-G,PASS,3,3,0,0,integrated from by-layer criteria
-PHASE_H_DECISION,GO,12,12,0,0,confidence=HIGH; all integrated gates passed

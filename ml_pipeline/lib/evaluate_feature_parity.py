@@ -70,14 +70,15 @@ PARITY_COMPARE_COLUMNS = [
     "gapBehind",
     "lapTime",
     "pitLoss",
-    "hasGapAhead",
-    "hasGapBehind",
     "pace_drop_ratio",
     "tire_life_ratio",
     "pace_trend",
     "gapAhead_trend",
     "positions_lost",
     "gap_to_physical_car",
+    "emergence_position",
+    "physical_car_tyre_life",
+    "drop_zone_status",
     "has_drop_zone_data",
     "_source_year",
     "trackTemp_expanding_z",
@@ -445,7 +446,7 @@ def main() -> None:
         left = sampled[f"{column}_offline"]
         right = sampled[f"{column}_serving"]
 
-        if column in {"rainfall", "hasGapAhead", "hasGapBehind", "has_drop_zone_data"}:
+        if column in {"rainfall", "has_drop_zone_data"}:
             match_mask = _bool_equal(left, right)
         elif pd.api.types.is_numeric_dtype(left) or pd.api.types.is_numeric_dtype(right):
             match_mask = _numeric_equal(left, right, atol=args.float_atol)

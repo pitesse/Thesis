@@ -24,6 +24,7 @@ from lib.data_preparation import (
     _prepare_drop_zones,
     _prepare_features,
     _prepare_pit_evals,
+    _prepare_pit_timings,
     _print_summary,
     _write_dataset,
 )
@@ -34,49 +35,13 @@ from lib.feature_profiles import (
     build_feature_plan,
     parse_exclude_features,
 )
-
-# F1 calendar order (chronological 2022-2025 for expanding_race protocol temporal integrity)
-F1_CALENDAR = {
-    2022: [
-        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
-        "Emilia Romagna Grand Prix", "Miami Grand Prix", "Spanish Grand Prix",
-        "Monaco Grand Prix", "Azerbaijan Grand Prix", "Canadian Grand Prix",
-        "British Grand Prix", "Austrian Grand Prix", "French Grand Prix",
-        "Hungarian Grand Prix", "Belgian Grand Prix", "Dutch Grand Prix",
-        "Italian Grand Prix", "Singapore Grand Prix", "Japanese Grand Prix",
-        "United States Grand Prix", "Mexico City Grand Prix", "São Paulo Grand Prix",
-        "Abu Dhabi Grand Prix"
-    ],
-    2023: [
-        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
-        "Azerbaijan Grand Prix", "Miami Grand Prix", "Monaco Grand Prix",
-        "Spanish Grand Prix", "Canadian Grand Prix", "Austrian Grand Prix",
-        "British Grand Prix", "Hungarian Grand Prix", "Belgian Grand Prix",
-        "Dutch Grand Prix", "Italian Grand Prix", "Singapore Grand Prix",
-        "Japanese Grand Prix", "Qatar Grand Prix", "United States Grand Prix",
-        "Mexico City Grand Prix", "São Paulo Grand Prix", "Abu Dhabi Grand Prix"
-    ],
-    2024: [
-        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
-        "Japanese Grand Prix", "Chinese Grand Prix", "Miami Grand Prix",
-        "Emilia Romagna Grand Prix", "Monaco Grand Prix", "Canadian Grand Prix",
-        "Spanish Grand Prix", "Austrian Grand Prix", "British Grand Prix",
-        "Hungarian Grand Prix", "Belgian Grand Prix", "Dutch Grand Prix",
-        "Italian Grand Prix", "Azerbaijan Grand Prix", "Singapore Grand Prix",
-        "United States Grand Prix", "Mexico City Grand Prix", "São Paulo Grand Prix",
-        "Abu Dhabi Grand Prix"
-    ],
-    2025: [
-        "Bahrain Grand Prix", "Saudi Arabian Grand Prix", "Australian Grand Prix",
-        "Japanese Grand Prix", "Shanghai Grand Prix", "Miami Grand Prix",
-        "Monaco Grand Prix", "Canadian Grand Prix", "Spanish Grand Prix",
-        "Austrian Grand Prix", "British Grand Prix", "Hungarian Grand Prix",
-        "Belgian Grand Prix", "Dutch Grand Prix", "Italian Grand Prix",
-        "Monza Grand Prix", "Baku Grand Prix", "Singapore Grand Prix",
-        "United States Grand Prix", "Mexico City Grand Prix", "Brazil Grand Prix",
-        "Abu Dhabi Grand Prix"
-    ]
-}
+from lib.replay_manifest import (
+    ReplayManifest,
+    load_latest_manifest,
+    strip_year_prefix,
+    validate_frame_against_manifest,
+)
+from lib.report_label_contract_summary import build_label_summaries
 
 
 @dataclass(frozen=True)
@@ -85,8 +50,12 @@ class PreparedSeason:
     ml_features_path: Path
     drop_zones_path: Path
     pit_evals_path: Path
+    pit_timings_path: Path
+    manifest_path: Path
+    manifest: ReplayManifest
     feature_dedup_stats: dict[str, int | str]
     pit_eval_dedup_stats: dict[str, int | str]
+    pit_timing_dedup_stats: dict[str, int | str]
     dataset: pd.DataFrame
 
 
@@ -97,6 +66,15 @@ def _with_year_prefixed_race(frame: pd.DataFrame, year: int) -> pd.DataFrame:
     already_prefixed = race.str.match(r"^\d{4}\s::\s")
     work.loc[~already_prefixed, "race"] = prefix + race[~already_prefixed]
     return work
+
+
+def _load_manifest_with_fallback(data_lake: Path, year: int, season_tag: str) -> ReplayManifest:
+    try:
+        return load_latest_manifest(data_lake, year=year, season_tag=season_tag)
+    except FileNotFoundError:
+        if season_tag == DEFAULT_SEASON_TAG:
+            raise
+    return load_latest_manifest(data_lake, year=year, season_tag=DEFAULT_SEASON_TAG)
 
 
 def _prepare_one_season(
@@ -110,10 +88,41 @@ def _prepare_one_season(
     ml_features_path = _latest_jsonl(data_lake, "ml_features", year, season_tag)
     drop_zones_path = _latest_jsonl(data_lake, "drop_zones", year, season_tag)
     pit_evals_path = _latest_jsonl(data_lake, "pit_evals", year, season_tag)
+    pit_timings_path = _latest_jsonl(data_lake, "pit_timings", year, season_tag)
+    manifest = _load_manifest_with_fallback(data_lake, year, season_tag)
 
     features_raw = _load_jsonl(ml_features_path)
     drop_zones_raw = _load_jsonl(drop_zones_path)
     pit_evals_raw = _load_jsonl(pit_evals_path)
+    pit_timings_raw = _load_jsonl(pit_timings_path)
+    validate_frame_against_manifest(
+        features_raw,
+        manifest,
+        context_label=f"ml_features year={year}",
+        allow_prefixed_race=False,
+        require_full_race_coverage=True,
+    )
+    validate_frame_against_manifest(
+        pit_evals_raw,
+        manifest,
+        context_label=f"pit_evals year={year}",
+        allow_prefixed_race=False,
+        require_full_race_coverage=True,
+    )
+    validate_frame_against_manifest(
+        drop_zones_raw,
+        manifest,
+        context_label=f"drop_zones year={year}",
+        allow_prefixed_race=False,
+        require_full_race_coverage=False,
+    )
+    validate_frame_against_manifest(
+        pit_timings_raw,
+        manifest,
+        context_label=f"pit_timings year={year}",
+        allow_prefixed_race=False,
+        require_full_race_coverage=False,
+    )
 
     drop_zones = _prepare_drop_zones(drop_zones_raw)
     features = _prepare_features(
@@ -123,22 +132,43 @@ def _prepare_one_season(
         track_agnostic_mode=track_agnostic_mode,
     )
     pit_evals = _prepare_pit_evals(pit_evals_raw)
+    pit_timings = _prepare_pit_timings(pit_timings_raw)
     feature_dedup_stats = dict(features.attrs.get("dedup_stats", {}))
     pit_eval_dedup_stats = dict(pit_evals.attrs.get("dedup_stats", {}))
+    pit_timing_dedup_stats = dict(pit_timings.attrs.get("dedup_stats", {}))
 
     # keep race keys unique across seasons to preserve grouped-CV integrity.
     features = _with_year_prefixed_race(features, year)
     pit_evals = _with_year_prefixed_race(pit_evals, year)
+    pit_timings = _with_year_prefixed_race(pit_timings, year)
 
-    dataset = _build_targets(features, pit_evals, horizon)
+    dataset = _build_targets(features, pit_evals, pit_timings, horizon)
+    expected_prefixed_races = {f"{year} :: {race}" for race in manifest.races_in_order}
+    observed_prefixed_races = set(dataset["race"].astype(str).dropna().unique())
+    missing_prefixed = sorted(expected_prefixed_races - observed_prefixed_races)
+    unexpected_prefixed = sorted(observed_prefixed_races - expected_prefixed_races)
+    if missing_prefixed or unexpected_prefixed:
+        details: list[str] = []
+        if missing_prefixed:
+            details.append(f"missing_prefixed={missing_prefixed[:8]}")
+        if unexpected_prefixed:
+            details.append(f"unexpected_prefixed={unexpected_prefixed[:8]}")
+        raise ValueError(
+            f"dataset year={year} violates replay manifest race set: "
+            + ", ".join(details)
+        )
 
     return PreparedSeason(
         year=year,
         ml_features_path=ml_features_path,
         drop_zones_path=drop_zones_path,
         pit_evals_path=pit_evals_path,
+        pit_timings_path=pit_timings_path,
+        manifest_path=manifest.path,
+        manifest=manifest,
         feature_dedup_stats=feature_dedup_stats,
         pit_eval_dedup_stats=pit_eval_dedup_stats,
+        pit_timing_dedup_stats=pit_timing_dedup_stats,
         dataset=dataset,
     )
 
@@ -146,31 +176,52 @@ def _prepare_one_season(
 def _merge_seasons(prepared: list[PreparedSeason]) -> pd.DataFrame:
     frames = [item.dataset for item in prepared]
     merged = pd.concat(frames, ignore_index=True)
-    
-    # extract year and race name for calendar ordering
-    merged["_extracted_year"] = merged["race"].str.extract(r"^(\d{4})")
-    merged["_extracted_year"] = pd.to_numeric(merged["_extracted_year"], errors="coerce").astype("Int64")
-    merged["_extracted_race"] = merged["race"].str.replace(r"^\d{4}\s::\s", "", regex=True)
-    
-    # add calendar order index for chronological sorting (fixes temporal leakage in expanding_race)
-    def _get_calendar_order(year: int | float, race_name: str) -> int:
-        if pd.isna(year):
-            return 999999
-        year_int = int(year)
-        calendar = F1_CALENDAR.get(year_int, [])
-        try:
-            return calendar.index(race_name)
-        except (ValueError, KeyError):
-            return 999998  # unknown race, sort last
-    
+
+    manifest_by_year: dict[int, ReplayManifest] = {
+        int(item.year): item.manifest for item in prepared
+    }
+    order_lookup: dict[tuple[int, str], int] = {}
+    for year, manifest in manifest_by_year.items():
+        for idx, race in enumerate(manifest.races_in_order):
+            order_lookup[(year, race)] = int(idx)
+
+    merged["_extracted_year"] = pd.to_numeric(
+        merged["race"].astype(str).str.extract(r"^(\d{4})")[0],
+        errors="coerce",
+    ).astype("Int64")
+    merged["_extracted_race"] = merged["race"].astype(str).map(strip_year_prefix)
+
+    missing_year = merged["_extracted_year"].isna()
+    if missing_year.any():
+        examples = (
+            merged.loc[missing_year, "race"]
+            .astype(str)
+            .drop_duplicates()
+            .head(8)
+            .tolist()
+        )
+        raise ValueError(
+            f"merged dataset has malformed non-prefixed race keys: {examples}"
+        )
+
+    def _manifest_order(year_value: int | float, race_name: str) -> int:
+        key = (int(year_value), str(race_name))
+        if key not in order_lookup:
+            raise ValueError(
+                "merged dataset contains race not present in replay manifest: "
+                f"year={int(year_value)}, race={race_name!r}"
+            )
+        return order_lookup[key]
+
     merged["_calendar_order"] = merged.apply(
-        lambda row: _get_calendar_order(row["_extracted_year"], row["_extracted_race"]),
-        axis=1
+        lambda row: _manifest_order(row["_extracted_year"], row["_extracted_race"]),
+        axis=1,
     )
-    
-    # sort chronologically by year then calendar order, then driver/lap for stability
+
+    # strict deterministic chronology for expanding-race protocols.
     merged.sort_values(
-        by=["_extracted_year", "_calendar_order", "driver", "lapNumber"],
+        by=["_extracted_year", "_calendar_order", "lapNumber", "driver"],
+        kind="mergesort",
         inplace=True
     )
     merged.drop(columns=["_extracted_year", "_extracted_race", "_calendar_order"], inplace=True)
@@ -202,6 +253,8 @@ def _print_multi_season_summary(
         print(f"{item.year}: ml_features={item.ml_features_path}")
         print(f"{item.year}: drop_zones={item.drop_zones_path}")
         print(f"{item.year}: pit_evals={item.pit_evals_path}")
+        print(f"{item.year}: pit_timings={item.pit_timings_path}")
+        print(f"{item.year}: replay_manifest={item.manifest_path}")
         print(
             f"{item.year}: ml_features_dedup_excess={item.feature_dedup_stats.get('dedup_excess_rows_before', 0)} "
             f"-> {item.feature_dedup_stats.get('dedup_excess_rows_after', 0)}"
@@ -210,12 +263,20 @@ def _print_multi_season_summary(
             f"{item.year}: pit_evals_dedup_excess={item.pit_eval_dedup_stats.get('dedup_excess_rows_before', 0)} "
             f"-> {item.pit_eval_dedup_stats.get('dedup_excess_rows_after', 0)}"
         )
+        print(
+            f"{item.year}: pit_timings_dedup_excess={item.pit_timing_dedup_stats.get('dedup_excess_rows_before', 0)} "
+            f"-> {item.pit_timing_dedup_stats.get('dedup_excess_rows_after', 0)}"
+        )
         print(f"{item.year}: rows={len(item.dataset)}")
 
     print("\nclass distribution")
     print(f"y=1 positives     : {positives} ({pos_ratio:.4%})")
     print(f"y=0 negatives     : {negatives} ({1.0 - pos_ratio:.4%})")
     print(f"scale_pos_weight  : {scale_pos_weight:.6f}")
+    if "target_pit_any_h2" in merged.columns:
+        any_pos = int((merged["target_pit_any_h2"] == 1).sum())
+        any_ratio = (any_pos / total) if total else 0.0
+        print(f"pit_any positives : {any_pos} ({any_ratio:.4%})")
 
 
 def prepare_dataset(
@@ -259,12 +320,15 @@ def prepare_dataset(
             ml_features_path=season.ml_features_path,
             drop_zones_path=season.drop_zones_path,
             pit_evals_path=season.pit_evals_path,
+            pit_timings_path=season.pit_timings_path,
             output_path=saved_path,
             output_format=output_format,
             track_agnostic_mode=feature_plan.track_agnostic_mode,
             feature_dedup_stats=season.feature_dedup_stats,
             pit_eval_dedup_stats=season.pit_eval_dedup_stats,
+            pit_timing_dedup_stats=season.pit_timing_dedup_stats,
         )
+        print(f"replay manifest   : {season.manifest_path}")
         print(f"feature profile    : {feature_plan.feature_profile}")
         print(
             "excluded features  : "
@@ -356,6 +420,21 @@ def parse_args() -> argparse.Namespace:
             "'auto' follows feature-profile defaults"
         ),
     )
+    parser.add_argument(
+        "--label-summary-csv",
+        default="",
+        help="optional output csv for dual-contract target label summary",
+    )
+    parser.add_argument(
+        "--label-summary-by-year-csv",
+        default="",
+        help="optional output csv for dual-contract label summary by year",
+    )
+    parser.add_argument(
+        "--no-strict-label-invariants",
+        action="store_true",
+        help="emit warnings instead of failing when dual-contract label invariants fail",
+    )
     return parser.parse_args()
 
 
@@ -383,6 +462,34 @@ def main() -> None:
         exclude_features=parse_exclude_features(args.exclude_features),
         track_agnostic_mode=args.track_agnostic_mode,
     )
+
+    if args.label_summary_csv:
+        if saved_path.suffix.lower() == ".parquet":
+            summary_source = pd.read_parquet(saved_path)
+        else:
+            summary_source = pd.read_csv(saved_path)
+
+        summary_df, by_year_df, warnings = build_label_summaries(
+            summary_source,
+            horizon=int(args.horizon),
+            strict_invariants=not bool(args.no_strict_label_invariants),
+        )
+
+        summary_path = Path(args.label_summary_csv)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_df.to_csv(summary_path, index=False)
+
+        if args.label_summary_by_year_csv:
+            by_year_path = Path(args.label_summary_by_year_csv)
+            by_year_path.parent.mkdir(parents=True, exist_ok=True)
+            by_year_df.to_csv(by_year_path, index=False)
+            print(f"label summary by year: {by_year_path}")
+
+        print(f"label summary        : {summary_path}")
+        if warnings:
+            print("label invariant warnings:")
+            for item in warnings:
+                print(f"- {item}")
 
     print(f"prepared dataset   : {saved_path}")
 
