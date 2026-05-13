@@ -41,6 +41,7 @@ from lib.replay_manifest import (
     strip_year_prefix,
     validate_frame_against_manifest,
 )
+from lib.report_label_contract_summary import build_label_summaries
 
 
 @dataclass(frozen=True)
@@ -419,6 +420,21 @@ def parse_args() -> argparse.Namespace:
             "'auto' follows feature-profile defaults"
         ),
     )
+    parser.add_argument(
+        "--label-summary-csv",
+        default="",
+        help="optional output csv for dual-contract target label summary",
+    )
+    parser.add_argument(
+        "--label-summary-by-year-csv",
+        default="",
+        help="optional output csv for dual-contract label summary by year",
+    )
+    parser.add_argument(
+        "--no-strict-label-invariants",
+        action="store_true",
+        help="emit warnings instead of failing when dual-contract label invariants fail",
+    )
     return parser.parse_args()
 
 
@@ -446,6 +462,34 @@ def main() -> None:
         exclude_features=parse_exclude_features(args.exclude_features),
         track_agnostic_mode=args.track_agnostic_mode,
     )
+
+    if args.label_summary_csv:
+        if saved_path.suffix.lower() == ".parquet":
+            summary_source = pd.read_parquet(saved_path)
+        else:
+            summary_source = pd.read_csv(saved_path)
+
+        summary_df, by_year_df, warnings = build_label_summaries(
+            summary_source,
+            horizon=int(args.horizon),
+            strict_invariants=not bool(args.no_strict_label_invariants),
+        )
+
+        summary_path = Path(args.label_summary_csv)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_df.to_csv(summary_path, index=False)
+
+        if args.label_summary_by_year_csv:
+            by_year_path = Path(args.label_summary_by_year_csv)
+            by_year_path.parent.mkdir(parents=True, exist_ok=True)
+            by_year_df.to_csv(by_year_path, index=False)
+            print(f"label summary by year: {by_year_path}")
+
+        print(f"label summary        : {summary_path}")
+        if warnings:
+            print("label invariant warnings:")
+            for item in warnings:
+                print(f"- {item}")
 
     print(f"prepared dataset   : {saved_path}")
 

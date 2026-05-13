@@ -20,8 +20,10 @@ import pandas as pd
 
 try:
     from .race_metadata import get_scheduled_laps, race_name_without_year_prefix
+    from .pit_truth_eligibility import build_pit_truth_universe
 except ImportError:
     from race_metadata import get_scheduled_laps, race_name_without_year_prefix
+    from pit_truth_eligibility import build_pit_truth_universe  # type: ignore
 
 
 DEFAULT_DATA_LAKE = "data_lake"
@@ -668,9 +670,21 @@ def _build_targets(
     horizon: int,
 ) -> pd.DataFrame:
     dataset = features.copy()
+    # Canonical dual-contract targets.
+    dataset["target_pit_success_h2_raw"] = 0
+    dataset["target_pit_success_h2_clean_actionable"] = 0
+    dataset["target_pit_success_h2_clean_dry_strategy"] = 0
+    dataset["target_pit_any_h2_raw"] = 0
+    dataset["target_pit_any_h2_clean_actionable"] = 0
+    dataset["target_pit_any_h2_clean_dry_strategy"] = 0
+    dataset["target_pit_success_h2_clean_actionable_train_eligible"] = True
+    dataset["target_pit_success_h2_clean_dry_strategy_train_eligible"] = True
+
+    # Backward-compatibility aliases.
     dataset["target_pit_success_h2"] = 0
     dataset["target_pit_any_h2"] = 0
     dataset["target_y"] = 0
+
     dataset["matched_pit_lap_success"] = pd.NA
     dataset["matched_pit_lap_any"] = pd.NA
     dataset["matched_pit_lap"] = pd.NA
@@ -678,6 +692,51 @@ def _build_targets(
     dataset["matched_pit_in_time"] = np.nan
     dataset["matched_pit_out_time"] = np.nan
     dataset["label_horizon_laps"] = horizon
+
+    truth_universe = build_pit_truth_universe(
+        pit_timings=pit_timings,
+        suggestions_source=features[["race", "driver"]].copy(),
+        pit_evals=pit_evals,
+        ml_features=features,
+        prepared_pit_events=None,
+        split_tag="prep_data",
+    )
+
+    def _eligible_lap_map(flag_col: str) -> dict[tuple[str, str], np.ndarray]:
+        if truth_universe.empty:
+            return {}
+        eligible = truth_universe[
+            (truth_universe["eligible_universe"] == True)  # noqa: E712
+            & (truth_universe[flag_col] == True)  # noqa: E712
+        ].copy()
+        if eligible.empty:
+            return {}
+
+        out: dict[tuple[str, str], np.ndarray] = {}
+        for key, grp in eligible.groupby(["race", "driver"], sort=False):
+            if not isinstance(key, tuple) or len(key) != 2:
+                continue
+            race_key = str(key[0])
+            driver_key = str(key[1])
+            laps = pd.to_numeric(grp["pit_lap_num"], errors="coerce")
+            laps = laps[laps.notna()].astype(np.int64)
+            if laps.empty:
+                continue
+            out[(race_key, driver_key)] = np.unique(laps.to_numpy(dtype=np.int64))
+        return out
+
+    eligible_any_laps_clean_actionable = _eligible_lap_map("eligible_clean_actionable")
+    eligible_any_laps_clean_dry = _eligible_lap_map("eligible_clean_dry_strategy")
+
+    def _eligible_set_map(flag_col: str) -> dict[tuple[str, str], set[int]]:
+        lap_map = _eligible_lap_map(flag_col)
+        return {
+            key: {int(x) for x in values.tolist()}
+            for key, values in lap_map.items()
+        }
+
+    eligible_success_laps_clean_actionable = _eligible_set_map("eligible_clean_actionable")
+    eligible_success_laps_clean_dry = _eligible_set_map("eligible_clean_dry_strategy")
 
     grouped_eval_pits: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
     for key, grp in pit_evals.groupby(["race", "driver"], sort=False):
@@ -724,7 +783,7 @@ def _build_targets(
                 candidate_results = pit_results[safe_idx]
                 positive_mask = in_window & np.isin(candidate_results, positive_array)
 
-                dataset.loc[row_idx, "target_pit_success_h2"] = positive_mask.astype(int)
+                dataset.loc[row_idx, "target_pit_success_h2_raw"] = positive_mask.astype(int)
                 dataset.loc[row_idx, "matched_pit_lap_success"] = np.where(
                     in_window,
                     candidate_laps.astype(float),
@@ -735,6 +794,37 @@ def _build_targets(
                     candidate_results,
                     "NO_PIT_IN_WINDOW",
                 )
+
+                clean_actionable_set = eligible_success_laps_clean_actionable.get((race, driver), set())
+                clean_dry_set = eligible_success_laps_clean_dry.get((race, driver), set())
+                in_clean_actionable = np.fromiter(
+                    (int(lap) in clean_actionable_set for lap in candidate_laps),
+                    dtype=bool,
+                    count=len(candidate_laps),
+                )
+                in_clean_dry = np.fromiter(
+                    (int(lap) in clean_dry_set for lap in candidate_laps),
+                    dtype=bool,
+                    count=len(candidate_laps),
+                )
+
+                clean_actionable_mask = positive_mask & in_clean_actionable
+                clean_dry_mask = positive_mask & in_clean_dry
+                demoted_clean_actionable = positive_mask & ~in_clean_actionable
+                demoted_clean_dry = positive_mask & ~in_clean_dry
+
+                dataset.loc[row_idx, "target_pit_success_h2_clean_actionable"] = clean_actionable_mask.astype(int)
+                dataset.loc[row_idx, "target_pit_success_h2_clean_dry_strategy"] = clean_dry_mask.astype(int)
+                if demoted_clean_actionable.any():
+                    dataset.loc[
+                        row_idx[demoted_clean_actionable],
+                        "target_pit_success_h2_clean_actionable_train_eligible",
+                    ] = False
+                if demoted_clean_dry.any():
+                    dataset.loc[
+                        row_idx[demoted_clean_dry],
+                        "target_pit_success_h2_clean_dry_strategy_train_eligible",
+                    ] = False
 
         # any-pit target: nearest future FastF1 pit timing in [k+1, k+h].
         any_pit_data = grouped_any_pits.get((race, driver))
@@ -747,7 +837,7 @@ def _build_targets(
                 candidate_laps_any = pit_laps_any[safe_idx_any]
                 in_window_any = valid_any & (candidate_laps_any <= (row_laps + horizon))
 
-                dataset.loc[row_idx, "target_pit_any_h2"] = in_window_any.astype(int)
+                dataset.loc[row_idx, "target_pit_any_h2_raw"] = in_window_any.astype(int)
                 dataset.loc[row_idx, "matched_pit_lap_any"] = np.where(
                     in_window_any,
                     candidate_laps_any.astype(float),
@@ -764,9 +854,46 @@ def _build_targets(
                     np.nan,
                 )
 
-    dataset["target_pit_success_h2"] = dataset["target_pit_success_h2"].astype(int)
-    dataset["target_pit_any_h2"] = dataset["target_pit_any_h2"].astype(int)
-    dataset["target_y"] = dataset["target_pit_success_h2"].astype(int)
+        def _window_positive(eligible_laps_map: dict[tuple[str, str], np.ndarray]) -> np.ndarray:
+            eligible_laps = eligible_laps_map.get((race, driver))
+            if eligible_laps is None or eligible_laps.size == 0:
+                return np.zeros(len(row_laps), dtype=bool)
+            start_laps = row_laps + 1
+            left_idx = np.searchsorted(eligible_laps, start_laps, side="left")
+            has_candidate = left_idx < eligible_laps.size
+            safe_idx = np.where(has_candidate, left_idx, eligible_laps.size - 1)
+            candidate = eligible_laps[safe_idx]
+            return has_candidate & (candidate <= (row_laps + horizon))
+
+        clean_any_actionable = _window_positive(eligible_any_laps_clean_actionable)
+        clean_any_dry = _window_positive(eligible_any_laps_clean_dry)
+        dataset.loc[row_idx, "target_pit_any_h2_clean_actionable"] = clean_any_actionable.astype(int)
+        dataset.loc[row_idx, "target_pit_any_h2_clean_dry_strategy"] = clean_any_dry.astype(int)
+
+    dataset["target_pit_success_h2_raw"] = dataset["target_pit_success_h2_raw"].astype(int)
+    dataset["target_pit_success_h2_clean_actionable"] = dataset["target_pit_success_h2_clean_actionable"].astype(int)
+    dataset["target_pit_success_h2_clean_dry_strategy"] = dataset["target_pit_success_h2_clean_dry_strategy"].astype(int)
+    dataset["target_pit_any_h2_raw"] = dataset["target_pit_any_h2_raw"].astype(int)
+    dataset["target_pit_any_h2_clean_actionable"] = dataset["target_pit_any_h2_clean_actionable"].astype(int)
+    dataset["target_pit_any_h2_clean_dry_strategy"] = dataset["target_pit_any_h2_clean_dry_strategy"].astype(int)
+    dataset["target_pit_success_h2_clean_actionable_train_eligible"] = (
+        dataset["target_pit_success_h2_clean_actionable_train_eligible"].astype(bool)
+    )
+    dataset["target_pit_success_h2_clean_dry_strategy_train_eligible"] = (
+        dataset["target_pit_success_h2_clean_dry_strategy_train_eligible"].astype(bool)
+    )
+
+    dataset["target_pit_success_h2"] = dataset["target_pit_success_h2_raw"].astype(int)
+    dataset["target_pit_any_h2"] = dataset["target_pit_any_h2_raw"].astype(int)
+    dataset["target_y"] = dataset["target_pit_success_h2_raw"].astype(int)
+
+    # Human/report aliases (non-prefixed).
+    dataset["pit_success_h2_raw"] = dataset["target_pit_success_h2_raw"].astype(int)
+    dataset["pit_success_h2_clean_actionable"] = dataset["target_pit_success_h2_clean_actionable"].astype(int)
+    dataset["pit_success_h2_clean_dry_strategy"] = dataset["target_pit_success_h2_clean_dry_strategy"].astype(int)
+    dataset["pit_any_h2_raw"] = dataset["target_pit_any_h2_raw"].astype(int)
+    dataset["pit_any_h2_clean_actionable"] = dataset["target_pit_any_h2_clean_actionable"].astype(int)
+    dataset["pit_any_h2_clean_dry_strategy"] = dataset["target_pit_any_h2_clean_dry_strategy"].astype(int)
 
     dataset["matched_pit_lap_success"] = pd.to_numeric(
         dataset["matched_pit_lap_success"], errors="coerce"

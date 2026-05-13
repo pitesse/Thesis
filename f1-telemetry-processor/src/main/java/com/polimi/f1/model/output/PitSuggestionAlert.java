@@ -45,6 +45,13 @@ public class PitSuggestionAlert {
     private double gapToPhysicalCar;
     private String suggestionLabel;      // "MONITOR", "GOOD_PIT", "PIT_NOW", "LOST_CHANCE"
     private String suggestion;           // human-readable summary
+    private String semanticLabel;        // "MONITOR", "OPPORTUNITY", "PIT_NOW", "LOST_CHANCE"
+    private String legacySuggestionLabel; // label before timing-gate semantic split
+    private String finalDecisionReason;  // concise final decision reason
+    private boolean timingGatePassed;    // true when PIT_NOW timing gate passes
+    private String timingGateReason;     // deterministic gate reason
+    private String pitWindowPhase;       // TOO_EARLY/WINDOW_OPEN/LATE/OVERDUE/UNKNOWN
+    private String decisionMetadataJson; // compact debug payload
 
     public PitSuggestionAlert() {
     }
@@ -57,6 +64,23 @@ public class PitSuggestionAlert {
             double endOfRacePenalty, String trackStatus,
             int emergencePosition, double gapToPhysicalCar,
             String suggestionLabel, String suggestion) {
+        this(race, driver, lapNumber, eventDate, position, compound, tyreLife, totalScore, paceScore, trackStatusScore,
+                trafficScore, strategyPenalty, urgencyScore, endOfRacePenalty, trackStatus, emergencePosition,
+                gapToPhysicalCar, suggestionLabel, suggestion, null, null, null, false, null, null, null);
+    }
+
+    // extended constructor for semantic split and deterministic timing-gate observability.
+    public PitSuggestionAlert(String race, String driver, int lapNumber, String eventDate,
+            int position, String compound,
+            int tyreLife, double totalScore, double paceScore, double trackStatusScore,
+            double trafficScore, double strategyPenalty, double urgencyScore,
+            double endOfRacePenalty, String trackStatus,
+            int emergencePosition, double gapToPhysicalCar,
+            String suggestionLabel, String suggestion,
+            String semanticLabel, String legacySuggestionLabel,
+            String finalDecisionReason, boolean timingGatePassed,
+            String timingGateReason, String pitWindowPhase,
+            String decisionMetadataJson) {
         this.race = race;
         this.driver = driver;
         this.lapNumber = lapNumber;
@@ -76,6 +100,13 @@ public class PitSuggestionAlert {
         this.gapToPhysicalCar = gapToPhysicalCar;
         this.suggestionLabel = suggestionLabel;
         this.suggestion = suggestion;
+        this.semanticLabel = semanticLabel;
+        this.legacySuggestionLabel = legacySuggestionLabel;
+        this.finalDecisionReason = finalDecisionReason;
+        this.timingGatePassed = timingGatePassed;
+        this.timingGateReason = timingGateReason;
+        this.pitWindowPhase = pitWindowPhase;
+        this.decisionMetadataJson = decisionMetadataJson;
     }
 
     public String getRace() {
@@ -228,6 +259,62 @@ public class PitSuggestionAlert {
 
     public void setSuggestion(String suggestion) {
         this.suggestion = suggestion;
+    }
+
+    public String getSemanticLabel() {
+        return semanticLabel;
+    }
+
+    public void setSemanticLabel(String semanticLabel) {
+        this.semanticLabel = semanticLabel;
+    }
+
+    public String getLegacySuggestionLabel() {
+        return legacySuggestionLabel;
+    }
+
+    public void setLegacySuggestionLabel(String legacySuggestionLabel) {
+        this.legacySuggestionLabel = legacySuggestionLabel;
+    }
+
+    public String getFinalDecisionReason() {
+        return finalDecisionReason;
+    }
+
+    public void setFinalDecisionReason(String finalDecisionReason) {
+        this.finalDecisionReason = finalDecisionReason;
+    }
+
+    public boolean isTimingGatePassed() {
+        return timingGatePassed;
+    }
+
+    public void setTimingGatePassed(boolean timingGatePassed) {
+        this.timingGatePassed = timingGatePassed;
+    }
+
+    public String getTimingGateReason() {
+        return timingGateReason;
+    }
+
+    public void setTimingGateReason(String timingGateReason) {
+        this.timingGateReason = timingGateReason;
+    }
+
+    public String getPitWindowPhase() {
+        return pitWindowPhase;
+    }
+
+    public void setPitWindowPhase(String pitWindowPhase) {
+        this.pitWindowPhase = pitWindowPhase;
+    }
+
+    public String getDecisionMetadataJson() {
+        return decisionMetadataJson;
+    }
+
+    public void setDecisionMetadataJson(String decisionMetadataJson) {
+        this.decisionMetadataJson = decisionMetadataJson;
     }
 
     // ex: Italian Grand Prix,VER,25,2023-09-03T13:05:12.003,2,MEDIUM,18,75.300,22.1,0,18.7,-4.2,8.7,-2.5,1,5,4.200,GOOD_PIT,pace drop + clean air

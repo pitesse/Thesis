@@ -77,6 +77,33 @@ METADATA_DROP_COLUMNS = {
     "target_pit_any_h2",
 }
 
+LEAKAGE_COLUMN_MARKERS = (
+    "matched_pit",
+    "matched_lap",
+    "matched_reason",
+    "truth_lens",
+    "eligibility",
+    "train_eligible",
+)
+
+
+def _is_label_or_leakage_column(column: str, *, target_column: str) -> bool:
+    name = str(column).strip()
+    lower = name.lower()
+    target_lower = str(target_column).strip().lower()
+
+    if lower == target_lower:
+        return True
+    if lower.startswith("target_"):
+        return True
+    if lower.startswith("pit_any_h2_") or lower.startswith("pit_success_h2_"):
+        return True
+    if "label_horizon" in lower:
+        return True
+    if any(marker in lower for marker in LEAKAGE_COLUMN_MARKERS):
+        return True
+    return False
+
 
 def _load_dataset(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -100,10 +127,13 @@ def _select_feature_columns(
     excluded_features: Iterable[str] | None = None,
 ) -> list[str]:
     excluded = {str(item).strip() for item in (excluded_features or []) if str(item).strip()}
-    label_columns = {TARGET_COLUMN, "target_pit_success_h2", "target_pit_any_h2", str(target_column)}
-    feature_cols = [
-        c for c in columns if c not in label_columns and c not in METADATA_DROP_COLUMNS
-    ]
+    feature_cols = []
+    for column in columns:
+        if column in METADATA_DROP_COLUMNS:
+            continue
+        if _is_label_or_leakage_column(str(column), target_column=target_column):
+            continue
+        feature_cols.append(column)
     if drop_source_year_feature:
         feature_cols = [c for c in feature_cols if c != "_source_year"]
     if excluded:

@@ -1,9 +1,16 @@
 package com.polimi.f1.operators.realtime;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.MapState;
@@ -18,6 +25,8 @@ import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.polimi.f1.model.TrackStatusCodes;
 import com.polimi.f1.model.input.LapEvent;
 import com.polimi.f1.model.input.TrackStatusEvent;
@@ -97,6 +106,54 @@ public class PitStrategyEvaluator
     private static final double MAX_COMPETITIVE_PRESSURE = 8.0;
     private static final double COMPETITIVE_GAP_REF = 1.8;
     private static final int COMPETITIVE_RIVAL_PIT_WINDOW = 2;
+    private static final double WEAK_URGENCY_LT = 19.918;
+    private static final double LOW_TYRE_LIFE_LT = 17.000;
+    private static final double EARLY_PROGRESS_LT = 0.25;
+    private static final double EARLY_TIRE_LIFE_RATIO_LT = 0.85;
+    private static final double OVERDUE_TIRE_RATIO_OVERRIDE = 1.20;
+    private static final double CAUTION_MIN_TIRE_LIFE_RATIO = 0.90;
+    private static final double CAUTION_MIN_TIMING_PRESSURE = 6.0;
+    private static final double CAUTION_SCORE_HARD_FLOOR = 95.0;
+    private static final double PIT_NOW_MIN_TIRE_LIFE_RATIO = 1.00;
+    private static final double PRIOR_PROMOTION_MIN_TIRE_LIFE_RATIO = 0.90;
+    private static final double PRIOR_PROMOTION_MIN_TIMING_PRESSURE = 3.5;
+    private static final boolean PRIOR_PROMOTION_GREEN_ONLY = true;
+    private static final String PRIOR_PROMOTION_CAUTION_SKIP_REASON = "CAUTION_DISABLED_FOR_C4A_V1";
+
+    private static final String PRIORS_ENABLED_SETTING = "PIT_WINDOW_PRIORS_ENABLED";
+    private static final String PRIORS_PATH_SETTING = "PIT_WINDOW_PRIORS_JSON";
+    private static final String DEFAULT_PRIORS_PATH = "/opt/flink/data_lake/reports/pit_window_priors_2022_2024.json";
+    private static final String FLAG_PRIOR_PROMOTION_ENABLED = "SDE_PRIOR_PROMOTION_ENABLED";
+    private static final String FLAG_PRIOR_PROMOTION_STRICT_MODE = "SDE_PRIOR_PROMOTION_STRICT_MODE";
+    private static final String FLAG_RIVAL_PRESSURE_ENABLED = "SDE_RIVAL_PRESSURE_ENABLED";
+    private static final String FLAG_RIVAL_PRESSURE_CAUTION_ENABLED = "SDE_RIVAL_PRESSURE_CAUTION_ENABLED";
+    private static final String FLAG_PRIOR_SUPPRESSION_ENABLED = "SDE_PRIOR_SUPPRESSION_ENABLED";
+    private static final String FLAG_C6_TUNED_RIVAL_PROFILE_ENABLED = "SDE_C6_TUNED_RIVAL_PROFILE_ENABLED";
+    private static final String SETTING_RIVAL_RECENT_MAX_LAPS = "SDE_RIVAL_RECENT_MAX_LAPS";
+    private static final String SETTING_RIVAL_MIN_URGENCY = "SDE_RIVAL_MIN_URGENCY";
+    private static final String SETTING_RIVAL_MIN_TIMING_PRESSURE = "SDE_RIVAL_MIN_TIMING_PRESSURE";
+    private static final String SETTING_RIVAL_ULTRA_CLOSE_GAP_GUARD_ENABLED = "SDE_RIVAL_ULTRA_CLOSE_GAP_GUARD_ENABLED";
+    private static final int PRIOR_MIN_SAMPLES_RACE_COMPOUND_STINT = 8;
+    private static final int PRIOR_MIN_SAMPLES_RACE_STINT = 8;
+    private static final int PRIOR_MIN_SAMPLES_COMPOUND_STINT = 12;
+    private static final int PRIOR_MIN_SAMPLES_GLOBAL_STINT = 20;
+    private static final double PRIOR_STRICT_MIN_TIRE_LIFE_RATIO = 0.80;
+    private static final double PRIOR_STRICT_MIN_TIRE_LIFE_RATIO_LATE = 0.85;
+    private static final double PRIOR_STRICT_MIN_TOTAL_SCORE_LATE = 75.0;
+    private static final double PRIOR_STRICT_MIN_TIMING_PRESSURE = 9.0;
+    private static final int PRIOR_STRICT_WINDOW_OPEN_MIN_PASS = 2;
+
+    private static final int RIVAL_RECENT_PIT_WINDOW_SHORT = 2;
+    private static final int RIVAL_RECENT_PIT_WINDOW_LONG = 3;
+    private static final double RIVAL_PROMOTION_MAX_GAP_SEC_GREEN = 3.0;
+    private static final double RIVAL_PROMOTION_MAX_GAP_SEC_GREEN_RELAXED = 5.0;
+    private static final double RIVAL_PROMOTION_MIN_TIMING_PRESSURE = 6.0;
+    private static final int C6_DEFAULT_RIVAL_RECENT_MAX_LAPS = 1;
+    private static final double C6_DEFAULT_RIVAL_MIN_URGENCY = 10.0;
+    private static final double C6_DEFAULT_RIVAL_MIN_TIMING_PRESSURE = 10.0;
+    private static final boolean C6_DEFAULT_ULTRA_CLOSE_GAP_GUARD_ENABLED = true;
+    private static final double C6_ULTRA_CLOSE_GAP_SEC = 1.5;
+    private static final double C6_ULTRA_CLOSE_RATIO_OVERRIDE = 1.20;
 
     private static final double MAX_TIMING_PRESSURE_SCORE = 10.0;
     private static final double TIMING_PRESSURE_MIN_URGENCY = 8.0;
@@ -180,6 +237,7 @@ public class PitStrategyEvaluator
 
     // emit-gate: timing pressure at last emission per driver
     private transient MapState<String, Double> lastEmittedTimingPressure;
+    private transient MapState<String, String> lastEmittedLabel;
 
     // per-driver peak score tracking for LOST_CHANCE detection
     private transient MapState<String, Double> peakScores;
@@ -197,6 +255,305 @@ public class PitStrategyEvaluator
 
     // max observed lap across all events, used as a stall-safe progress trigger
     private transient ValueState<Integer> maxLapState;
+    private transient Map<String, PriorStats> pitWindowPriors;
+    private transient boolean pitWindowPriorsAvailable;
+    private transient String pitWindowPriorsStatus;
+    private transient String pitWindowPriorsPath;
+    private transient String pitWindowPriorsLoadedAt;
+    private transient boolean priorPromotionEnabled;
+    private transient boolean priorPromotionStrictMode;
+    private transient boolean rivalPressurePromotionEnabled;
+    private transient boolean rivalPressureCautionEnabled;
+    private transient boolean priorSuppressionEnabled;
+    private transient boolean c6TunedRivalProfileEnabled;
+    private transient int rivalRecentMaxLaps;
+    private transient double rivalMinUrgency;
+    private transient double rivalMinTimingPressure;
+    private transient boolean rivalUltraCloseGapGuardEnabled;
+
+    private enum SemanticLabel {
+        MONITOR,
+        OPPORTUNITY,
+        PIT_NOW,
+        LOST_CHANCE
+    }
+
+    private enum PitWindowPhase {
+        TOO_EARLY,
+        WINDOW_OPEN,
+        LATE,
+        OVERDUE,
+        UNKNOWN
+    }
+
+    private enum PriorWindowPhase {
+        TOO_EARLY,
+        WINDOW_OPEN,
+        LATE_WINDOW,
+        OVERDUE,
+        UNKNOWN
+    }
+
+    private static final class PriorStats {
+        private final String keyType;
+        private final String key;
+        private final int sampleCount;
+        private final String priorConfidence;
+        private final Double progressQ25;
+        private final Double progressQ50;
+        private final Double progressQ75;
+        private final Double progressQ90;
+        private final Double tyreQ25;
+        private final Double tyreQ50;
+        private final Double tyreQ75;
+        private final Double tyreQ90;
+
+        private PriorStats(
+                String keyType,
+                String key,
+                int sampleCount,
+                String priorConfidence,
+                Double progressQ25,
+                Double progressQ50,
+                Double progressQ75,
+                Double progressQ90,
+                Double tyreQ25,
+                Double tyreQ50,
+                Double tyreQ75,
+                Double tyreQ90) {
+            this.keyType = keyType;
+            this.key = key;
+            this.sampleCount = sampleCount;
+            this.priorConfidence = priorConfidence;
+            this.progressQ25 = progressQ25;
+            this.progressQ50 = progressQ50;
+            this.progressQ75 = progressQ75;
+            this.progressQ90 = progressQ90;
+            this.tyreQ25 = tyreQ25;
+            this.tyreQ50 = tyreQ50;
+            this.tyreQ75 = tyreQ75;
+            this.tyreQ90 = tyreQ90;
+        }
+    }
+
+    private static final class PriorMatch {
+        private final PriorStats prior;
+        private final String priorKeyUsed;
+        private final String fallbackLevel;
+
+        private PriorMatch(PriorStats prior, String priorKeyUsed, String fallbackLevel) {
+            this.prior = prior;
+            this.priorKeyUsed = priorKeyUsed;
+            this.fallbackLevel = fallbackLevel;
+        }
+    }
+
+    private static final class PriorPromotionDecision {
+        private final boolean priorPromotionApplied;
+        private final String priorPromotionReason;
+        private final String priorPromotionSkippedReason;
+        private final String priorKeyUsed;
+        private final String fallbackLevel;
+        private final String priorConfidence;
+        private final int priorSampleCount;
+        private final PriorWindowPhase priorWindowPhase;
+        private final Double priorProgressQ25;
+        private final Double priorProgressQ50;
+        private final Double priorProgressQ75;
+        private final Double priorProgressQ90;
+        private final Double priorTyreQ25;
+        private final Double priorTyreQ50;
+        private final Double priorTyreQ75;
+        private final Double priorTyreQ90;
+
+        private PriorPromotionDecision(
+                boolean priorPromotionApplied,
+                String priorPromotionReason,
+                String priorPromotionSkippedReason,
+                String priorKeyUsed,
+                String fallbackLevel,
+                String priorConfidence,
+                int priorSampleCount,
+                PriorWindowPhase priorWindowPhase,
+                Double priorProgressQ25,
+                Double priorProgressQ50,
+                Double priorProgressQ75,
+                Double priorProgressQ90,
+                Double priorTyreQ25,
+                Double priorTyreQ50,
+                Double priorTyreQ75,
+                Double priorTyreQ90) {
+            this.priorPromotionApplied = priorPromotionApplied;
+            this.priorPromotionReason = priorPromotionReason;
+            this.priorPromotionSkippedReason = priorPromotionSkippedReason;
+            this.priorKeyUsed = priorKeyUsed;
+            this.fallbackLevel = fallbackLevel;
+            this.priorConfidence = priorConfidence;
+            this.priorSampleCount = priorSampleCount;
+            this.priorWindowPhase = priorWindowPhase;
+            this.priorProgressQ25 = priorProgressQ25;
+            this.priorProgressQ50 = priorProgressQ50;
+            this.priorProgressQ75 = priorProgressQ75;
+            this.priorProgressQ90 = priorProgressQ90;
+            this.priorTyreQ25 = priorTyreQ25;
+            this.priorTyreQ50 = priorTyreQ50;
+            this.priorTyreQ75 = priorTyreQ75;
+            this.priorTyreQ90 = priorTyreQ90;
+        }
+
+        private static PriorPromotionDecision unavailable(String reason) {
+            return new PriorPromotionDecision(
+                    false,
+                    reason,
+                    "",
+                    "",
+                    "",
+                    "UNKNOWN",
+                    0,
+                    PriorWindowPhase.UNKNOWN,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null);
+        }
+    }
+
+    private static final class RivalPromotionDecision {
+        private final boolean rivalPressureApplied;
+        private final String rivalPressureReason;
+        private final String rivalPressureSource;
+        private final String classificationAheadDriver;
+        private final String classificationBehindDriver;
+        private final Double classificationGapAheadSec;
+        private final Double classificationGapBehindSec;
+        private final int aheadPittedLastNLaps;
+        private final int behindPittedLastNLaps;
+        private final int teammatePittedLastNLaps;
+        private final boolean ultraCloseGuardApplied;
+
+        private RivalPromotionDecision(
+                boolean rivalPressureApplied,
+                String rivalPressureReason,
+                String rivalPressureSource,
+                String classificationAheadDriver,
+                String classificationBehindDriver,
+                Double classificationGapAheadSec,
+                Double classificationGapBehindSec,
+                int aheadPittedLastNLaps,
+                int behindPittedLastNLaps,
+                int teammatePittedLastNLaps) {
+            this(
+                    rivalPressureApplied,
+                    rivalPressureReason,
+                    rivalPressureSource,
+                    classificationAheadDriver,
+                    classificationBehindDriver,
+                    classificationGapAheadSec,
+                    classificationGapBehindSec,
+                    aheadPittedLastNLaps,
+                    behindPittedLastNLaps,
+                    teammatePittedLastNLaps,
+                    false);
+        }
+
+        private RivalPromotionDecision(
+                boolean rivalPressureApplied,
+                String rivalPressureReason,
+                String rivalPressureSource,
+                String classificationAheadDriver,
+                String classificationBehindDriver,
+                Double classificationGapAheadSec,
+                Double classificationGapBehindSec,
+                int aheadPittedLastNLaps,
+                int behindPittedLastNLaps,
+                int teammatePittedLastNLaps,
+                boolean ultraCloseGuardApplied) {
+            this.rivalPressureApplied = rivalPressureApplied;
+            this.rivalPressureReason = rivalPressureReason;
+            this.rivalPressureSource = rivalPressureSource;
+            this.classificationAheadDriver = classificationAheadDriver;
+            this.classificationBehindDriver = classificationBehindDriver;
+            this.classificationGapAheadSec = classificationGapAheadSec;
+            this.classificationGapBehindSec = classificationGapBehindSec;
+            this.aheadPittedLastNLaps = aheadPittedLastNLaps;
+            this.behindPittedLastNLaps = behindPittedLastNLaps;
+            this.teammatePittedLastNLaps = teammatePittedLastNLaps;
+            this.ultraCloseGuardApplied = ultraCloseGuardApplied;
+        }
+
+        private static RivalPromotionDecision unavailable(String reason) {
+            return new RivalPromotionDecision(
+                    false,
+                    reason,
+                    "",
+                    "",
+                    "",
+                    null,
+                    null,
+                    -1,
+                    -1,
+                    -1);
+        }
+    }
+
+    private static final class TimingPressureInfo {
+        private final boolean available;
+        private final double score;
+
+        private TimingPressureInfo(boolean available, double score) {
+            this.available = available;
+            this.score = score;
+        }
+    }
+
+    private static final class C6RivalFilterDecision {
+        private final boolean pass;
+        private final String reason;
+        private final boolean ultraCloseGuardApplied;
+
+        private C6RivalFilterDecision(boolean pass, String reason, boolean ultraCloseGuardApplied) {
+            this.pass = pass;
+            this.reason = reason;
+            this.ultraCloseGuardApplied = ultraCloseGuardApplied;
+        }
+    }
+
+    private static final class TimingGateDecision {
+        private final SuggestionLabel originalLabel;
+        private final SuggestionLabel legacyLabel;
+        private final SemanticLabel semanticLabel;
+        private final boolean timingGatePassed;
+        private final String timingGateReason;
+        private final String finalDecisionReason;
+        private final PitWindowPhase pitWindowPhase;
+        private final boolean weakTimingCombo;
+        private final boolean earlyWindow;
+
+        private TimingGateDecision(
+                SuggestionLabel originalLabel,
+                SuggestionLabel legacyLabel,
+                SemanticLabel semanticLabel,
+                boolean timingGatePassed,
+                String timingGateReason,
+                String finalDecisionReason,
+                PitWindowPhase pitWindowPhase,
+                boolean weakTimingCombo,
+                boolean earlyWindow) {
+            this.originalLabel = originalLabel;
+            this.legacyLabel = legacyLabel;
+            this.semanticLabel = semanticLabel;
+            this.timingGatePassed = timingGatePassed;
+            this.timingGateReason = timingGateReason;
+            this.finalDecisionReason = finalDecisionReason;
+            this.pitWindowPhase = pitWindowPhase;
+            this.weakTimingCombo = weakTimingCombo;
+            this.earlyWindow = earlyWindow;
+        }
+    }
 
     @Override
     public void open(OpenContext openContext) {
@@ -246,6 +603,11 @@ public class PitStrategyEvaluator
         emitTimingPressureDesc.enableTimeToLive(ttlConfig);
         lastEmittedTimingPressure = getRuntimeContext().getMapState(emitTimingPressureDesc);
 
+        MapStateDescriptor<String, String> emitLabelDesc
+            = new MapStateDescriptor<>("strategy-emit-label", Types.STRING, Types.STRING);
+        emitLabelDesc.enableTimeToLive(ttlConfig);
+        lastEmittedLabel = getRuntimeContext().getMapState(emitLabelDesc);
+
         MapStateDescriptor<String, Double> peakDesc
                 = new MapStateDescriptor<>("strategy-peak-scores", String.class, Double.class);
         peakDesc.enableTimeToLive(ttlConfig);
@@ -280,6 +642,37 @@ public class PitStrategyEvaluator
                 = new ValueStateDescriptor<>("strategy-max-lap", Types.INT);
         maxLapDesc.enableTimeToLive(ttlConfig);
         maxLapState = getRuntimeContext().getState(maxLapDesc);
+
+        priorPromotionEnabled = readBooleanSetting(FLAG_PRIOR_PROMOTION_ENABLED, false);
+        priorPromotionStrictMode = readBooleanSetting(FLAG_PRIOR_PROMOTION_STRICT_MODE, true);
+        rivalPressurePromotionEnabled = readBooleanSetting(FLAG_RIVAL_PRESSURE_ENABLED, false);
+        rivalPressureCautionEnabled = readBooleanSetting(FLAG_RIVAL_PRESSURE_CAUTION_ENABLED, false);
+        priorSuppressionEnabled = readBooleanSetting(FLAG_PRIOR_SUPPRESSION_ENABLED, false);
+        c6TunedRivalProfileEnabled = readBooleanSetting(FLAG_C6_TUNED_RIVAL_PROFILE_ENABLED, false);
+        rivalRecentMaxLaps = Math.max(0, readIntSetting(SETTING_RIVAL_RECENT_MAX_LAPS, C6_DEFAULT_RIVAL_RECENT_MAX_LAPS));
+        rivalMinUrgency = readDoubleSetting(SETTING_RIVAL_MIN_URGENCY, C6_DEFAULT_RIVAL_MIN_URGENCY);
+        rivalMinTimingPressure = readDoubleSetting(SETTING_RIVAL_MIN_TIMING_PRESSURE, C6_DEFAULT_RIVAL_MIN_TIMING_PRESSURE);
+        rivalUltraCloseGapGuardEnabled = readBooleanSetting(
+                SETTING_RIVAL_ULTRA_CLOSE_GAP_GUARD_ENABLED,
+                C6_DEFAULT_ULTRA_CLOSE_GAP_GUARD_ENABLED);
+
+        LOG.info(
+                "SDE config loaded: priorPromotionEnabled={}, priorPromotionStrictMode={}, rivalPressurePromotionEnabled={}, "
+                        + "rivalPressureCautionEnabled={}, priorSuppressionEnabled={}, c6TunedProfileEnabled={}, "
+                        + "rivalRecentMaxLaps={}, rivalMinUrgency={}, rivalMinTimingPressure={}, "
+                        + "rivalUltraCloseGapGuardEnabled={}",
+                priorPromotionEnabled,
+                priorPromotionStrictMode,
+                rivalPressurePromotionEnabled,
+                rivalPressureCautionEnabled,
+                priorSuppressionEnabled,
+                c6TunedRivalProfileEnabled,
+                rivalRecentMaxLaps,
+                rivalMinUrgency,
+                rivalMinTimingPressure,
+                rivalUltraCloseGapGuardEnabled);
+
+        loadPitWindowPriors();
     }
 
     // data-driven evaluation path, updates snapshot and triggers scoring on race progress
@@ -487,13 +880,14 @@ public class PitStrategyEvaluator
             double competitivePressure = computeCompetitivePressure(current, laps, i);
             double signalConfidence = computeSignalConfidence(current, laps, i, driverState);
             double uncertaintyPenalty = computeUncertaintyPenalty(signalConfidence, currentTrackStatus);
-            double timingPressureScore = computeTimingPressureScore(
+            TimingPressureInfo timingPressureInfo = resolveTimingPressureInfo(
                     driverState,
                     urgencyScore,
                     strategyPenalty,
                     traffic.score,
                     trackStatusScore,
                     rivalPitReactionBoost);
+            double timingPressureScore = timingPressureInfo.score;
             double endOfRacePenalty = computeEndOfRacePenalty(current);
 
             double totalScore = paceScore + trackStatusScore + traffic.score
@@ -522,9 +916,14 @@ public class PitStrategyEvaluator
                 // only emit if degradation is still worsening (not improvement from new tires)
                 if (ds != null && ds.getLastPaceRatio() > SLOW_LAP_RATIO_THRESHOLD) {
                     lostChanceEmitted.put(driver, true);
+                    TimingGateDecision lostChanceDecision = passthroughTimingDecision(
+                            SuggestionLabel.LOST_CHANCE,
+                            "LOST_CHANCE_EMISSION");
                     emitAlert(current, totalScore, paceScore, trackStatusScore,
                             traffic, strategyPenalty, urgencyScore, endOfRacePenalty,
-                            currentTrackStatus, 0.0, 0.0, SuggestionLabel.LOST_CHANCE, out);
+                            currentTrackStatus, 0.0, 0.0, SuggestionLabel.LOST_CHANCE, lostChanceDecision,
+                            PriorPromotionDecision.unavailable("NOT_APPLICABLE"),
+                            RivalPromotionDecision.unavailable("NOT_APPLICABLE"), out);
                     continue;
                 }
             }
@@ -556,13 +955,57 @@ public class PitStrategyEvaluator
                     currentTrackStatus,
                     signalConfidence);
 
+            TimingGateDecision timingDecision = applyDeterministicTimingGate(
+                    label,
+                    totalScore,
+                    actionUrgencyScore,
+                    current.getTyreLife(),
+                    current.getCompound(),
+                    current.getLapNumber(),
+                    current.getTotalLaps(),
+                    currentTrackStatus,
+                    timingPressureInfo.available,
+                    timingPressureScore);
+            label = timingDecision.legacyLabel;
+            PriorPromotionDecision priorPromotionDecision = evaluatePriorPromotionDecision(
+                    priorPromotionEnabled,
+                    priorPromotionStrictMode,
+                    pitWindowPriorsAvailable,
+                    pitWindowPriors,
+                    timingDecision,
+                    current,
+                    currentTrackStatus,
+                    actionUrgencyScore,
+                    totalScore,
+                    timingPressureInfo.available,
+                    timingPressureScore);
+            if (priorPromotionDecision.priorPromotionApplied) {
+                timingDecision = toPriorPromotedDecision(timingDecision);
+                label = timingDecision.legacyLabel;
+            }
+            RivalPromotionDecision rivalPromotionDecision = evaluateRivalPromotionDecision(
+                    rivalPressurePromotionEnabled,
+                    rivalPressureCautionEnabled,
+                    timingDecision,
+                    current,
+                    laps,
+                    i,
+                    currentTrackStatus,
+                    actionUrgencyScore,
+                    timingPressureInfo.available,
+                    timingPressureScore);
+            if (rivalPromotionDecision.rivalPressureApplied) {
+                timingDecision = toRivalPromotedDecision(timingDecision);
+                label = timingDecision.legacyLabel;
+            }
+
             // emit-gate: check if we should suppress this alert
             if (!shouldEmit(driver, current.getStint(), current.getLapNumber(),
                     totalScore, currentTrackStatus, label, timingPressureScore, actionUrgencyScore)) {
                 continue;
             }
 
-            if (isActionableLabel(label) && isDecisionEpisodeActive(driver, current.getLapNumber())) {
+            if (isPitNowLabel(label) && isDecisionEpisodeActive(driver, current.getLapNumber())) {
                 continue;
             }
 
@@ -572,13 +1015,15 @@ public class PitStrategyEvaluator
             lastEmittedTrackStatus.put(driver, currentTrackStatus);
             lastEmittedLap.put(driver, current.getLapNumber());
             lastEmittedTimingPressure.put(driver, timingPressureScore);
-            if (isActionableLabel(label)) {
+            lastEmittedLabel.put(driver, label.name());
+            if (isPitNowLabel(label)) {
                 openDecisionEpisode(driver, current.getLapNumber());
             }
 
             emitAlert(current, totalScore, paceScore, trackStatusScore,
                     traffic, strategyPenalty, actionUrgencyScore, endOfRacePenalty,
-                    currentTrackStatus, rivalPitReactionBoost, timingPressureScore, label, out);
+                    currentTrackStatus, rivalPitReactionBoost, timingPressureScore, label, timingDecision,
+                    priorPromotionDecision, rivalPromotionDecision, out);
         }
     }
 
@@ -587,11 +1032,33 @@ public class PitStrategyEvaluator
             double urgencyScore, double endOfRacePenalty, String trackStatus,
             double rivalPitReactionBoost,
             double timingPressureScore,
-            SuggestionLabel label, Collector<PitSuggestionAlert> out) {
+            SuggestionLabel label,
+            TimingGateDecision timingDecision,
+            PriorPromotionDecision priorPromotionDecision,
+            RivalPromotionDecision rivalPromotionDecision,
+            Collector<PitSuggestionAlert> out) {
 
         String suggestion = buildSuggestion(paceScore, trackStatusScore,
                 traffic.score, strategyPenalty, urgencyScore, endOfRacePenalty,
                 rivalPitReactionBoost, timingPressureScore);
+
+        TimingGateDecision safeDecision = timingDecision != null
+                ? timingDecision
+                : passthroughTimingDecision(label, "NO_TIMING_GATE");
+        PriorPromotionDecision safePrior = priorPromotionDecision != null
+                ? priorPromotionDecision
+                : PriorPromotionDecision.unavailable("PRIORS_UNAVAILABLE");
+        RivalPromotionDecision safeRival = rivalPromotionDecision != null
+                ? rivalPromotionDecision
+                : RivalPromotionDecision.unavailable("RIVAL_PROMOTION_DISABLED");
+        String decisionMetadataJson = buildDecisionMetadataJson(
+                current,
+                totalScore,
+                urgencyScore,
+                timingPressureScore,
+                safeDecision,
+                safePrior,
+                safeRival);
 
         out.collect(new PitSuggestionAlert(
                 current.getRace(),
@@ -612,7 +1079,14 @@ public class PitStrategyEvaluator
                 traffic.emergencePosition,
                 traffic.gapToPhysicalCar,
                 label.name(),
-                suggestion
+                suggestion,
+                safeDecision.semanticLabel.name(),
+                safeDecision.originalLabel.name(),
+                safeDecision.finalDecisionReason,
+                safeDecision.timingGatePassed,
+                safeDecision.timingGateReason,
+                safeDecision.pitWindowPhase.name(),
+                decisionMetadataJson
         ));
 
         LOG.info("pit strategy: {} lap {} -> {} (score={})",
@@ -637,7 +1111,18 @@ public class PitStrategyEvaluator
             return true;
         }
 
-        SuggestionLabel prevLabel = classifyScore(prevScore);
+        SuggestionLabel prevLabel = null;
+        String prevLabelText = lastEmittedLabel.get(driver);
+        if (prevLabelText != null && !prevLabelText.isBlank()) {
+            try {
+                prevLabel = SuggestionLabel.valueOf(prevLabelText);
+            } catch (IllegalArgumentException ignored) {
+                prevLabel = null;
+            }
+        }
+        if (prevLabel == null) {
+            prevLabel = classifyScore(prevScore);
+        }
 
         // class changed, always emit to keep dashboard and ml timeline aligned
         if (currentLabel != prevLabel) {
@@ -777,8 +1262,1027 @@ public class PitStrategyEvaluator
         return label;
     }
 
+    private static TimingPressureInfo resolveTimingPressureInfo(
+            DriverPitState state,
+            double urgencyScore,
+            double strategyPenalty,
+            double trafficScore,
+            int trackStatusScore,
+            double rivalPitReactionBoost) {
+        if (state == null) {
+            return new TimingPressureInfo(false, 0.0);
+        }
+        return new TimingPressureInfo(
+                true,
+                computeTimingPressureScore(
+                        state,
+                        urgencyScore,
+                        strategyPenalty,
+                        trafficScore,
+                        trackStatusScore,
+                        rivalPitReactionBoost));
+    }
+
+    private static TimingGateDecision applyDeterministicTimingGate(
+            SuggestionLabel label,
+            double totalScore,
+            double urgencyScore,
+            int tyreLife,
+            String compound,
+            int lapNumber,
+            int totalLaps,
+            String trackStatus,
+            boolean timingPressureAvailable,
+            double timingPressureScore) {
+        if (label == SuggestionLabel.LOST_CHANCE) {
+            return passthroughTimingDecision(label, "LOST_CHANCE_EMISSION");
+        }
+        if (label == SuggestionLabel.MONITOR) {
+            return passthroughTimingDecision(label, "MONITOR_BELOW_ACTIONABLE");
+        }
+        if (label == SuggestionLabel.GOOD_PIT) {
+            return new TimingGateDecision(
+                    label,
+                    SuggestionLabel.GOOD_PIT,
+                    SemanticLabel.OPPORTUNITY,
+                    false,
+                    "ALREADY_OPPORTUNITY",
+                    "OPPORTUNITY_BASELINE",
+                    PitWindowPhase.UNKNOWN,
+                    false,
+                    false);
+        }
+
+        int expectedMaxStint = Math.max(1, defaultMaxStint(compound));
+        double tireLifeRatio = (double) tyreLife / (double) expectedMaxStint;
+        Double raceProgressPct = null;
+        if (totalLaps > 0) {
+            raceProgressPct = Math.max(0.0, Math.min(1.5, (double) lapNumber / (double) totalLaps));
+        }
+
+        PitWindowPhase pitWindowPhase = resolvePitWindowPhase(raceProgressPct, tireLifeRatio);
+        boolean weakTimingCombo = urgencyScore < WEAK_URGENCY_LT && tyreLife < LOW_TYRE_LIFE_LT;
+        boolean earlyWindow = raceProgressPct != null
+                && raceProgressPct < EARLY_PROGRESS_LT
+                && tireLifeRatio < EARLY_TIRE_LIFE_RATIO_LT;
+        boolean cautionRegime = TrackStatusCodes.isCaution(trackStatus);
+
+        if (cautionRegime) {
+            boolean cautionTimingEvidence = (timingPressureAvailable && timingPressureScore >= CAUTION_MIN_TIMING_PRESSURE)
+                    || (urgencyScore >= WEAK_URGENCY_LT && tireLifeRatio >= CAUTION_MIN_TIRE_LIFE_RATIO)
+                    || (totalScore >= CAUTION_SCORE_HARD_FLOOR && !weakTimingCombo && !earlyWindow);
+            if (!cautionTimingEvidence) {
+                return new TimingGateDecision(
+                        label,
+                        SuggestionLabel.GOOD_PIT,
+                        SemanticLabel.OPPORTUNITY,
+                        false,
+                        timingPressureAvailable ? "CAUTION_TIMING_WEAK" : "TIMING_PRESSURE_UNAVAILABLE",
+                        "CAUTION_GUARD_DOWNGRADE",
+                        pitWindowPhase,
+                        weakTimingCombo,
+                        earlyWindow);
+            }
+            return new TimingGateDecision(
+                    label,
+                    SuggestionLabel.PIT_NOW,
+                    SemanticLabel.PIT_NOW,
+                    true,
+                    "CAUTION_TIMING_CONFIRMED",
+                    "TIMING_GATE_PASS",
+                    pitWindowPhase,
+                    weakTimingCombo,
+                    earlyWindow);
+        }
+
+        if (weakTimingCombo) {
+            return new TimingGateDecision(
+                    label,
+                    SuggestionLabel.GOOD_PIT,
+                    SemanticLabel.OPPORTUNITY,
+                    false,
+                    "WEAK_URGENCY_AND_LOW_TYRELIFE",
+                    "WEAK_TIMING_SUPPRESSION",
+                    pitWindowPhase,
+                    true,
+                    earlyWindow);
+        }
+
+        if (pitWindowPhase != PitWindowPhase.UNKNOWN
+                && earlyWindow
+                && tireLifeRatio < OVERDUE_TIRE_RATIO_OVERRIDE) {
+            return new TimingGateDecision(
+                    label,
+                    SuggestionLabel.GOOD_PIT,
+                    SemanticLabel.OPPORTUNITY,
+                    false,
+                    "EARLY_PROGRESS_WINDOW",
+                    "EARLY_WINDOW_SUPPRESSION",
+                    pitWindowPhase,
+                    false,
+                    true);
+        }
+
+        boolean baseTimingEvidence = (timingPressureAvailable && timingPressureScore >= EARLY_ACTION_MIN_TIMING_PRESSURE)
+                || urgencyScore >= WEAK_URGENCY_LT
+                || tireLifeRatio >= PIT_NOW_MIN_TIRE_LIFE_RATIO;
+
+        if (!baseTimingEvidence) {
+            String gateReason = timingPressureAvailable ? "INSUFFICIENT_TIMING_EVIDENCE" : "TIMING_PRESSURE_UNAVAILABLE";
+            return new TimingGateDecision(
+                    label,
+                    SuggestionLabel.GOOD_PIT,
+                    SemanticLabel.OPPORTUNITY,
+                    false,
+                    gateReason,
+                    "TIMING_EVIDENCE_DOWNGRADE",
+                    pitWindowPhase,
+                    false,
+                    false);
+        }
+
+        return new TimingGateDecision(
+                label,
+                SuggestionLabel.PIT_NOW,
+                SemanticLabel.PIT_NOW,
+                true,
+                "TIMING_EVIDENCE_CONFIRMED",
+                "TIMING_GATE_PASS",
+                pitWindowPhase,
+                false,
+                false);
+    }
+
+    private static PitWindowPhase resolvePitWindowPhase(Double raceProgressPct, double tireLifeRatio) {
+        if (raceProgressPct == null) {
+            return PitWindowPhase.UNKNOWN;
+        }
+        if (raceProgressPct < EARLY_PROGRESS_LT && tireLifeRatio < OVERDUE_TIRE_RATIO_OVERRIDE) {
+            return PitWindowPhase.TOO_EARLY;
+        }
+        if (raceProgressPct >= 0.95 || tireLifeRatio >= 1.30) {
+            return PitWindowPhase.OVERDUE;
+        }
+        if (raceProgressPct >= 0.80 || tireLifeRatio >= 1.05) {
+            return PitWindowPhase.LATE;
+        }
+        return PitWindowPhase.WINDOW_OPEN;
+    }
+
+    private static TimingGateDecision passthroughTimingDecision(SuggestionLabel label, String reason) {
+        SemanticLabel semanticLabel = switch (label) {
+            case PIT_NOW -> SemanticLabel.PIT_NOW;
+            case GOOD_PIT -> SemanticLabel.OPPORTUNITY;
+            case LOST_CHANCE -> SemanticLabel.LOST_CHANCE;
+            default -> SemanticLabel.MONITOR;
+        };
+        return new TimingGateDecision(
+                label,
+                label,
+                semanticLabel,
+                label == SuggestionLabel.PIT_NOW,
+                "NO_TIMING_GATE",
+                reason,
+                PitWindowPhase.UNKNOWN,
+                false,
+                false);
+    }
+
+    private static TimingGateDecision toPriorPromotedDecision(TimingGateDecision base) {
+        return new TimingGateDecision(
+                base.originalLabel,
+                SuggestionLabel.PIT_NOW,
+                SemanticLabel.PIT_NOW,
+                true,
+                "PRIOR_WINDOW_PROMOTION_STRICT",
+                "PRIOR_WINDOW_PROMOTION_STRICT",
+                base.pitWindowPhase,
+                base.weakTimingCombo,
+                base.earlyWindow);
+    }
+
+    private static TimingGateDecision toRivalPromotedDecision(TimingGateDecision base) {
+        return new TimingGateDecision(
+                base.originalLabel,
+                SuggestionLabel.PIT_NOW,
+                SemanticLabel.PIT_NOW,
+                true,
+                "RIVAL_RECENT_PIT_PROMOTION",
+                "RIVAL_RECENT_PIT_PROMOTION",
+                base.pitWindowPhase,
+                base.weakTimingCombo,
+                base.earlyWindow);
+    }
+
+    private static String readStringSetting(String key, String defaultValue) {
+        String raw = System.getProperty(key);
+        if (raw == null || raw.isBlank()) {
+            raw = System.getenv(key);
+        }
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        return raw.trim();
+    }
+
+    private static boolean readBooleanSetting(String key, boolean defaultValue) {
+        String raw = readStringSetting(key, defaultValue ? "true" : "false");
+        if (raw == null) {
+            return defaultValue;
+        }
+        String normalized = raw.trim().toLowerCase(Locale.ROOT);
+        if ("1".equals(normalized) || "true".equals(normalized) || "yes".equals(normalized) || "on".equals(normalized)) {
+            return true;
+        }
+        if ("0".equals(normalized) || "false".equals(normalized) || "no".equals(normalized) || "off".equals(normalized)) {
+            return false;
+        }
+        return defaultValue;
+    }
+
+    private static int readIntSetting(String key, int defaultValue) {
+        String raw = readStringSetting(key, Integer.toString(defaultValue));
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException ignore) {
+            return defaultValue;
+        }
+    }
+
+    private static double readDoubleSetting(String key, double defaultValue) {
+        String raw = readStringSetting(key, Double.toString(defaultValue));
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Double.parseDouble(raw.trim());
+        } catch (NumberFormatException ignore) {
+            return defaultValue;
+        }
+    }
+
+    private static String normalizeRaceNameForPrior(String race) {
+        if (race == null) {
+            return "";
+        }
+        String trimmed = race.trim();
+        return trimmed.replaceFirst("^\\d{4}\\s::\\s", "").trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeCompoundForPrior(String compound) {
+        if (compound == null) {
+            return "UNKNOWN";
+        }
+        String up = compound.trim().toUpperCase(Locale.ROOT);
+        return up.isEmpty() ? "UNKNOWN" : up;
+    }
+
+    private static Double jsonDoubleOrNull(JsonNode node, String field) {
+        if (node == null || !node.has(field) || node.get(field).isNull()) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        if (!value.isNumber()) {
+            return null;
+        }
+        double v = value.asDouble();
+        if (Double.isNaN(v) || Double.isInfinite(v)) {
+            return null;
+        }
+        return v;
+    }
+
+    private static int minSamplesForKeyType(String keyType) {
+        if ("race_compound_stint".equals(keyType)) {
+            return PRIOR_MIN_SAMPLES_RACE_COMPOUND_STINT;
+        }
+        if ("race_stint".equals(keyType)) {
+            return PRIOR_MIN_SAMPLES_RACE_STINT;
+        }
+        if ("compound_stint".equals(keyType)) {
+            return PRIOR_MIN_SAMPLES_COMPOUND_STINT;
+        }
+        return PRIOR_MIN_SAMPLES_GLOBAL_STINT;
+    }
+
+    private static String composePriorKey(String keyType, String raceNameNormalized, String compound, int stint) {
+        if ("race_compound_stint".equals(keyType)) {
+            return keyType + "|" + raceNameNormalized + "|" + compound + "|" + stint;
+        }
+        if ("race_stint".equals(keyType)) {
+            return keyType + "|" + raceNameNormalized + "|" + stint;
+        }
+        if ("compound_stint".equals(keyType)) {
+            return keyType + "|" + compound + "|" + stint;
+        }
+        return "global_stint|" + stint;
+    }
+
+    private static PriorWindowPhase resolvePriorWindowPhase(PriorStats prior, Double raceProgressPct, int tyreLife) {
+        if (prior == null) {
+            return PriorWindowPhase.UNKNOWN;
+        }
+        if (raceProgressPct != null && prior.progressQ25 != null && prior.progressQ75 != null) {
+            if (raceProgressPct < prior.progressQ25) {
+                return PriorWindowPhase.TOO_EARLY;
+            }
+            if (raceProgressPct <= prior.progressQ75) {
+                return PriorWindowPhase.WINDOW_OPEN;
+            }
+            if (prior.progressQ90 != null && raceProgressPct <= prior.progressQ90) {
+                return PriorWindowPhase.LATE_WINDOW;
+            }
+            return PriorWindowPhase.OVERDUE;
+        }
+        if (prior.tyreQ25 != null && prior.tyreQ75 != null) {
+            if (tyreLife < prior.tyreQ25) {
+                return PriorWindowPhase.TOO_EARLY;
+            }
+            if (tyreLife <= prior.tyreQ75) {
+                return PriorWindowPhase.WINDOW_OPEN;
+            }
+            if (prior.tyreQ90 != null && tyreLife <= prior.tyreQ90) {
+                return PriorWindowPhase.LATE_WINDOW;
+            }
+            return PriorWindowPhase.OVERDUE;
+        }
+        return PriorWindowPhase.UNKNOWN;
+    }
+
+    private static PriorMatch resolvePriorMatch(
+            Map<String, PriorStats> priorMap,
+            String raceNameNormalized,
+            String compound,
+            int stint) {
+        if (priorMap == null || priorMap.isEmpty()) {
+            return null;
+        }
+
+        String[] keyTypes = new String[] {"race_compound_stint", "race_stint", "compound_stint", "global_stint"};
+        String[] fallbackLevels = new String[] {
+            "race_compound_stint",
+            "race_stint",
+            "compound_stint",
+            "global_stint"
+        };
+
+        for (int i = 0; i < keyTypes.length; i++) {
+            String keyType = keyTypes[i];
+            String key = composePriorKey(keyType, raceNameNormalized, compound, stint);
+            PriorStats prior = priorMap.get(key);
+            if (prior == null) {
+                continue;
+            }
+            if (prior.sampleCount < minSamplesForKeyType(keyType)) {
+                continue;
+            }
+            return new PriorMatch(prior, key, fallbackLevels[i]);
+        }
+        return null;
+    }
+
+    private static PriorPromotionDecision evaluatePriorPromotionDecision(
+            boolean priorPromotionEnabled,
+            boolean priorPromotionStrictMode,
+            boolean priorsAvailable,
+            Map<String, PriorStats> priorMap,
+            TimingGateDecision timingDecision,
+            LapEvent current,
+            String trackStatus,
+            double urgencyScore,
+            double totalScore,
+            boolean timingPressureAvailable,
+            double timingPressureScore) {
+        if (!priorPromotionEnabled) {
+            return PriorPromotionDecision.unavailable("PRIOR_PROMOTION_DISABLED");
+        }
+        if (!priorsAvailable) {
+            return PriorPromotionDecision.unavailable("PRIORS_UNAVAILABLE");
+        }
+        if (timingDecision == null || timingDecision.legacyLabel != SuggestionLabel.GOOD_PIT) {
+            return PriorPromotionDecision.unavailable("NOT_OPPORTUNITY_LABEL");
+        }
+
+        if (PRIOR_PROMOTION_GREEN_ONLY && TrackStatusCodes.isCaution(trackStatus)) {
+            return new PriorPromotionDecision(
+                    false,
+                    "CAUTION_SKIPPED",
+                    PRIOR_PROMOTION_CAUTION_SKIP_REASON,
+                    "",
+                    "",
+                    "UNKNOWN",
+                    0,
+                    PriorWindowPhase.UNKNOWN,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null);
+        }
+
+        String raceNameNormalized = normalizeRaceNameForPrior(current.getRace());
+        String compound = normalizeCompoundForPrior(current.getCompound());
+        int stint = Math.max(1, current.getStint());
+        PriorMatch match = resolvePriorMatch(priorMap, raceNameNormalized, compound, stint);
+        if (match == null) {
+            return PriorPromotionDecision.unavailable("NO_PRIOR_MATCH");
+        }
+
+        int expectedMaxStint = Math.max(1, defaultMaxStint(current.getCompound()));
+        double tireLifeRatio = (double) current.getTyreLife() / (double) expectedMaxStint;
+        Double raceProgressPct = null;
+        if (current.getTotalLaps() > 0) {
+            raceProgressPct = Math.max(0.0, Math.min(1.5, (double) current.getLapNumber() / (double) current.getTotalLaps()));
+        }
+        PriorWindowPhase priorPhase = resolvePriorWindowPhase(match.prior, raceProgressPct, current.getTyreLife());
+        String fallbackLevel = nullToEmpty(match.fallbackLevel);
+        String priorConfidence = nullToEmpty(match.prior.priorConfidence).toUpperCase(Locale.ROOT);
+
+        if (priorPromotionStrictMode) {
+            boolean keyAllowed = "race_compound_stint".equals(fallbackLevel) || "race_stint".equals(fallbackLevel);
+            if (!keyAllowed) {
+                return new PriorPromotionDecision(
+                        false,
+                        "PRIOR_REJECT_FALLBACK_LEVEL",
+                        "",
+                        match.priorKeyUsed,
+                        fallbackLevel,
+                        priorConfidence,
+                        match.prior.sampleCount,
+                        priorPhase,
+                        match.prior.progressQ25,
+                        match.prior.progressQ50,
+                        match.prior.progressQ75,
+                        match.prior.progressQ90,
+                        match.prior.tyreQ25,
+                        match.prior.tyreQ50,
+                        match.prior.tyreQ75,
+                        match.prior.tyreQ90);
+            }
+            boolean confidenceAllowed = "HIGH".equals(priorConfidence) || "MEDIUM".equals(priorConfidence);
+            if (!confidenceAllowed) {
+                return new PriorPromotionDecision(
+                        false,
+                        "PRIOR_REJECT_LOW_CONFIDENCE",
+                        "",
+                        match.priorKeyUsed,
+                        fallbackLevel,
+                        priorConfidence,
+                        match.prior.sampleCount,
+                        priorPhase,
+                        match.prior.progressQ25,
+                        match.prior.progressQ50,
+                        match.prior.progressQ75,
+                        match.prior.progressQ90,
+                        match.prior.tyreQ25,
+                        match.prior.tyreQ50,
+                        match.prior.tyreQ75,
+                        match.prior.tyreQ90);
+            }
+        }
+
+        boolean inProgressWindow = raceProgressPct != null
+                && match.prior.progressQ25 != null
+                && match.prior.progressQ75 != null
+                && raceProgressPct >= match.prior.progressQ25
+                && raceProgressPct <= match.prior.progressQ75;
+        boolean tyreInMidWindow = match.prior.tyreQ50 != null
+                && match.prior.tyreQ90 != null
+                && current.getTyreLife() >= match.prior.tyreQ50
+                && current.getTyreLife() <= match.prior.tyreQ90;
+        boolean tyreAtLeastQ50 = match.prior.tyreQ50 != null && current.getTyreLife() >= match.prior.tyreQ50;
+        boolean tyreAtLeastQ75 = match.prior.tyreQ75 != null && current.getTyreLife() >= match.prior.tyreQ75;
+        boolean strongTiming = timingPressureAvailable && timingPressureScore >= PRIOR_STRICT_MIN_TIMING_PRESSURE;
+        boolean urgencyStrong = urgencyScore >= WEAK_URGENCY_LT;
+        boolean ratioAtLeast80 = tireLifeRatio >= PRIOR_STRICT_MIN_TIRE_LIFE_RATIO;
+        boolean ratioAtLeast85 = tireLifeRatio >= PRIOR_STRICT_MIN_TIRE_LIFE_RATIO_LATE;
+
+        int passCount = 0;
+        if (urgencyStrong) {
+            passCount++;
+        }
+        if (strongTiming) {
+            passCount++;
+        }
+        if (tyreAtLeastQ50) {
+            passCount++;
+        }
+        if (ratioAtLeast80) {
+            passCount++;
+        }
+        if (inProgressWindow) {
+            passCount++;
+        }
+
+        boolean applyPromotion = false;
+        String reason;
+
+        if (priorPhase == PriorWindowPhase.WINDOW_OPEN) {
+            applyPromotion = passCount >= PRIOR_STRICT_WINDOW_OPEN_MIN_PASS
+                    && (inProgressWindow || (tyreInMidWindow && urgencyStrong))
+                    && (ratioAtLeast80 || strongTiming);
+            if (applyPromotion) {
+                reason = "PRIOR_WINDOW_PROMOTION_STRICT";
+            } else if (!ratioAtLeast80 && !strongTiming) {
+                reason = "PRIOR_REJECT_LOW_TYRE_RATIO";
+            } else {
+                reason = "PRIOR_REJECT_WEAK_EVIDENCE";
+            }
+        } else if (priorPhase == PriorWindowPhase.LATE_WINDOW) {
+            boolean lateStrong = totalScore >= PRIOR_STRICT_MIN_TOTAL_SCORE_LATE
+                    && urgencyStrong
+                    && strongTiming
+                    && (ratioAtLeast85 || tyreAtLeastQ75);
+            applyPromotion = lateStrong;
+            reason = lateStrong ? "PRIOR_WINDOW_PROMOTION_STRICT" : "PRIOR_REJECT_WEAK_EVIDENCE";
+        } else if (priorPhase == PriorWindowPhase.TOO_EARLY) {
+            reason = "PRIOR_REJECT_TOO_EARLY";
+        } else if (priorPhase == PriorWindowPhase.UNKNOWN) {
+            reason = "PRIOR_REJECT_UNKNOWN_PHASE";
+        } else {
+            reason = "PRIOR_REJECT_WEAK_EVIDENCE";
+        }
+
+        return new PriorPromotionDecision(
+                applyPromotion,
+                reason,
+                "",
+                match.priorKeyUsed,
+                fallbackLevel,
+                priorConfidence,
+                match.prior.sampleCount,
+                priorPhase,
+                match.prior.progressQ25,
+                match.prior.progressQ50,
+                match.prior.progressQ75,
+                match.prior.progressQ90,
+                match.prior.tyreQ25,
+                match.prior.tyreQ50,
+                match.prior.tyreQ75,
+                match.prior.tyreQ90);
+    }
+
+    private static int recentPitWithinNLaps(MapState<String, Integer> lastPitState, String driver, int currentLap, int maxWindow)
+            throws Exception {
+        if (lastPitState == null || driver == null || driver.isBlank()) {
+            return -1;
+        }
+        Integer pitLap = lastPitState.get(driver);
+        if (pitLap == null) {
+            return -1;
+        }
+        int delta = currentLap - pitLap;
+        if (delta < 0 || delta > maxWindow) {
+            return -1;
+        }
+        return delta;
+    }
+
+    private static boolean validGap(Double gap) {
+        if (gap == null) {
+            return false;
+        }
+        if (Double.isNaN(gap) || Double.isInfinite(gap)) {
+            return false;
+        }
+        if (gap <= 0.0) {
+            return false;
+        }
+        return gap <= 20.0;
+    }
+
+    private RivalPromotionDecision evaluateRivalPromotionDecision(
+            boolean rivalPressureEnabled,
+            boolean rivalPressureCautionEnabled,
+            TimingGateDecision timingDecision,
+            LapEvent current,
+            List<LapEvent> laps,
+            int posIndex,
+            String trackStatus,
+            double urgencyScore,
+            boolean timingPressureAvailable,
+            double timingPressureScore) throws Exception {
+        if (!rivalPressureEnabled) {
+            return RivalPromotionDecision.unavailable("RIVAL_PROMOTION_DISABLED");
+        }
+        if (timingDecision == null || timingDecision.legacyLabel != SuggestionLabel.GOOD_PIT) {
+            return RivalPromotionDecision.unavailable("NOT_OPPORTUNITY_LABEL");
+        }
+        boolean caution = TrackStatusCodes.isCaution(trackStatus);
+        if (caution && !rivalPressureCautionEnabled) {
+            return new RivalPromotionDecision(
+                    false,
+                    "CAUTION_PROMOTION_DISABLED",
+                    "",
+                    "",
+                    "",
+                    null,
+                    null,
+                    -1,
+                    -1,
+                    -1);
+        }
+        if (timingDecision.pitWindowPhase == PitWindowPhase.TOO_EARLY) {
+            return new RivalPromotionDecision(
+                    false,
+                    "RIVAL_REJECT_TOO_EARLY",
+                    "",
+                    "",
+                    "",
+                    null,
+                    null,
+                    -1,
+                    -1,
+                    -1);
+        }
+
+        LapEvent ahead = posIndex > 0 ? laps.get(posIndex - 1) : null;
+        LapEvent behind = (posIndex + 1) < laps.size() ? laps.get(posIndex + 1) : null;
+        String aheadDriver = ahead != null ? nullToEmpty(ahead.getDriver()) : "";
+        String behindDriver = behind != null ? nullToEmpty(behind.getDriver()) : "";
+        Double gapAhead = current.getGapToCarAhead();
+        Double gapBehind = behind != null ? behind.getGapToCarAhead() : null;
+
+        int aheadRecent = recentPitWithinNLaps(lastObservedPitLap, aheadDriver, current.getLapNumber(), RIVAL_RECENT_PIT_WINDOW_LONG);
+        int behindRecent = recentPitWithinNLaps(lastObservedPitLap, behindDriver, current.getLapNumber(), RIVAL_RECENT_PIT_WINDOW_LONG);
+        int teammateRecent = -1;
+
+        String team = nullToEmpty(current.getTeam());
+        if (!team.isBlank()) {
+            for (LapEvent candidate : laps) {
+                if (candidate == null) {
+                    continue;
+                }
+                if (candidate.getDriver() == null || candidate.getDriver().equals(current.getDriver())) {
+                    continue;
+                }
+                if (!team.equalsIgnoreCase(nullToEmpty(candidate.getTeam()))) {
+                    continue;
+                }
+                teammateRecent = recentPitWithinNLaps(
+                        lastObservedPitLap,
+                        candidate.getDriver(),
+                        current.getLapNumber(),
+                        RIVAL_RECENT_PIT_WINDOW_LONG);
+                if (teammateRecent >= 0) {
+                    break;
+                }
+            }
+        }
+
+        int recentWindow = c6TunedRivalProfileEnabled ? rivalRecentMaxLaps : RIVAL_RECENT_PIT_WINDOW_SHORT;
+        boolean hasRecentRivalEvent = (aheadRecent >= 0 && aheadRecent <= recentWindow)
+                || (behindRecent >= 0 && behindRecent <= recentWindow)
+                || (teammateRecent >= 0 && teammateRecent <= recentWindow);
+        if (!hasRecentRivalEvent) {
+            return new RivalPromotionDecision(
+                    false,
+                    "RIVAL_REJECT_NO_RECENT_PIT_EVENT",
+                    "",
+                    aheadDriver,
+                    behindDriver,
+                    gapAhead,
+                    gapBehind,
+                    aheadRecent,
+                    behindRecent,
+                    teammateRecent);
+        }
+
+        boolean gapAheadValid = validGap(gapAhead);
+        boolean gapBehindValid = validGap(gapBehind);
+        boolean gapCondition;
+        String source;
+        if (caution) {
+            gapCondition = true; // caution uses event-only by design.
+            source = "EVENT_ONLY_CAUTION";
+        } else {
+            boolean aheadGapShort = gapAheadValid && gapAhead <= RIVAL_PROMOTION_MAX_GAP_SEC_GREEN;
+            boolean behindGapShort = gapBehindValid && gapBehind <= RIVAL_PROMOTION_MAX_GAP_SEC_GREEN;
+            boolean aheadGapRelaxed = gapAheadValid && gapAhead <= RIVAL_PROMOTION_MAX_GAP_SEC_GREEN_RELAXED;
+            boolean behindGapRelaxed = gapBehindValid && gapBehind <= RIVAL_PROMOTION_MAX_GAP_SEC_GREEN_RELAXED;
+            gapCondition = aheadGapShort || behindGapShort
+                    || ((aheadRecent == 0 || behindRecent == 0) && (aheadGapRelaxed || behindGapRelaxed));
+            source = gapCondition ? "CLASSIFICATION_NEIGHBOR_GAP" : "INVALID_OR_UNAVAILABLE";
+        }
+
+        if (!gapCondition) {
+            return new RivalPromotionDecision(
+                    false,
+                    "RIVAL_REJECT_INVALID_GAP",
+                    source,
+                    aheadDriver,
+                    behindDriver,
+                    gapAhead,
+                    gapBehind,
+                    aheadRecent,
+                    behindRecent,
+                    teammateRecent);
+        }
+
+        int expectedMaxStint = Math.max(1, defaultMaxStint(current.getCompound()));
+        double tireLifeRatio = (double) current.getTyreLife() / (double) expectedMaxStint;
+        boolean timingEvidence = urgencyScore >= WEAK_URGENCY_LT
+                || tireLifeRatio >= PRIOR_STRICT_MIN_TIRE_LIFE_RATIO
+                || (timingPressureAvailable && timingPressureScore >= RIVAL_PROMOTION_MIN_TIMING_PRESSURE);
+        if (!timingEvidence) {
+            return new RivalPromotionDecision(
+                    false,
+                    "RIVAL_REJECT_WEAK_TIMING_EVIDENCE",
+                    source,
+                    aheadDriver,
+                    behindDriver,
+                    gapAhead,
+                    gapBehind,
+                    aheadRecent,
+                    behindRecent,
+                    teammateRecent);
+        }
+
+        boolean ultraCloseGuardApplied = false;
+        if (c6TunedRivalProfileEnabled) {
+            C6RivalFilterDecision c6Filter = evaluateC6TunedRivalFilter(
+                    rivalRecentMaxLaps,
+                    rivalMinUrgency,
+                    rivalMinTimingPressure,
+                    rivalUltraCloseGapGuardEnabled,
+                    caution,
+                    aheadRecent,
+                    behindRecent,
+                    teammateRecent,
+                    urgencyScore,
+                    timingPressureAvailable,
+                    timingPressureScore,
+                    gapAhead,
+                    gapBehind,
+                    tireLifeRatio);
+            ultraCloseGuardApplied = c6Filter.ultraCloseGuardApplied;
+            if (!c6Filter.pass) {
+                return new RivalPromotionDecision(
+                        false,
+                        c6Filter.reason,
+                        source,
+                        aheadDriver,
+                        behindDriver,
+                        gapAhead,
+                        gapBehind,
+                        aheadRecent,
+                        behindRecent,
+                        teammateRecent,
+                        ultraCloseGuardApplied);
+            }
+        }
+
+        return new RivalPromotionDecision(
+                true,
+                "RIVAL_RECENT_PIT_PROMOTION",
+                source,
+                aheadDriver,
+                behindDriver,
+                gapAhead,
+                gapBehind,
+                aheadRecent,
+                behindRecent,
+                teammateRecent,
+                ultraCloseGuardApplied);
+    }
+
+    private static C6RivalFilterDecision evaluateC6TunedRivalFilter(
+            int rivalRecentMaxLaps,
+            double rivalMinUrgency,
+            double rivalMinTimingPressure,
+            boolean rivalUltraCloseGapGuardEnabled,
+            boolean cautionRegime,
+            int aheadRecent,
+            int behindRecent,
+            int teammateRecent,
+            double urgencyScore,
+            boolean timingPressureAvailable,
+            double timingPressureScore,
+            Double gapAhead,
+            Double gapBehind,
+            double tireLifeRatio) {
+        boolean hasRecentRivalEvent = (aheadRecent >= 0 && aheadRecent <= rivalRecentMaxLaps)
+                || (behindRecent >= 0 && behindRecent <= rivalRecentMaxLaps)
+                || (teammateRecent >= 0 && teammateRecent <= rivalRecentMaxLaps);
+        if (!hasRecentRivalEvent) {
+            return new C6RivalFilterDecision(false, "C6_REJECT_RECENCY", false);
+        }
+
+        if (urgencyScore < rivalMinUrgency) {
+            return new C6RivalFilterDecision(false, "C6_REJECT_URGENCY", false);
+        }
+
+        if (!timingPressureAvailable) {
+            return new C6RivalFilterDecision(false, "C6_REJECT_TIMING_PRESSURE_UNAVAILABLE", false);
+        }
+        if (timingPressureScore < rivalMinTimingPressure) {
+            return new C6RivalFilterDecision(false, "C6_REJECT_TIMING_PRESSURE", false);
+        }
+
+        if (rivalUltraCloseGapGuardEnabled && !cautionRegime) {
+            Double minGap = null;
+            if (validGap(gapAhead)) {
+                minGap = gapAhead;
+            }
+            if (validGap(gapBehind)) {
+                minGap = minGap == null ? gapBehind : Math.min(minGap, gapBehind);
+            }
+            if (minGap != null && minGap <= C6_ULTRA_CLOSE_GAP_SEC) {
+                boolean extraEvidence = (urgencyScore >= 10.0 && urgencyScore <= 20.0)
+                        || tireLifeRatio >= C6_ULTRA_CLOSE_RATIO_OVERRIDE;
+                if (!extraEvidence) {
+                    return new C6RivalFilterDecision(false, "C6_REJECT_ULTRA_CLOSE_GUARD", true);
+                }
+                return new C6RivalFilterDecision(true, "C6_PROFILE_PASS", true);
+            }
+        }
+
+        return new C6RivalFilterDecision(true, "C6_PROFILE_PASS", false);
+    }
+
+    private void loadPitWindowPriors() {
+        pitWindowPriors = new HashMap<>();
+        pitWindowPriorsAvailable = false;
+        pitWindowPriorsStatus = "PRIORS_UNAVAILABLE";
+        pitWindowPriorsLoadedAt = "";
+
+        boolean enabled = readBooleanSetting(PRIORS_ENABLED_SETTING, true);
+        if (!enabled) {
+            pitWindowPriorsStatus = "PRIORS_DISABLED";
+            pitWindowPriorsPath = readStringSetting(PRIORS_PATH_SETTING, DEFAULT_PRIORS_PATH);
+            return;
+        }
+
+        pitWindowPriorsPath = readStringSetting(PRIORS_PATH_SETTING, DEFAULT_PRIORS_PATH);
+        Path path = Paths.get(pitWindowPriorsPath);
+        if (!Files.exists(path)) {
+            pitWindowPriorsStatus = "PRIORS_FILE_MISSING";
+            return;
+        }
+
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(Files.readString(path));
+            JsonNode priorsNode = root.path("priors");
+            if (!priorsNode.isObject()) {
+                pitWindowPriorsStatus = "PRIORS_SCHEMA_INVALID";
+                return;
+            }
+
+            Map<String, PriorStats> loaded = new HashMap<>();
+            var fields = priorsNode.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                String key = entry.getKey();
+                JsonNode node = entry.getValue();
+                String keyType = node.path("key_type").asText("");
+                int sampleCount = node.path("sample_count").asInt(0);
+                String priorConfidence = node.path("prior_confidence").asText("UNKNOWN");
+
+                PriorStats stats = new PriorStats(
+                        keyType,
+                        key,
+                        sampleCount,
+                        priorConfidence,
+                        jsonDoubleOrNull(node, "race_progress_pct_q25"),
+                        jsonDoubleOrNull(node, "race_progress_pct_q50"),
+                        jsonDoubleOrNull(node, "race_progress_pct_q75"),
+                        jsonDoubleOrNull(node, "race_progress_pct_q90"),
+                        jsonDoubleOrNull(node, "tyreLife_q25"),
+                        jsonDoubleOrNull(node, "tyreLife_q50"),
+                        jsonDoubleOrNull(node, "tyreLife_q75"),
+                        jsonDoubleOrNull(node, "tyreLife_q90"));
+                loaded.put(key, stats);
+            }
+
+            pitWindowPriors = loaded;
+            pitWindowPriorsAvailable = !pitWindowPriors.isEmpty();
+            pitWindowPriorsStatus = pitWindowPriorsAvailable ? "PRIORS_LOADED" : "PRIORS_EMPTY";
+            pitWindowPriorsLoadedAt = Instant.now().toString();
+            LOG.info("Loaded pit-window priors: {} entries from {}", pitWindowPriors.size(), pitWindowPriorsPath);
+        } catch (Exception e) { // NOPMD deliberate broad catch for fail-open behavior
+            pitWindowPriorsAvailable = false;
+            pitWindowPriorsStatus = "PRIORS_UNREADABLE";
+            LOG.warn("Failed to load pit-window priors from {}: {}", pitWindowPriorsPath, e.toString());
+        }
+    }
+
+    private String buildDecisionMetadataJson(
+            LapEvent current,
+            double totalScore,
+            double urgencyScore,
+            double timingPressureScore,
+            TimingGateDecision decision,
+            PriorPromotionDecision priorDecision,
+            RivalPromotionDecision rivalDecision) {
+        int expectedMaxStint = Math.max(1, defaultMaxStint(current.getCompound()));
+        double tireLifeRatio = (double) current.getTyreLife() / (double) expectedMaxStint;
+        Double raceProgressPct = null;
+        if (current.getTotalLaps() > 0) {
+            raceProgressPct = Math.max(0.0, Math.min(1.5,
+                    (double) current.getLapNumber() / (double) current.getTotalLaps()));
+        }
+        String raceProgressLiteral = raceProgressPct == null
+                ? "null"
+                : String.format("%.6f", raceProgressPct);
+        return "{"
+                + "\"originalLabel\":\"" + jsonEscape(decision.originalLabel.name()) + "\","
+                + "\"finalLabel\":\"" + jsonEscape(decision.legacyLabel.name()) + "\","
+                + "\"semanticLabel\":\"" + jsonEscape(decision.semanticLabel.name()) + "\","
+                + "\"timingGatePassed\":" + decision.timingGatePassed + ","
+                + "\"timingGateReason\":\"" + jsonEscape(decision.timingGateReason) + "\","
+                + "\"pitWindowPhase\":\"" + jsonEscape(decision.pitWindowPhase.name()) + "\","
+                + "\"finalDecisionReason\":\"" + jsonEscape(decision.finalDecisionReason) + "\","
+                + "\"totalScore\":" + String.format("%.6f", totalScore) + ","
+                + "\"urgencyScore\":" + String.format("%.6f", urgencyScore) + ","
+                + "\"timingPressureScore\":" + String.format("%.6f", timingPressureScore) + ","
+                + "\"tyreLife\":" + current.getTyreLife() + ","
+                + "\"expectedMaxStint\":" + expectedMaxStint + ","
+                + "\"tireLifeRatio\":" + String.format("%.6f", tireLifeRatio) + ","
+                + "\"raceProgressPct\":" + raceProgressLiteral + ","
+                + "\"trackStatus\":\"" + jsonEscape(TrackStatusCodes.normalizeOrGreen(current.getTrackStatus())) + "\","
+                + "\"regime\":\"" + (TrackStatusCodes.isCaution(current.getTrackStatus()) ? "CAUTION" : "GREEN") + "\","
+                + "\"weakTimingCombo\":" + decision.weakTimingCombo + ","
+                + "\"earlyWindow\":" + decision.earlyWindow + ","
+                + "\"priorPromotionApplied\":" + priorDecision.priorPromotionApplied + ","
+                + "\"priorPromotionReason\":\"" + jsonEscape(priorDecision.priorPromotionReason) + "\","
+                + "\"priorPromotionSkippedReason\":\"" + jsonEscape(priorDecision.priorPromotionSkippedReason) + "\","
+                + "\"priorKeyUsed\":\"" + jsonEscape(priorDecision.priorKeyUsed) + "\","
+                + "\"fallbackLevel\":\"" + jsonEscape(priorDecision.fallbackLevel) + "\","
+                + "\"priorSampleCount\":" + priorDecision.priorSampleCount + ","
+                + "\"priorConfidence\":\"" + jsonEscape(priorDecision.priorConfidence) + "\","
+                + "\"priorWindowPhase\":\"" + jsonEscape(priorDecision.priorWindowPhase.name()) + "\","
+                + "\"priorProgressQ25\":" + jsonLiteral(priorDecision.priorProgressQ25) + ","
+                + "\"priorProgressQ50\":" + jsonLiteral(priorDecision.priorProgressQ50) + ","
+                + "\"priorProgressQ75\":" + jsonLiteral(priorDecision.priorProgressQ75) + ","
+                + "\"priorProgressQ90\":" + jsonLiteral(priorDecision.priorProgressQ90) + ","
+                + "\"priorTyreQ25\":" + jsonLiteral(priorDecision.priorTyreQ25) + ","
+                + "\"priorTyreQ50\":" + jsonLiteral(priorDecision.priorTyreQ50) + ","
+                + "\"priorTyreQ75\":" + jsonLiteral(priorDecision.priorTyreQ75) + ","
+                + "\"priorTyreQ90\":" + jsonLiteral(priorDecision.priorTyreQ90) + ","
+                + "\"rivalPressureApplied\":" + rivalDecision.rivalPressureApplied + ","
+                + "\"rivalPressureReason\":\"" + jsonEscape(rivalDecision.rivalPressureReason) + "\","
+                + "\"rivalPressureSource\":\"" + jsonEscape(rivalDecision.rivalPressureSource) + "\","
+                + "\"classificationAheadDriver\":\"" + jsonEscape(rivalDecision.classificationAheadDriver) + "\","
+                + "\"classificationBehindDriver\":\"" + jsonEscape(rivalDecision.classificationBehindDriver) + "\","
+                + "\"classificationGapAheadSec\":" + jsonLiteral(rivalDecision.classificationGapAheadSec) + ","
+                + "\"classificationGapBehindSec\":" + jsonLiteral(rivalDecision.classificationGapBehindSec) + ","
+                + "\"aheadPittedLastNLaps\":" + rivalDecision.aheadPittedLastNLaps + ","
+                + "\"behindPittedLastNLaps\":" + rivalDecision.behindPittedLastNLaps + ","
+                + "\"teammatePittedLastNLaps\":" + rivalDecision.teammatePittedLastNLaps + ","
+                + "\"rivalRecentMaxLaps\":" + rivalRecentMaxLaps + ","
+                + "\"rivalMinUrgency\":" + String.format("%.6f", rivalMinUrgency) + ","
+                + "\"rivalMinTimingPressure\":" + String.format("%.6f", rivalMinTimingPressure) + ","
+                + "\"ultraCloseGuardApplied\":" + rivalDecision.ultraCloseGuardApplied + ","
+                + "\"c6TunedProfileEnabled\":" + c6TunedRivalProfileEnabled + ","
+                + "\"pitWindowPriorsStatus\":\"" + jsonEscape(nullToEmpty(pitWindowPriorsStatus)) + "\","
+                + "\"pitWindowPriorsPath\":\"" + jsonEscape(nullToEmpty(pitWindowPriorsPath)) + "\","
+                + "\"pitWindowPriorsLoadedAt\":\"" + jsonEscape(nullToEmpty(pitWindowPriorsLoadedAt)) + "\","
+                + "\"featureFlagsActive\":\""
+                + "priorPromotionEnabled=" + priorPromotionEnabled + ";"
+                + "priorPromotionStrictMode=" + priorPromotionStrictMode + ";"
+                + "rivalPressurePromotionEnabled=" + rivalPressurePromotionEnabled + ";"
+                + "rivalPressureCautionEnabled=" + rivalPressureCautionEnabled + ";"
+                + "priorSuppressionEnabled=" + priorSuppressionEnabled + ";"
+                + "c6TunedRivalProfileEnabled=" + c6TunedRivalProfileEnabled + ";"
+                + "rivalRecentMaxLaps=" + rivalRecentMaxLaps + ";"
+                + "rivalMinUrgency=" + String.format("%.3f", rivalMinUrgency) + ";"
+                + "rivalMinTimingPressure=" + String.format("%.3f", rivalMinTimingPressure) + ";"
+                + "rivalUltraCloseGapGuardEnabled=" + rivalUltraCloseGapGuardEnabled
+                + "\""
+                + "}";
+    }
+
+    private static String jsonEscape(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String jsonLiteral(Double value) {
+        if (value == null || Double.isNaN(value) || Double.isInfinite(value)) {
+            return "null";
+        }
+        return String.format("%.6f", value);
+    }
+
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
     private static boolean isActionableLabel(SuggestionLabel label) {
         return label == SuggestionLabel.PIT_NOW || label == SuggestionLabel.GOOD_PIT;
+    }
+
+    private static boolean isPitNowLabel(SuggestionLabel label) {
+        return label == SuggestionLabel.PIT_NOW;
     }
 
     private static double adaptiveActionThreshold(LapEvent current, String trackStatus, double signalConfidence) {

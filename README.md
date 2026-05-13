@@ -1,295 +1,303 @@
-# Real-Time F1 Strategy Operations Thesis Repository
+# Thesis Reproducibility Guide (Final Phase 2B Dual-Contract)
 
-Student: **Pietro Pizzoccheri**
+This README is the **current, minimal, reproducible path** for the experiment that produced `results_comparison_newest.md`.
 
-## 1) Executive Summary
+It intentionally excludes plotting/report-polish tooling and focuses only on:
+- data replay/dataset generation,
+- Batch ML training/evaluation,
+- MOA/SML training/evaluation,
+- canonical truth-universe evaluation outputs.
 
-This repository implements and evaluates an end-to-end real-time Formula 1 pit-strategy pipeline:
+## 1) What This Reproduces
 
-1. Event-time race replay (`fastf1` -> Kafka -> Flink).
-2. Deterministic strategy/event operators (SDE baseline + labeled outcomes).
-3. Batch ML pipeline (dataset preparation, grouped CV training, calibration, policy constraints, serving bundle).
-4. Streaming ML baseline (MOA Adaptive Random Forest).
-5. Methodological evaluation and thesis-ready synthesis artifacts.
+- Final protocol: dual-contract `H=2`
+  - `pit_any_h2` (episode-level, `pit_now_only`)
+  - `pit_success_h2` (row-level, `pit_now_plus_good_pit`)
+- Final profiles:
+  - `e0_no_source_year` (`baseline`, drop `_source_year`)
+  - `p1_percent_conservative_v1` (`percent_conservative_v1`, drop `_source_year`)
+- Final headline truth mode:
+  - `canonical_sde_truth` using SDE c6 fixed truth universe/events
 
-The thesis objective is a defensible comparison among:
-- **SDE deterministic baseline**,
-- **Batch ML**,
-- **Streaming ML (MOA)**,
-under fixed comparison invariants:
-- horizon `H=2`,
-- actionable-only matching,
-- one-to-one pit consumption,
-- split/leakage integrity checks,
-- integrated validity gates.
+## 2) Minimal Code Files To Keep In GitHub
 
-## 2) Scientific Scope and Evaluation Contract
+If you want a **straight necessary** commit for this pipeline, keep at least the files below.
 
-### Core research question
-Under a fixed decision contract, how do SDE, Batch ML, and Streaming ML compare in predictive utility, decision quality, and operational feasibility?
+### 2.1 Infra + replay (Flink/Kafka + producer)
 
-### Non-negotiable protocol constraints
-- Comparator contract: `H=2`, actionable-only, one-to-one target consumption.
-- Validation rigor: grouped race-level logic and explicit split-integrity audits.
-- Deployment rigor: calibration checks, train-serve parity, and runtime feasibility gates.
+- `docker-compose.yml`
+- `run_simulation.sh`
+- `simulate_season.sh`
+- `scripts/precache_2022_2025.sh`
+- `scripts/f1_race_calendar_2022_2025.json`
+- `f1-telemetry-producer/src/prepare_race.py`
+- `f1-telemetry-producer/src/stream_race.py`
+- `f1-telemetry-producer/src/precache_seasons.py`
 
-### Methodological grounding
-- Leakage/split validity: Roberts et al. (2017), Brookshire et al. (2024).
-- Imbalance-aware precision focus: Elkan (2001), Saito & Rehmsmeier (2015), Davis & Goadrich (2006).
-- Comparative significance framing: Dietterich (1998), Walters (2022).
-- Calibration validity: Brier (1950), Platt (1999), Guo et al. (2017), Kull et al. (2017).
+Flink processor (keep the full job module):
+- `f1-telemetry-processor/pom.xml`
+- `f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java`
+- `f1-telemetry-processor/src/main/java/com/polimi/f1/model/**/*.java`
+- `f1-telemetry-processor/src/main/java/com/polimi/f1/operators/**/*.java`
+- `f1-telemetry-processor/src/main/java/com/polimi/f1/state/**/*.java`
+- `f1-telemetry-processor/src/main/java/com/polimi/f1/utils/**/*.java`
 
-## 3) Latest Validated Snapshot (April 30, 2026)
+### 2.2 ML/MOA pipeline core
 
-From current `data_lake/reports` artifacts:
+Top-level scripts:
+- `ml_pipeline/pipeline_config.py`
+- `ml_pipeline/prep_data.py`
+- `ml_pipeline/train_model.py`
+- `ml_pipeline/export_moa_dataset.py`
+- `ml_pipeline/run_moa_arf.py`
+- `ml_pipeline/run_moa_vote_logger.py`
+- `ml_pipeline/evaluate_batch_dual_contract_run.py`
+- `ml_pipeline/evaluate_moa_dual_contract_run.py`
+- `ml_pipeline/build_batch_phase2a_matrix.py`
+- `ml_pipeline/build_shared_truth_universe.py`
+- `ml_pipeline/phase2b_threshold_frontier.py`
+- `ml_pipeline/run_sml_phase2b_dual_contract.py`
+- `ml_pipeline/java_src/MoaPrequentialVoteLogger.java`
 
-### Master comparison (2022-2025)
-- SDE: precision `0.734314` (`TP=749`, `FP=271`, `scored=1020`).
-- ML-pretrain-base: precision `0.942857` (`TP=561`, `FP=34`, `scored=595`).
-- ML-pretrain-extended: precision `0.843867` (`TP=3151`, `FP=583`, `scored=3734`).
-- ML-racewise-base: precision `0.914242` (`TP=597`, `FP=56`, `scored=653`).
-- ML-racewise-extended: precision `0.834143` (`TP=3264`, `FP=649`, `scored=3913`).
-- MOA: precision `0.904196` (`TP=1293`, `FP=137`, `scored=1430`).
+Required libs used by the scripts above:
+- `ml_pipeline/lib/data_preparation.py`
+- `ml_pipeline/lib/feature_profiles.py`
+- `ml_pipeline/lib/replay_manifest.py`
+- `ml_pipeline/lib/report_label_contract_summary.py`
+- `ml_pipeline/lib/race_metadata.py`
+- `ml_pipeline/lib/model_training_cv.py`
+- `ml_pipeline/lib/comparator_heuristic.py`
+- `ml_pipeline/lib/pit_truth_eligibility.py`
+- `ml_pipeline/lib/moa_predictions.py`
+- `ml_pipeline/lib/evaluate_batch_dual_contract_run.py`
+- `ml_pipeline/lib/evaluate_moa_dual_contract_run.py`
+- `ml_pipeline/lib/build_batch_phase2a_matrix.py`
+- `ml_pipeline/lib/build_shared_truth_universe.py`
+- `ml_pipeline/lib/phase2b_threshold_frontier.py`
+- `ml_pipeline/lib/run_moa_vote_logger.py`
+- `ml_pipeline/lib/run_sml_phase2b_dual_contract.py`
 
-### Discrimination and explainability snapshot (OOF + MOA surrogate)
-- Calibrated PR-AUC/AP (OOF): pretrain `0.394339`, racewise `0.371696`.
-- MOA surrogate selected by fixed sweep: `rf_300_d12` with fidelity F1 `0.230091`.
+### 2.3 Root essentials
 
+- `requirements.txt`
+- `README.md`
+- `results_comparison_newest.md`
 
-Canonical source files:
-- `data_lake/reports/model_evaluation_2022_2025_merged.csv`
-- `data_lake/reports/thesis_master_results_2022_2025.md`
-- `data_lake/reports/pr_metrics_2022_2025.csv`
-- `data_lake/reports/moa_surrogate_model_sweep.csv`
+## 3) Environment
 
-## 4) Repository Architecture
-
-```text
-.
-├── run_simulation.sh                  # single-race full stack runner (Docker)
-├── simulate_season.sh                 # full-season replay runner (Docker)
-├── season_data_audit.py               # raw stream-level quality audit
-├── f1-telemetry-producer/
-│   └── src/
-│       ├── prepare_race.py            # stage-1 fastf1 extraction/enrichment
-│       └── stream_race.py             # stage-2 event-time replay to Kafka
-├── f1-telemetry-processor/            # Flink Java operators
-├── ml_pipeline/
-│   ├── prep_data.py
-│   ├── train_model.py
-│   ├── export_moa_dataset.py
-│   ├── run_moa_arf.py
-│   ├── build_three_way_comparator.py
-│   ├── evaluate_model.py
-│   ├── build_thesis_synthesis.py
-│   ├── generate_thesis_master_results.py
-│   ├── explain_shap.py
-│   ├── explain_moa_shap_proxy.py
-│   ├── explain_moa_temporal_permutation.py
-│   ├── plot_temporal_dynamics.py
-│   ├── plot_discrimination_curves.py
-│   ├── plot_trust_diagnostics.py
-│   ├── serve_model.py
-│   └── lib/                           # granular comparator/audit/evaluation modules
-└── data_lake/                         # generated artifacts and reports
-```
-
-## 5) Environment and Setup
-
-### Python environment
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Java/Flink/Kafka stack
-Use Docker Compose for infrastructure and Flink job lifecycle.
+MOA jar required:
 
-```bash
-docker compose up -d
-```
-
-If you need MOA baseline runs, place the jar at:
-- `data_lake/tools/moa.jar`
-
-Example:
 ```bash
 mkdir -p data_lake/tools
-curl -fL https://repo1.maven.org/maven2/nz/ac/waikato/cms/moa/moa/2024.07.0/moa-2024.07.0.jar -o data_lake/tools/moa.jar
+# put jar here:
+# data_lake/tools/moa.jar
 ```
 
-## 6) Quickstart by Objective
+## 4) Data Inputs Required
 
-### A) Freeze streaming data from race replay
-Single race:
+You need either:
+
+1. Replayed stream JSONL artifacts in `data_lake/` (`ml_features_*`, `drop_zones_*`, `pit_evals_*`, `pit_timings_*`) plus replay manifests.
+
+or
+
+2. Already prepared parquet datasets:
+- `data_lake/ml_training_dataset_2022_2025_dual_contract.parquet`
+- `data_lake/ml_training_dataset_2022_2025_dual_contract_p1_percent.parquet`
+
+For canonical SDE-truth evaluation also required:
+- `data_lake/reports/pit_truth_eligibility_audit_2022_c6_cfg120_fixed.csv`
+- `data_lake/reports/pit_truth_eligibility_audit_2023_c6_cfg120_fixed.csv`
+- `data_lake/reports/pit_truth_eligibility_audit_2024_c6_cfg120_fixed.csv`
+- `data_lake/reports/pit_truth_eligibility_audit_2025_c6_cfg120_fixed.csv`
+- `data_lake/reports/fastf1_prepared_pit_stats_2022_2025/fastf1_prepared_pit_events.csv`
+
+## 5) Reproduce Dataset Preparation (Dual-Contract)
+
+### E0 dataset
+
 ```bash
-./run_simulation.sh --year 2023 --race "Italian Grand Prix" --session R --speed 100 --start-lap 1
+.venv/bin/python ml_pipeline/prep_data.py \
+  --data-lake data_lake \
+  --years 2022 2023 2024 2025 \
+  --season-tag season \
+  --output data_lake/ml_training_dataset_2022_2025_dual_contract.parquet \
+  --feature-profile baseline \
+  --track-agnostic-mode off
 ```
 
-Full season(s):
+### P1 dataset
+
 ```bash
-./simulate_season.sh --speed 50
+.venv/bin/python ml_pipeline/prep_data.py \
+  --data-lake data_lake \
+  --years 2022 2023 2024 2025 \
+  --season-tag season \
+  --output data_lake/ml_training_dataset_2022_2025_dual_contract_p1_percent.parquet \
+  --feature-profile percent_conservative_v1 \
+  --track-agnostic-mode track_percentage_v1
 ```
 
-### B) Build dataset + train Batch ML + serving bundle
+## 6) Reproduce Batch ML (Phase 2A matrix)
+
+Use racewise sequential only (`expanding_race_sequential`), no pretrain.
+
 ```bash
-python ml_pipeline/train_model.py --years 2022 2023 2024 2025 --season-tag season
+bash <<'BASH'
+set -euo pipefail
+
+OUT="data_lake/reports/ml_phase2a_dual_contract_2022_2025"
+YEARS=(2022 2023 2024 2025)
+mkdir -p "$OUT"/{oof,leaderboard,eval,by_year,matrix,logs}
+
+run_batch () {
+  local profile="$1"
+  local feature_profile="$2"
+  local dataset="$3"
+  local target="$4"
+  local run_id="${profile}__${target}"
+
+  .venv/bin/python ml_pipeline/train_model.py \
+    --data-lake data_lake \
+    --years "${YEARS[@]}" \
+    --season-tag season \
+    --dataset "$dataset" \
+    --skip-prepare-data \
+    --skip-replay-validation \
+    --split-protocol expanding_race_sequential \
+    --feature-profile "$feature_profile" \
+    --drop-source-year-feature \
+    --target-column "$target" \
+    --leaderboard-output "$OUT/leaderboard/${run_id}.csv" \
+    --oof-output "$OUT/oof/${run_id}.csv" \
+    --skip-serving-bundle
+
+  .venv/bin/python ml_pipeline/evaluate_batch_dual_contract_run.py \
+    --data-lake data_lake \
+    --years "${YEARS[@]}" \
+    --season-tag season \
+    --oof-csv "$OUT/oof/${run_id}.csv" \
+    --target-column "$target" \
+    --profile "$profile" \
+    --prepared-pit-events-csv data_lake/reports/fastf1_prepared_pit_stats_2022_2025/fastf1_prepared_pit_events.csv \
+    --output-summary-csv "$OUT/eval/${run_id}.csv" \
+    --output-by-year-csv "$OUT/by_year/${run_id}.csv"
+}
+
+TARGETS=(
+  target_pit_any_h2_raw
+  target_pit_any_h2_clean_actionable
+  target_pit_any_h2_clean_dry_strategy
+  target_pit_success_h2_raw
+  target_pit_success_h2_clean_actionable
+  target_pit_success_h2_clean_dry_strategy
+)
+
+for t in "${TARGETS[@]}"; do
+  run_batch e0_no_source_year baseline data_lake/ml_training_dataset_2022_2025_dual_contract.parquet "$t"
+  run_batch p1_percent_conservative_v1 percent_conservative_v1 data_lake/ml_training_dataset_2022_2025_dual_contract_p1_percent.parquet "$t"
+done
+BASH
 ```
 
-Main outputs:
-- `data_lake/ml_training_dataset_2022_2025_merged.parquet`
-- `data_lake/reports/ml_ablation_phase31c_2022_2025_merged.csv`
-- `data_lake/reports/ml_oof_winner_2022_2025_merged.csv`
-- `data_lake/models/pit_strategy_serving_bundle.joblib`
+Build compact matrix:
 
-### C) Run streaming ML baseline (MOA ARF)
 ```bash
-python ml_pipeline/export_moa_dataset.py --years 2022 2023 2024 2025 --season-tag season --skip-prepare-data
-python ml_pipeline/run_moa_arf.py --years 2022 2023 2024 2025 --season-tag season
-python ml_pipeline/build_three_way_comparator.py --years 2022 2023 2024 2025 --season-tag season
+bash <<'BASH'
+set -euo pipefail
+OUT="data_lake/reports/ml_phase2a_dual_contract_2022_2025"
+summary_args=()
+by_year_args=()
+for f in "$OUT"/eval/*.csv; do
+  run_id="$(basename "$f" .csv)"
+  y="$OUT/by_year/${run_id}.csv"
+  summary_args+=(--run-summary "${run_id}=${f}")
+  by_year_args+=(--run-by-year "${run_id}=${y}")
+done
+.venv/bin/python ml_pipeline/build_batch_phase2a_matrix.py \
+  "${summary_args[@]}" \
+  "${by_year_args[@]}" \
+  --output-matrix-csv "$OUT/matrix/batch_phase2a_matrix_compact.csv" \
+  --output-by-year-csv "$OUT/matrix/batch_phase2a_matrix_by_year.csv"
+BASH
 ```
 
-### D) Run integrated methodological evaluation
+## 7) Canonical SDE-Truth Universe + Batch Phase 2B Frontier
+
+Build universe CSVs:
+
 ```bash
-python ml_pipeline/evaluate_model.py --years 2022 2023 2024 2025 --season-tag merged
+.venv/bin/python ml_pipeline/build_shared_truth_universe.py \
+  --ml-oof-csv data_lake/reports/ml_phase2a_dual_contract_2022_2025/oof/e0_no_source_year__target_pit_any_h2_raw.csv \
+  --years 2022 2023 2024 2025 \
+  --output-ml-universe-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/audits/ml_universe_2022_2025.csv \
+  --output-sde-universe-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/audits/sde_universe_2022_2025.csv \
+  --output-shared-universe-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/audits/shared_universe_sde_ml_2022_2025.csv \
+  --output-summary-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/audits/shared_universe_summary_2022_2025.csv
 ```
 
-Primary outputs:
-- `data_lake/reports/model_evaluation_2022_2025_merged.csv`
-- `data_lake/reports/model_evaluation_2022_2025_merged.md`
-- `data_lake/reports/integrated_gate_2022_2025_merged.csv`
-- `data_lake/reports/integrated_gate_report_2022_2025_merged.txt`
+Batch Phase 2B threshold frontier (canonical SDE truth):
 
-### E) Generate thesis synthesis reports
 ```bash
-python ml_pipeline/build_thesis_synthesis.py --suffix 2022_2025_merged
-python ml_pipeline/generate_thesis_master_results.py --suffix 2022_2025_merged --racewise-suffix 2022_2025_racewise
+.venv/bin/python ml_pipeline/phase2b_threshold_frontier.py \
+  --data-lake data_lake \
+  --years 2022 2023 2024 2025 \
+  --season-tag season \
+  --oof-dir data_lake/reports/ml_phase2a_dual_contract_2022_2025/oof \
+  --truth-universe-race-driver-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/audits/sde_universe_2022_2025.csv \
+  --truth-universe-events-csvs \
+    data_lake/reports/pit_truth_eligibility_audit_2022_c6_cfg120_fixed.csv \
+    data_lake/reports/pit_truth_eligibility_audit_2023_c6_cfg120_fixed.csv \
+    data_lake/reports/pit_truth_eligibility_audit_2024_c6_cfg120_fixed.csv \
+    data_lake/reports/pit_truth_eligibility_audit_2025_c6_cfg120_fixed.csv \
+  --truth-universe-mode-label canonical_sde_truth \
+  --output-compact-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/frontier/phase2b_threshold_frontier_compact.csv \
+  --output-by-year-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/by_year/phase2b_threshold_frontier_by_year.csv \
+  --output-recommended-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/recommended/phase2b_recommended_operating_points.csv \
+  --output-md data_lake/reports/ml_phase2b_dual_contract_2022_2025/phase2b_threshold_frontier_report.md
 ```
 
-Primary outputs:
-- `data_lake/reports/thesis_synthesis_2022_2025_merged.csv`
-- `data_lake/reports/thesis_synthesis_checks_2022_2025_merged.csv`
-- `data_lake/reports/thesis_synthesis_2022_2025_merged.md`
-- `data_lake/reports/thesis_master_results_2022_2025.md`
+## 8) Reproduce MOA/SML Phase 2B (Canonical + Native Sensitivity)
 
-### F) Generate explainability + figures
+This is the exact orchestrator path used:
+
 ```bash
-python ml_pipeline/explain_shap.py
-python ml_pipeline/explain_moa_shap_proxy.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data_lake/reports/moa_dataset_2022_2025_merged.csv --moa-predictions data_lake/reports/moa_arf_predictions_2022_2025_merged.pred --reports-dir data_lake/reports --min-f1-gain 0.01
-python ml_pipeline/explain_moa_temporal_permutation.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data_lake/reports/moa_dataset_2022_2025_merged.csv --moa-predictions data_lake/reports/moa_arf_predictions_2022_2025_merged.pred --reports-dir data_lake/reports --min-f1-gain 0.01
-python ml_pipeline/plot_temporal_dynamics.py
-python ml_pipeline/plot_discrimination_curves.py --reports-dir data_lake/reports --formats pdf png --suffix 2022_2025
-python ml_pipeline/plot_trust_diagnostics.py
+.venv/bin/python ml_pipeline/run_sml_phase2b_dual_contract.py \
+  --years 2022 2023 2024 2025 \
+  --run-export --run-moa --run-eval --run-matrix --run-frontier --run-prequential \
+  --run-native-sensitivity \
+  --truth-universe-race-driver-csv data_lake/reports/ml_phase2b_dual_contract_2022_2025/audits/sde_universe_2022_2025.csv \
+  --truth-universe-events-csvs \
+    data_lake/reports/pit_truth_eligibility_audit_2022_c6_cfg120_fixed.csv \
+    data_lake/reports/pit_truth_eligibility_audit_2023_c6_cfg120_fixed.csv \
+    data_lake/reports/pit_truth_eligibility_audit_2024_c6_cfg120_fixed.csv \
+    data_lake/reports/pit_truth_eligibility_audit_2025_c6_cfg120_fixed.csv \
+  --moa-jar data_lake/tools/moa.jar \
+  --jobs auto \
+  --resume
 ```
 
-### G) Run live ML consumer on Kafka stream
-```bash
-python ml_pipeline/serve_model.py --bootstrap localhost:9092 --model-bundle data_lake/models/pit_strategy_serving_bundle.joblib
-```
+## 9) Expected Output Roots (Experiment Only)
 
-## 7) Tool-by-Tool Runbook
+- Batch Phase 2A:
+  - `data_lake/reports/ml_phase2a_dual_contract_2022_2025/`
+- Batch Phase 2B frontier:
+  - `data_lake/reports/ml_phase2b_dual_contract_2022_2025/`
+- MOA/SML Phase 2B:
+  - `data_lake/reports/sml_phase2b_dual_contract_2022_2025/`
 
-This is the practical reference for all major tools in the repository.
+## 10) Out Of Scope In This README
 
-### 7.1 Infrastructure and replay tools
+Not included on purpose:
+- figure generation,
+- presentation graph polishing,
+- markdown/image report assembly,
+- thesis-writing helper scripts.
 
-| Tool | Purpose | Typical command | Main outputs |
-|---|---|---|---|
-| `run_simulation.sh` | End-to-end single-race run (build stack, submit Flink, replay race). | `./run_simulation.sh --year 2023 --race "Italian Grand Prix" --speed 100` | JSONL sinks in `data_lake/` + Kafka topics |
-| `simulate_season.sh` | Bulk replay for one or multiple full seasons. | `./simulate_season.sh --year 2024 --speed 50` | Season-level merged JSONL artifacts |
-| `season_data_audit.py` | Data-contract and stream-health audit on raw JSONL outputs. | `python season_data_audit.py --year 2023` | Audit summary (console, optional JSON) |
-| `f1-telemetry-producer/src/prepare_race.py` | Build enriched replay-ready parquet snapshot. | `python .../prepare_race.py --year 2023 --race "Italian Grand Prix" --session R` | Prepared parquet in `data/` |
-| `f1-telemetry-producer/src/stream_race.py` | Event-time replay of prepared race into Kafka. | `python .../stream_race.py --year 2023 --race "Italian Grand Prix" --session R --speed 100` | Kafka events |
-
-### 7.2 ML pipeline tools (top-level)
-
-| Tool | Role | Command skeleton | Main artifacts |
-|---|---|---|---|
-| `ml_pipeline/prep_data.py` | Build leakage-safe training dataset from JSONL streams. | `python ml_pipeline/prep_data.py --years ... --season-tag ...` | `ml_training_dataset_*.parquet` |
-| `ml_pipeline/train_model.py` | Train grouped-CV batch model, policy selection, winner OOF export. | `python ml_pipeline/train_model.py --years ... --season-tag ...` | `ml_ablation_*.csv`, `ml_oof_winner_*.csv`, serving bundle |
-| `ml_pipeline/export_moa_dataset.py` | Export MOA-ready matrix + schema contract. | `python ml_pipeline/export_moa_dataset.py --years ... --season-tag ...` | `moa_dataset_*.csv/.arff/.json` |
-| `ml_pipeline/run_moa_arf.py` | Execute MOA ARF prequential baseline. | `python ml_pipeline/run_moa_arf.py --years ... --season-tag ...` | `moa_arf_*` reports |
-| `ml_pipeline/build_three_way_comparator.py` | Build compact SDE vs Batch vs MOA comparison. | `python ml_pipeline/build_three_way_comparator.py --years ... --season-tag ...` | `three_way_comparator_*.csv/.md` |
-| `ml_pipeline/evaluate_model.py` | Unified evaluation orchestration (significance, threshold, calibration, parity, runtime, integrated gate, closure audits). | `python ml_pipeline/evaluate_model.py --years ... --season-tag ...` | `model_evaluation_*.csv/.md` + all gate artifacts |
-| `ml_pipeline/build_thesis_synthesis.py` | Build thesis-level claim matrix + correctness checks. | `python ml_pipeline/build_thesis_synthesis.py --suffix ...` | `thesis_synthesis_*.csv/.md`, checks csv |
-| `ml_pipeline/generate_thesis_master_results.py` | Build comprehensive thesis master markdown from current artifacts. | `python ml_pipeline/generate_thesis_master_results.py --suffix ... --racewise-suffix ...` | `thesis_master_results_*.md` |
-| `ml_pipeline/explain_shap.py` | Batch model TreeSHAP artifacts. | `python ml_pipeline/explain_shap.py` | `shap_*` plots/tables |
-| `ml_pipeline/explain_moa_shap_proxy.py` | Surrogate SHAP for MOA predictions. | `python ml_pipeline/explain_moa_shap_proxy.py --years ...` | `moa_shap_proxy_*` plots/tables |
-| `ml_pipeline/explain_moa_temporal_permutation.py` | Temporal permutation explainability for MOA. | `python ml_pipeline/explain_moa_temporal_permutation.py --years ...` | `moa_temporal_permutation_*` artifacts |
-| `ml_pipeline/plot_temporal_dynamics.py` | Temporal accuracy/kappa and comparator dynamics plots. | `python ml_pipeline/plot_temporal_dynamics.py` | `paper_fig0..` time-series figures |
-| `ml_pipeline/plot_discrimination_curves.py` | PR curves, PR-AUC tables, and threshold operating points from OOF probabilities. | `python ml_pipeline/plot_discrimination_curves.py --reports-dir ... --suffix 2022_2025` | `pr_metrics_*`, `pr_operating_points_*`, `pr_curves_*` |
-| `ml_pipeline/plot_trust_diagnostics.py` | Calibration + latency trust diagnostics plots. | `python ml_pipeline/plot_trust_diagnostics.py` | `paper_fig2..paper_fig5` |
-| `ml_pipeline/serve_model.py` | Live Kafka inference consumer for online predictions. | `python ml_pipeline/serve_model.py --bootstrap localhost:9092 --model-bundle ...` | `f1-ml-predictions` topic payloads |
-
-### 7.3 Advanced granular evaluation tools (`ml_pipeline/lib`)
-
-Use these directly when you need only one methodological block instead of the full `evaluate_model.py` orchestration.
-
-| Tool | Focus |
-|---|---|
-| `evaluate_significance.py` | SDE vs ML significance tests |
-| `report_sde_ml_comparison.py` | dedicated SDE/ML meeting markdown + summary tables |
-| `evaluate_threshold_frontier.py` | threshold sweep + selected threshold comparator |
-| `evaluate_calibration_policy.py` | reliability + constrained-policy diagnostics |
-| `evaluate_feature_parity.py` | train-serve schema/PIT/parity audits |
-| `evaluate_live_latency.py` | replay latency/availability/overhead audit |
-| `evaluate_integrated_gate.py` | integrated GO/HOLD/NO_GO synthesis |
-| `audit_split_integrity.py` | split protocol and OOF integrity closure checks |
-| `audit_comparator_invariance.py` | comparator fairness/invariance closure checks |
-| `comparator_heuristic.py`, `comparator_ml.py`, `comparator_moa.py` | comparator construction under fixed contract |
-
-## 8) Artifact Navigation (Where to Look for What)
-
-| Question | Primary artifact |
-|---|---|
-| Final thesis master table | `data_lake/reports/thesis_master_results_2022_2025.md` |
-| Unified pass/fail methodological status | `data_lake/reports/model_evaluation_2022_2025_merged.csv` |
-| Integrated deployment decision | `data_lake/reports/integrated_gate_2022_2025_merged.csv` |
-| Statistical significance details | `data_lake/reports/significance_summary_2022_2025_merged.csv`, `.../significance_tests_2022_2025_merged.csv` |
-| Threshold trade-off frontier | `data_lake/reports/threshold_frontier_2022_2025_merged.csv` |
-| Calibration + constrained policy | `data_lake/reports/calibration_policy_summary_2022_2025_merged.csv` |
-| Train-serve feature parity | `data_lake/reports/feature_parity_summary_2022_2025_merged.csv` |
-| Runtime feasibility | `data_lake/reports/live_latency_summary_2022_2025_merged.csv` |
-| Split integrity closure audit | `data_lake/reports/split_integrity_summary_2022_2025_merged.csv` |
-| Comparator invariance closure audit | `data_lake/reports/comparator_invariance_summary_2022_2025_merged.csv` |
-| OOF PR metrics and threshold points | `data_lake/reports/pr_metrics_2022_2025.csv`, `data_lake/reports/pr_operating_points_2022_2025.csv` |
-| OOF PR figures (overall/by-year/panel) | `data_lake/reports/pr_curves_overall_2022_2025.pdf`, `.../pr_curves_by_year_2022_2025.pdf`, `.../pr_curves_panel_2022_2025.pdf` |
-| Batch SHAP explanations | `data_lake/reports/shap_summary.csv`, `shap_feature_importance.csv`, `shap_*.png` |
-| MOA proxy explainability + model sweep | `data_lake/reports/moa_shap_proxy_summary.csv`, `moa_temporal_permutation_summary.csv`, `moa_surrogate_model_sweep.csv` |
-
-## 9) Troubleshooting
-
-### `ModuleNotFoundError: pandas` (or similar)
-Ensure virtualenv is active before running tools:
-```bash
-source .venv/bin/activate
-python <script>.py ...
-```
-
-### `NoBrokersAvailable` in `serve_model.py`
-- Host shell: use `--bootstrap localhost:9092`.
-- Container-to-container traffic: `kafka:29092`.
-
-### MOA run fails (`moa.jar` missing)
-Ensure:
-- `data_lake/tools/moa.jar` exists,
-- Java is available in your runtime path (or use containerized flow).
-
-### Integrated gate returns `NO_GO`
-Check first:
-- `data_lake/reports/model_evaluation_2022_2025_merged.csv`
-- failing rows (`status=FAIL`) and linked artifact paths.
-
-## 10) UI Endpoints
-
-- Flink UI: `http://localhost:8081`
-- Dashboard: `http://localhost:8501`
-
-## 11) Citation Anchors for Thesis Writing
-
-Recommended anchors for methods section:
-- Roberts et al. (2017), Brookshire et al. (2024) for temporal/leakage-safe split protocol.
-- Elkan (2001), Saito & Rehmsmeier (2015), Davis & Goadrich (2006) for imbalance-aware precision-first evaluation.
-- Dietterich (1998), Walters (2022) for comparative test rigor.
-- Brier (1950), Platt (1999), Guo et al. (2017), Kull et al. (2017) for probability calibration interpretation.
+Those are downstream of the core experiment and are not required to reproduce model/data/comparator results.
