@@ -1,125 +1,151 @@
-\chapter{Evaluation Campaign}
-\label{ch:evaluation_campaign}
+\chapter{Experimental Evaluation}
+\label{ch:experimental_evaluation}
 
-\section{Experimental Setup and Parameters}
+\section{Experimental Setup and Frozen Protocol}
 
-\textbf{Skeleton intent.} Freeze the evaluation context before reporting results.
-
+Headline claims are computed under one fixed contract:
 \begin{itemize}
-	\item Seasons and races included in the current freeze (2022--2025 merged protocol).
-	\item Runtime environment and replay assumptions used for reproducibility.
-	\item Fixed comparison contract: horizon $H=2$, actionable-only matching, one-to-one pit consumption.
+    \item seasons: 2022--2025,
+    \item truth universe: \texttt{canonical\_sde\_truth},
+    \item main lens: \texttt{clean\_actionable},
+    \item targets: \texttt{pit\_any\_h2}, corrected \texttt{pit\_success\_h2},
+    \item systems: Flink Strategy Engine, Batch No-Year, Batch Percent, MOA No-Year, MOA Percent.
 \end{itemize}
 
-\section{Validation Protocol and Fairness Contract}
+% TODO: verify all setup statements against:
+% data_lake/reports/phase2b_presentation_figures/final_refresh/final_refresh_input_provenance.csv
 
-\textbf{Skeleton intent.} Document leakage controls and protocol integrity in a review-ready format.
+\section{Metrics and Ledger Semantics}
 
+\subsection{Main metrics}
 \begin{itemize}
-	\item Grouped/temporal split protocol for OOF generation (pretrain and racewise variants).
-	\item Split-integrity and comparator-invariance closure audits.
-	\item Train-serving parity gate and operational guardrails.
+    \item precision, successful-event coverage (recall-like), $F_{0.5}$;
+    \item AP/PR for ranking diagnostics of score-based systems;
+    \item support-aware diagnostics (Kappa, G-Mean, balanced accuracy; optional MCC where explicitly reported).
 \end{itemize}
 
-Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, walters2022comparing, dietterich1998approximate}.
-
-\section{Baseline Definitions and Comparison Axes}
-
-\subsection{Decision-Level Comparator View}
-
-\textbf{Skeleton intent.} Keep this subsection for the final master table narrative.
-
+\subsection{Critical semantic distinction}
 \begin{itemize}
-	\item SDE, Batch ML (base and extended), and MOA are compared under the same comparator contract.
-	\item Final values should be pulled from \texttt{thesis\_master\_results\_2022\_2025.md} and its source CSV files.
-	\item Keep protocol notes explicit: pretrain vs racewise differences and year coverage.
+    \item \textbf{strict operational precision}: used for apples-to-apples comparison;
+    \item \textbf{matched-pit success rate}: diagnostic-only for Flink Strategy Engine strategy quality.
 \end{itemize}
 
-\subsection{OOF Discrimination View (PR Curves and PR-AUC)}
+% TODO: insert compact ledger-definition table with equations from Chapter 3.
 
-\textbf{Skeleton intent.} Distinguish row-level discrimination from decision-level comparator precision.
+\section{Training and Runtime Comparison}
 
+Use runtime evidence from:
 \begin{itemize}
-	\item Report PR curves and PR-AUC (AP as primary) from OOF probabilities.
-	\item Present both overall and per-year views for pretrain and racewise protocols.
-	\item Overlay threshold operating points ($0.50$, $0.10$, $0.05$, constrained median threshold).
-	\item Artifact anchors: \texttt{pr\_metrics\_2022\_2025.csv}, \texttt{pr\_operating\_points\_2022\_2025.csv}, \texttt{pr\_curves\_overall\_2022\_2025.pdf}, \texttt{pr\_curves\_by\_year\_2022\_2025.pdf}, \texttt{pr\_curves\_panel\_2022\_2025.pdf}.
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/training_runtime_slide_table.csv}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/training_runtime_comparison.png}
 \end{itemize}
 
-Suggested references: \citep{saito2015prroc, davis2006relationship, elkan2001costsensitive}.
+% TODO: insert final table
+% TODO: verify that Batch runtime = race-sequential OOF train/eval and MOA runtime = prequential test-then-train only
 
-\subsection{Threshold Frontier and Policy Reliability}
+\section{Flink Strategy Engine Baseline}
 
-\textbf{Skeleton intent.} Keep threshold policy and calibration discussion separated but cross-referenced.
+Summarize the freeze decision and baseline role used in final comparisons.
 
+% TODO: insert compact freeze rationale table (include internal IDs only as artifact provenance)
+% TODO: source check: data_lake/reports/final_sde_c6_cfg120_fixed_raw_clean_aggregate_2022_2025.csv
+
+\section{Headline Result: \texttt{pit\_any\_h2}}
+
+Primary recap source:
 \begin{itemize}
-	\item Threshold frontier as precision-coverage tradeoff evidence.
-	\item Constrained policy diagnostics (precision, recall, fallback behavior).
-	\item Calibration reliability (Brier, ECE, MCE) and operating-point implications.
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_any_final_recap.csv}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_any_headline_comparison.png}
 \end{itemize}
 
-Suggested references: \citep{brier1950verification, platt1999probabilistic, guo2017calibration, kull2017beta}.
+% TODO: insert final figure
+% TODO: verify number from pit_any_final_recap.csv
 
-\section{Streaming Explainability and Surrogate Distillation}
+\section{Accounting Clarification for Decision vs Event Ledgers}
 
-\subsection{Global Surrogate Protocol for MOA}
-
-\textbf{Skeleton intent.} Present MOA explainability as model-agnostic surrogate analysis, not internal attribution.
-
+Use a compact table/diagram to show:
 \begin{itemize}
-	\item Define surrogate target: predict decoded MOA decisions, not ground-truth labels.
-	\item Report model sweep and selected surrogate with fixed selection rule.
-	\item Artifact anchor: \texttt{moa\_surrogate\_model\_sweep.csv}.
+    \item predicted positives and row-level outcomes;
+    \item successful-event coverage denominator and numerator;
+    \item why these ledgers answer different questions.
 \end{itemize}
 
-\subsection{SHAP and Temporal Permutation Views}
+% TODO: insert explanatory table based on final_refresh CSV package.
 
-\textbf{Skeleton intent.} Keep two complementary explainability lenses with explicit fidelity caveat.
+\section{Headline Result: \texttt{pit\_success\_h2} (strict contract)}
 
+\subsection{Apples-to-apples strict operational comparison}
+Source:
 \begin{itemize}
-	\item SHAP on selected surrogate: global bar, beeswarm, dependence diagnostics.
-	\item Temporal permutation importance: global ranking and window-level stability.
-	\item Fidelity metrics to report: accuracy, F1, precision, recall, balanced accuracy.
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_apples_to_apples.csv}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_apples_to_apples_main.png}
 \end{itemize}
 
-Suggested references: \citep{walters2022comparing, hettmann2024datatopodium, sasikumar2025pitstop, dinh2025gradient}.
-
-\subsection{\texttt{\_source\_year} Deployment Note}
-
-\textbf{Skeleton intent.} Keep this as a methodological caveat and forward-compatibility note.
-
+\subsection{Flink diagnostic vs operational precision}
+Source:
 \begin{itemize}
-	\item Clarify why \texttt{\_source\_year} appears in global importance rankings.
-	\item Document no-retrain technical validation in offline and serving paths.
-	\item Reserve ablation/remapping (for example \texttt{years\_since\_2022}) as future controlled experiment.
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_sde_diagnostic.csv}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_sde_diagnostic_operational_vs_matched.png}
 \end{itemize}
 
-\section{Operational Feasibility and Integrated Gates}
+% TODO: insert both figures
+% TODO: explicitly state that matched-pit success rate is not main precision
 
-\textbf{Skeleton intent.} Summarize runtime viability and gate decisions without overclaiming.
+\section{Threshold-Policy Sensitivity}
 
+Source:
 \begin{itemize}
-	\item Latency/availability diagnostics from trust and runtime artifacts.
-	\item Integrated gate status and residual risks (for example split-integrity gate behavior).
-	\item Keep claim boundaries explicit: what is validated now vs deferred work.
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_threshold_sensitivity.csv}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_threshold_sensitivity_slide.csv}
 \end{itemize}
 
-\section{Error Analysis and Limitations}
-
-\textbf{Skeleton intent.} Keep failure-mode analysis structured and evidence-linked.
-
+Interpretation rule:
 \begin{itemize}
-	\item Comparator exclusions by reason and horizon limitations.
-	\item Drift-sensitivity and unresolved-context limitations.
-	\item Pairing/overlap limitations for inferential tests.
+    \item selected points are operational;
+    \item relaxed points are diagnostic sensitivity unless policy is explicitly changed.
 \end{itemize}
 
-\section{Discussion and Takeaways}
+\section{PR/AP Ranking Diagnostics}
 
-\textbf{Skeleton intent.} Close with methodology-first interpretation.
+Sources:
+\begin{itemize}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pr_curve_pit_any_final.png}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pr_curve_pit_success_final.png}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/ap_summary_final.csv}
+\end{itemize}
+
+% TODO: insert PR figures with caption:
+% "row-level ranking diagnostic, not operational precision"
+
+\section{Support-Aware Race-Level Diagnostics}
+
+Sources:
+\begin{itemize}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_kappa_pit_any.png}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_gmean_pit_any.png}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_kappa_pit_success.png}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_gmean_pit_success.png}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_support_summary.csv}
+    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_metric_summary.csv}
+\end{itemize}
+
+% TODO: insert figures and state support filter threshold explicitly in text (not just in captions).
+
+\section{Explainability Results}
+
+Use corrected final explainability outputs only.
+
+% TODO: insert final_refresh explainability figure(s) and path(s) once frozen
+% TODO: verify direct Batch SHAP vs MOA surrogate SHAP semantics before writing conclusions
+
+\section{Threats to Validity}
 
 \begin{itemize}
-	\item Separate decision-quality findings (comparator view) from discrimination findings (OOF PR view).
-	\item Position MOA surrogate results as behavioral explanation under fidelity constraints.
-	\item State exactly which artifacts support each thesis claim.
+    \item support sparsity (especially \texttt{pit\_success\_h2}) and race-level metric volatility;
+    \item contract-policy coupling (threshold choice materially changes operating behavior);
+    \item comparator assumptions and horizon strictness;
+    \item surrogate explainability limitations for streaming models.
 \end{itemize}
+
+\paragraph{Writing note.}
+Every reported value in this chapter must be traceable to files in \path{data_lake/reports/phase2b_presentation_figures/final_refresh/}. Do not use ad-hoc markdown snapshots as authoritative numeric sources.

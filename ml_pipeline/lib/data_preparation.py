@@ -50,6 +50,38 @@ POSITIVE_RESULTS = {
     "OFFSET_ADVANTAGE",
 }
 
+NEGATIVE_RESULTS = {
+    "FAILURE_PACE_DEFICIT",
+    "FAILURE_TRAFFIC",
+    "OFFSET_DISADVANTAGE",
+}
+
+
+def _classify_pit_success_outcomes(values: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Classify normalized pit-eval outcomes for pit_success_h2 label construction.
+
+    Returns boolean masks `(is_success, is_failure, is_unknown)` where:
+    - success: `SUCCESS_*` or `OFFSET_ADVANTAGE`
+    - failure: `FAILURE_*` or `OFFSET_DISADVANTAGE`
+    - unknown: anything else (UNRESOLVED_*, UNMAPPED_*, WEATHER_SURVIVAL_STOP, etc.)
+    """
+    series = (
+        pd.Series(values, copy=False)
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .str.replace(" ", "_", regex=False)
+    )
+    is_success = series.str.startswith("SUCCESS_") | series.eq("OFFSET_ADVANTAGE")
+    is_failure = series.str.startswith("FAILURE_") | series.eq("OFFSET_DISADVANTAGE")
+    is_unknown = ~(is_success | is_failure)
+    return (
+        is_success.to_numpy(dtype=bool),
+        is_failure.to_numpy(dtype=bool),
+        is_unknown.to_numpy(dtype=bool),
+    )
+
 REQUIRED_FEATURE_COLUMNS = [
     "race",
     "driver",
@@ -677,6 +709,7 @@ def _build_targets(
     dataset["target_pit_any_h2_raw"] = 0
     dataset["target_pit_any_h2_clean_actionable"] = 0
     dataset["target_pit_any_h2_clean_dry_strategy"] = 0
+    dataset["target_pit_success_h2_raw_train_eligible"] = True
     dataset["target_pit_success_h2_clean_actionable_train_eligible"] = True
     dataset["target_pit_success_h2_clean_dry_strategy_train_eligible"] = True
 
@@ -759,8 +792,6 @@ def _build_targets(
         pit_out_times = pd.to_numeric(grp["pitOutTime"], errors="coerce").to_numpy(dtype=float)
         grouped_any_pits[(race_key, driver_key)] = (laps, pit_in_times, pit_out_times)
 
-    positive_array = np.array(sorted(POSITIVE_RESULTS), dtype=object)
-
     for key, idx in dataset.groupby(["race", "driver"], sort=False).groups.items():
         if not isinstance(key, tuple) or len(key) != 2:
             continue
@@ -781,7 +812,12 @@ def _build_targets(
                 candidate_laps = pit_laps[safe_idx]
                 in_window = valid & (candidate_laps <= (row_laps + horizon))
                 candidate_results = pit_results[safe_idx]
-                positive_mask = in_window & np.isin(candidate_results, positive_array)
+                success_any, failure_any, unknown_any = _classify_pit_success_outcomes(
+                    candidate_results
+                )
+                positive_mask = in_window & success_any
+                negative_mask = in_window & failure_any
+                unknown_mask = in_window & unknown_any
 
                 dataset.loc[row_idx, "target_pit_success_h2_raw"] = positive_mask.astype(int)
                 dataset.loc[row_idx, "matched_pit_lap_success"] = np.where(
@@ -815,6 +851,19 @@ def _build_targets(
 
                 dataset.loc[row_idx, "target_pit_success_h2_clean_actionable"] = clean_actionable_mask.astype(int)
                 dataset.loc[row_idx, "target_pit_success_h2_clean_dry_strategy"] = clean_dry_mask.astype(int)
+                if unknown_mask.any():
+                    dataset.loc[
+                        row_idx[unknown_mask],
+                        "target_pit_success_h2_raw_train_eligible",
+                    ] = False
+                    dataset.loc[
+                        row_idx[unknown_mask],
+                        "target_pit_success_h2_clean_actionable_train_eligible",
+                    ] = False
+                    dataset.loc[
+                        row_idx[unknown_mask],
+                        "target_pit_success_h2_clean_dry_strategy_train_eligible",
+                    ] = False
                 if demoted_clean_actionable.any():
                     dataset.loc[
                         row_idx[demoted_clean_actionable],
@@ -876,6 +925,9 @@ def _build_targets(
     dataset["target_pit_any_h2_raw"] = dataset["target_pit_any_h2_raw"].astype(int)
     dataset["target_pit_any_h2_clean_actionable"] = dataset["target_pit_any_h2_clean_actionable"].astype(int)
     dataset["target_pit_any_h2_clean_dry_strategy"] = dataset["target_pit_any_h2_clean_dry_strategy"].astype(int)
+    dataset["target_pit_success_h2_raw_train_eligible"] = (
+        dataset["target_pit_success_h2_raw_train_eligible"].astype(bool)
+    )
     dataset["target_pit_success_h2_clean_actionable_train_eligible"] = (
         dataset["target_pit_success_h2_clean_actionable_train_eligible"].astype(bool)
     )

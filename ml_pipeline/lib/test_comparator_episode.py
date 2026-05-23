@@ -8,12 +8,18 @@ import pandas as pd
 
 try:
     from comparator_heuristic import (
+        ACTIONABLE_MODE_GOOD_PIT_ONLY,
+        ACTIONABLE_MODE_PIT_NOW_ONLY,
+        ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
         OUTCOME_PIT_ANY_H2,
         OUTCOME_PIT_SUCCESS_H2,
         _build_comparator_dataset,
     )
 except ImportError:
     from ml_pipeline.lib.comparator_heuristic import (  # type: ignore
+        ACTIONABLE_MODE_GOOD_PIT_ONLY,
+        ACTIONABLE_MODE_PIT_NOW_ONLY,
+        ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
         OUTCOME_PIT_ANY_H2,
         OUTCOME_PIT_SUCCESS_H2,
         _build_comparator_dataset,
@@ -75,6 +81,7 @@ class ComparatorEpisodeTest(unittest.TestCase):
             outcome_mode=OUTCOME_PIT_SUCCESS_H2,
             pit_timings=pit_timings,
             episode_level=True,
+            episode_cooldown_laps=2,
         )
 
         self.assertEqual(len(row_level), 3)
@@ -111,6 +118,7 @@ class ComparatorEpisodeTest(unittest.TestCase):
             outcome_mode=OUTCOME_PIT_SUCCESS_H2,
             pit_timings=pit_timings,
             episode_level=True,
+            episode_cooldown_laps=5,
         )
 
         self.assertEqual(len(episode_level), 2)
@@ -137,6 +145,57 @@ class ComparatorEpisodeTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(str(result.iloc[0]["outcome_class"]), "0")
         self.assertEqual(str(result.iloc[0]["exclusion_reason"]), "")
+
+    def test_episode_cooldown_independent_from_horizon(self) -> None:
+        suggestions = self._base_suggestions()
+        pit_evals = self._base_pit_evals()
+        pit_timings = self._base_pit_timings()
+
+        episode_level = _build_comparator_dataset(
+            suggestions,
+            pit_evals,
+            horizon=2,
+            outcome_mode=OUTCOME_PIT_SUCCESS_H2,
+            pit_timings=pit_timings,
+            episode_level=True,
+            episode_cooldown_laps=5,
+        )
+        self.assertEqual(len(episode_level), 1)
+        self.assertListEqual(episode_level["suggestion_lap"].astype(int).tolist(), [10])
+
+    def test_actionable_modes_filter_labels(self) -> None:
+        suggestions = self._base_suggestions()
+        pit_evals = self._base_pit_evals()
+        pit_timings = self._base_pit_timings()
+
+        pit_now_only = _build_comparator_dataset(
+            suggestions,
+            pit_evals,
+            horizon=2,
+            outcome_mode=OUTCOME_PIT_SUCCESS_H2,
+            pit_timings=pit_timings,
+            actionable_mode=ACTIONABLE_MODE_PIT_NOW_ONLY,
+        )
+        good_only = _build_comparator_dataset(
+            suggestions,
+            pit_evals,
+            horizon=2,
+            outcome_mode=OUTCOME_PIT_SUCCESS_H2,
+            pit_timings=pit_timings,
+            actionable_mode=ACTIONABLE_MODE_GOOD_PIT_ONLY,
+        )
+        both = _build_comparator_dataset(
+            suggestions,
+            pit_evals,
+            horizon=2,
+            outcome_mode=OUTCOME_PIT_SUCCESS_H2,
+            pit_timings=pit_timings,
+            actionable_mode=ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
+        )
+
+        self.assertListEqual(sorted(pit_now_only["suggestion_label"].unique().tolist()), ["PIT_NOW"])
+        self.assertListEqual(sorted(good_only["suggestion_label"].unique().tolist()), ["GOOD_PIT"])
+        self.assertSetEqual(set(both["suggestion_label"].unique().tolist()), {"PIT_NOW", "GOOD_PIT"})
 
 
 if __name__ == "__main__":

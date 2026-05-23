@@ -1,0 +1,5 @@
+system,threshold,predicted positives,strict precision,successful event coverage,F0.5,notes
+Batch Percent,0.51,51,0.196078431372549,0.0094696969696969,0.0396825396825396,selected operating point
+Batch Percent,0.22,844,0.1054502369668246,0.0833333333333333,0.1001350135013501,relaxed diagnostic point; diagnostic-only relaxed threshold
+MOA Percent,0.58,86,0.3647058823529411,0.0293560606060606,0.1110315186246418,selected operating point
+MOA Percent,0.51,900,0.2046718576195773,0.168560606060606,0.1962626679066913,relaxed diagnostic point; diagnostic-only relaxed threshold

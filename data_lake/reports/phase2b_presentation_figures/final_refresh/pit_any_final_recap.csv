@@ -1,0 +1,6 @@
+System,learning_mode,target,selected_threshold,precision,event_recall,F0.5,AP,notes
+Flink Strategy Engine,deterministic streaming rule,pit_any_h2,rule,0.270573566084788,0.0711942257217847,0.1734335038363171,,Rule baseline (no score threshold).
+Batch No-Year,offline batch ML (OOF),pit_any_h2,0.2,0.2044491525423729,0.1220472440944882,0.1801262057587398,0.1313431335842949,selected operating point
+Batch Percent,offline batch ML (OOF),pit_any_h2,0.19,0.2417962003454231,0.2198162729658792,0.2370554578354663,0.190227676027072,selected operating point
+MOA No-Year,online MOA prequential,pit_any_h2,0.53,0.3495838287752675,0.1833989501312335,0.2959495611160172,0.1609068416758102,selected operating point
+MOA Percent,online MOA prequential,pit_any_h2,0.53,0.3441176470588235,0.1820866141732283,0.2921273402578332,0.1951140264893589,selected operating point

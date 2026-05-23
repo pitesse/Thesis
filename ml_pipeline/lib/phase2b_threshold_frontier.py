@@ -16,6 +16,8 @@ from sklearn.metrics import average_precision_score
 
 try:
     from .comparator_heuristic import (
+        ACTIONABLE_MODE_PIT_NOW_ONLY,
+        ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
         OUTCOME_PIT_ANY_H2,
         _build_comparator_dataset,
         _latest_jsonl,
@@ -41,6 +43,8 @@ except ImportError:
             sys.path.insert(0, _path_text)
 
     from comparator_heuristic import (  # type: ignore
+        ACTIONABLE_MODE_PIT_NOW_ONLY,
+        ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
         OUTCOME_PIT_ANY_H2,
         _build_comparator_dataset,
         _latest_jsonl,
@@ -188,7 +192,7 @@ def _render_md(
     lines.append(f"- Universe mode: `{universe_mode_label}`")
     lines.append("- Comparator contracts:")
     lines.append("  - `pit_any_h2`: episode_level + pit_now_only + H=2")
-    lines.append("  - `pit_success_h2`: row_level + pit_now_plus_good_pit + H=2")
+    lines.append("  - `pit_success_h2`: row_level + pit_now_only + H=2 (strict future default)")
     lines.append("")
     lines.append("## Recommended Operating Points")
     lines.append(
@@ -222,7 +226,7 @@ def _render_md(
             "Threshold frontier for those runs is diagnostic only."
         )
         lines.append("")
-    lines.append("Notes: `row_tp` is row-level TP for precision; `tp_for_recall` is event-level TP for recall.")
+    lines.append("Notes: `row_tp` is row-level TP for precision; `tp_for_recall` is event-level successful-pit coverage for pit_success_h2.")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -255,6 +259,23 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--min-scored-pit-any", type=int, default=60)
     parser.add_argument("--min-scored-pit-success", type=int, default=40)
+    parser.add_argument(
+        "--pit-success-include-same-lap",
+        action="store_true",
+        help=(
+            "when set, pit_success_h2 comparator matching uses [k,k+H]; "
+            "default is strict-future [k+1,k+H]"
+        ),
+    )
+    parser.add_argument(
+        "--pit-success-actionable-mode",
+        choices=[ACTIONABLE_MODE_PIT_NOW_ONLY, ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT],
+        default=ACTIONABLE_MODE_PIT_NOW_ONLY,
+        help=(
+            "action label set for pit_success_h2 comparator rows; "
+            "default is PIT_NOW only, use pit_now_plus_good_pit for sensitivity runs"
+        ),
+    )
 
     parser.add_argument("--output-compact-csv", required=True)
     parser.add_argument("--output-by-year-csv", required=True)
@@ -316,6 +337,23 @@ def main() -> None:
             raise ValueError(f"oof csv missing target_y: {oof_path}")
         profile, target_column = _run_id_parts(run_id, oof)
         spec = _target_to_contract(target_column)
+        if spec.outcome_mode != OUTCOME_PIT_ANY_H2:
+            spec = type(spec)(
+                outcome_mode=spec.outcome_mode,
+                view=spec.view,
+                actionable_mode=str(args.pit_success_actionable_mode),
+                truth_lens=spec.truth_lens,
+            )
+        include_same_lap = (
+            True
+            if spec.outcome_mode == OUTCOME_PIT_ANY_H2
+            else bool(args.pit_success_include_same_lap)
+        )
+        window_semantics = (
+            "official_same_lap_inclusive"
+            if include_same_lap
+            else "strict_future_kplus1_to_kplusH"
+        )
 
         y_true = pd.to_numeric(oof["target_y"], errors="coerce").fillna(0).astype(int)
         rows = int(len(y_true))
@@ -393,7 +431,8 @@ def main() -> None:
                 pit_timings=pit_timings if spec.outcome_mode == OUTCOME_PIT_ANY_H2 else None,
                 actionable_mode=spec.actionable_mode,
                 episode_level=(spec.view == "episode_level"),
-                include_same_lap=True,
+                include_same_lap=include_same_lap,
+                pit_success_no_match_as_negative=True,
             )
             row = _build_metrics_row(
                 comparator=comparator,
@@ -407,6 +446,7 @@ def main() -> None:
                 positives=positives,
                 prevalence=prevalence,
                 selected_threshold=float(threshold),
+                window_semantics=window_semantics,
             )
             row["run_id"] = run_id
             row["score_column"] = args.score_column
@@ -450,6 +490,7 @@ def main() -> None:
                         positives=pos_y,
                         prevalence=prev_y,
                         selected_threshold=float(threshold),
+                        window_semantics=window_semantics,
                     )
                     row_y["year"] = int(year)
                     row_y["run_id"] = run_id

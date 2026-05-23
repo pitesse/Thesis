@@ -12,8 +12,11 @@ from pathlib import Path
 import pandas as pd
 
 from .comparator_heuristic import (
+    ACTIONABLE_MODES,
     DEFAULT_DATA_LAKE,
     DEFAULT_HORIZON,
+    DEFAULT_ACTIONABLE_MODE,
+    DEFAULT_EPISODE_COOLDOWN_LAPS,
     DEFAULT_SEASON_TAG,
     DEFAULT_YEAR,
     OUTCOME_MODES,
@@ -91,6 +94,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decision-column", default=DEFAULT_DECISION_COLUMN, help="binary decision column")
     parser.add_argument("--score-column", default=DEFAULT_SCORE_COLUMN, help="score/probability column")
     parser.add_argument("--actionable-label", default=DEFAULT_ACTIONABLE_LABEL, help="label assigned to ML actions")
+    parser.add_argument(
+        "--actionable-mode",
+        choices=sorted(ACTIONABLE_MODES),
+        default=DEFAULT_ACTIONABLE_MODE,
+        help="which suggestion labels are treated as actionable during comparator scoring",
+    )
+    parser.add_argument(
+        "--episode-cooldown-laps",
+        type=int,
+        default=DEFAULT_EPISODE_COOLDOWN_LAPS,
+        help="episode suppression cooldown in laps for episode-level comparator view",
+    )
+    parser.add_argument(
+        "--strict-future",
+        action="store_true",
+        help="diagnostic mode only: match in [suggestion_lap+1, suggestion_lap+h] instead of including same lap",
+    )
     parser.add_argument("--data-lake", default=DEFAULT_DATA_LAKE, help="data lake directory")
     parser.add_argument("--year", type=int, default=DEFAULT_YEAR, help="season year")
     parser.add_argument("--season-tag", default=DEFAULT_SEASON_TAG, help="season tag token")
@@ -148,6 +168,8 @@ def main() -> None:
         args.horizon,
         outcome_mode=args.outcome_mode,
         pit_timings=pit_timings_df,
+        actionable_mode=args.actionable_mode,
+        include_same_lap=not args.strict_future,
     )
     episode_comparator: pd.DataFrame | None = None
     episode_output_path: Path | None = None
@@ -158,7 +180,10 @@ def main() -> None:
             args.horizon,
             outcome_mode=args.outcome_mode,
             pit_timings=pit_timings_df,
+            actionable_mode=args.actionable_mode,
             episode_level=True,
+            episode_cooldown_laps=args.episode_cooldown_laps,
+            include_same_lap=not args.strict_future,
         )
 
     output_path = Path(args.output)
@@ -179,10 +204,17 @@ def main() -> None:
     if pit_timings_path is not None:
         print(f"pit timings input: {pit_timings_path}")
     print(f"outcome mode     : {args.outcome_mode}")
+    print(f"actionable mode  : {args.actionable_mode}")
+    print(f"strict future    : {args.strict_future}")
     print(f"output csv       : {output_path}")
     if episode_output_path is not None:
         print(f"episode csv      : {episode_output_path}")
-    _print_summary(comparator, suggestions, args.horizon)
+    _print_summary(
+        comparator,
+        suggestions,
+        args.horizon,
+        actionable_mode=args.actionable_mode,
+    )
 
 
 if __name__ == "__main__":

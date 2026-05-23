@@ -86,17 +86,31 @@ def _resolve_inputs(args: argparse.Namespace) -> tuple[Path, Path]:
         dataset_csv = _resolve_path(Path.cwd(), args.moa_dataset_csv)
         pred_path = _resolve_path(Path.cwd(), args.moa_predictions)
     else:
+        dataset_csv = Path("")
+        pred_path = Path("")
         summary_csv = reports_dir / "moa_shap_proxy_summary.csv"
-        if not summary_csv.exists():
+        if summary_csv.exists():
+            summary = pd.read_csv(summary_csv)
+            if not summary.empty:
+                row = summary.iloc[0]
+                dataset_csv = _resolve_path(Path.cwd(), str(row["dataset_csv"]))
+                pred_path = _resolve_path(Path.cwd(), str(row["predictions_file"]))
+                if dataset_csv.exists() and pred_path.exists():
+                    return dataset_csv, pred_path
+
+        datasets = sorted(reports_dir.glob("moa_dataset_*.csv"))
+        preds = sorted(reports_dir.glob("moa_arf_predictions_*.pred"))
+        if len(datasets) == 1 and len(preds) == 1:
+            return datasets[0], preds[0]
+
+        if summary_csv.exists():
             raise FileNotFoundError(
-                "moa_shap_proxy_summary.csv not found and explicit --moa-dataset-csv/--moa-predictions not provided"
+                "moa_shap_proxy_summary.csv exists but resolved inputs are missing; "
+                "and fallback dataset/prediction files are ambiguous or absent"
             )
-        summary = pd.read_csv(summary_csv)
-        if summary.empty:
-            raise ValueError(f"empty summary file: {summary_csv}")
-        row = summary.iloc[0]
-        dataset_csv = _resolve_path(Path.cwd(), str(row["dataset_csv"]))
-        pred_path = _resolve_path(Path.cwd(), str(row["predictions_file"]))
+        raise FileNotFoundError(
+            "moa_shap_proxy_summary.csv not found and explicit --moa-dataset-csv/--moa-predictions not provided"
+        )
 
     if not dataset_csv.exists():
         raise FileNotFoundError(f"MOA dataset csv not found: {dataset_csv}")

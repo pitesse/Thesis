@@ -17,6 +17,7 @@ try:
         ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
         OUTCOME_PIT_ANY_H2,
         OUTCOME_PIT_SUCCESS_H2,
+        POSITIVE_RESULTS,
         _build_comparator_dataset,
         _latest_jsonl,
         _load_jsonl,
@@ -25,6 +26,7 @@ try:
         build_pit_truth_universe,
         eligible_actual_counts,
         eligible_pit_key_set,
+        lens_flag_column,
         load_prepared_events_from_csv,
         regime_from_status,
     )
@@ -44,6 +46,7 @@ except ImportError:
         ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
         OUTCOME_PIT_ANY_H2,
         OUTCOME_PIT_SUCCESS_H2,
+        POSITIVE_RESULTS,
         _build_comparator_dataset,
         _latest_jsonl,
         _load_jsonl,
@@ -52,6 +55,7 @@ except ImportError:
         build_pit_truth_universe,
         eligible_actual_counts,
         eligible_pit_key_set,
+        lens_flag_column,
         load_prepared_events_from_csv,
         regime_from_status,
     )
@@ -84,7 +88,7 @@ def _target_to_contract(target_column: str) -> ContractSpec:
         return ContractSpec(
             outcome_mode=OUTCOME_PIT_SUCCESS_H2,
             view="row_level",
-            actionable_mode=ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
+            actionable_mode=ACTIONABLE_MODE_PIT_NOW_ONLY,
             truth_lens=truth_lens,
         )
     raise ValueError(
@@ -235,6 +239,7 @@ def _build_metrics_row(
     positives: int,
     prevalence: float,
     selected_threshold: float,
+    window_semantics: str = "official_same_lap_inclusive",
 ) -> dict[str, object]:
     def _safe_div(num: float, den: float) -> float:
         return float(num / den) if den else 0.0
@@ -250,36 +255,84 @@ def _build_metrics_row(
     work["regime"] = work["trackStatus"].map(regime_from_status)
 
     scored = work[work["outcome_class"].isin(["1", "0"])].copy()
+    excluded = work[work["outcome_class"] == "EXCLUDED"].copy()
     row_tp = int((scored["outcome_class"] == "1").sum())
     fp = int((scored["outcome_class"] == "0").sum())
+    predicted_positive_rows = int(len(work))
+    unknown_excluded_rows = int(len(excluded))
+    unknown_excluded_rate = _safe_div(unknown_excluded_rows, predicted_positive_rows)
+    no_match_fp_rows = int(
+        (
+            scored["exclusion_reason"].astype(str).str.upper().eq("NO_MATCH_WITHIN_HORIZON")
+            & scored["outcome_class"].astype(str).eq("0")
+        ).sum()
+    )
     precision = _safe_div(row_tp, row_tp + fp)
 
-    matched_keys: set[tuple[str, str, int]] = set()
+    eligible_keys = eligible_pit_key_set(pit_truth_universe, truth_lens=spec.truth_lens, regime="ALL")
+    _, eligible_actual_pit_count = eligible_actual_counts(pit_truth_universe, truth_lens=spec.truth_lens, regime="ALL")
+
+    def _normalize_result(series: pd.Series) -> pd.Series:
+        return (
+            series.astype(str)
+            .str.strip()
+            .str.upper()
+            .str.replace(" ", "_", regex=False)
+        )
+
+    matched_success_keys: set[tuple[str, str, int]] = set()
+    matched_any_keys: set[tuple[str, str, int]] = set()
     matched_rows = work[work["matched_pit_lap"].notna()].copy()
     if not matched_rows.empty:
         for _, row in matched_rows.iterrows():
-            matched_keys.add((str(row["race"]), str(row["driver"]), int(row["matched_pit_lap"])))
+            matched_any_keys.add((str(row["race"]), str(row["driver"]), int(row["matched_pit_lap"])))
+        matched_success_rows = work[
+            (work["outcome_class"].astype(str) == "1") & work["matched_pit_lap"].notna()
+        ].copy()
+        if not matched_success_rows.empty:
+            for _, row in matched_success_rows.iterrows():
+                matched_success_keys.add((str(row["race"]), str(row["driver"]), int(row["matched_pit_lap"])))
 
-    eligible_keys = eligible_pit_key_set(
-        pit_truth_universe,
-        truth_lens=spec.truth_lens,
-        regime="ALL",
-    )
-    tp_for_recall = int(len(matched_keys & eligible_keys))
-    _, eligible_actual_pit_count = eligible_actual_counts(
-        pit_truth_universe,
-        truth_lens=spec.truth_lens,
-        regime="ALL",
-    )
-    fn = max(eligible_actual_pit_count - tp_for_recall, 0)
-    recall = _safe_div(tp_for_recall, eligible_actual_pit_count)
+    if spec.outcome_mode == OUTCOME_PIT_SUCCESS_H2:
+        eligible_actual_success_count = int(eligible_actual_pit_count)
+        eligible_success_keys = eligible_keys
+        required_cols = {"race", "driver", "pit_lap_num", "result"}
+        if required_cols.issubset(set(pit_truth_universe.columns)):
+            flag_col = lens_flag_column(spec.truth_lens)
+            eligible_truth = pit_truth_universe[
+                (pit_truth_universe["eligible_universe"] == True)  # noqa: E712
+                & (pit_truth_universe[flag_col] == True)  # noqa: E712
+            ].copy()
+            result_norm = _normalize_result(eligible_truth["result"])
+            eligible_truth = eligible_truth[result_norm.isin(POSITIVE_RESULTS)].copy()
+            eligible_truth["pit_lap_num"] = pd.to_numeric(
+                eligible_truth["pit_lap_num"], errors="coerce"
+            )
+            eligible_truth = eligible_truth[eligible_truth["pit_lap_num"].notna()].copy()
+            eligible_success_keys = set(
+                (str(race), str(driver), int(lap))
+                for race, driver, lap in eligible_truth[["race", "driver", "pit_lap_num"]].itertuples(index=False, name=None)
+            )
+            eligible_actual_success_count = int(len(eligible_success_keys))
+        tp_for_recall = int(len(matched_success_keys & eligible_success_keys))
+        fn = max(eligible_actual_success_count - tp_for_recall, 0)
+        recall = _safe_div(tp_for_recall, eligible_actual_success_count)
+        recall_count_mode = "event_level_successful_pits"
+        successful_events_covered = int(tp_for_recall)
+        eligible_successful_events = int(eligible_actual_success_count)
+    else:
+        tp_for_recall = int(len(matched_any_keys & eligible_keys))
+        fn = max(eligible_actual_pit_count - tp_for_recall, 0)
+        recall = _safe_div(tp_for_recall, eligible_actual_pit_count)
+        recall_count_mode = "event_level_unique_pits"
+        successful_events_covered = int(tp_for_recall)
+        eligible_successful_events = int(eligible_actual_pit_count)
+
     f1 = _f_beta(precision, recall, beta=1.0)
     f05 = _f_beta(precision, recall, beta=0.5)
-    tp_for_recall_plus_fn_equals_eligible = bool(
-        (tp_for_recall + fn) == eligible_actual_pit_count
-    )
+    tp_for_recall_plus_fn_equals_eligible = bool((tp_for_recall + fn) == eligible_successful_events)
     row_tp_plus_fn_equals_eligible = bool(
-        (row_tp + fn) == eligible_actual_pit_count
+        (row_tp + fn) == eligible_successful_events
     )
 
     return {
@@ -290,7 +343,7 @@ def _build_metrics_row(
         "view": spec.view,
         "actionable_mode": spec.actionable_mode,
         "horizon": 2,
-        "window_semantics": "official_same_lap_inclusive",
+        "window_semantics": str(window_semantics),
         "rows": int(rows),
         "positives": int(positives),
         "prevalence": float(prevalence),
@@ -305,15 +358,22 @@ def _build_metrics_row(
         "fp": int(fp),
         "fn": int(fn),
         "scored": int(len(scored)),
+        "predicted_positive_rows": int(predicted_positive_rows),
+        "no_match_fp_rows": int(no_match_fp_rows),
+        "unknown_excluded_rows": int(unknown_excluded_rows),
+        "unknown_excluded_rate": float(unknown_excluded_rate),
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
         "f0_5": float(f05),
-        "eligible_actual_pit_count": int(eligible_actual_pit_count),
+        "successful_events_covered": int(successful_events_covered),
+        "eligible_successful_events": int(eligible_successful_events),
+        "successful_event_coverage": float(recall),
+        "eligible_actual_pit_count": int(eligible_successful_events),
         "comparator_actual_count": int(tp_for_recall + fn),
         "tp_for_recall_plus_fn_equals_eligible": tp_for_recall_plus_fn_equals_eligible,
         "row_tp_plus_fn_equals_eligible": row_tp_plus_fn_equals_eligible,
-        "recall_count_mode": "event_level_unique_pits",
+        "recall_count_mode": recall_count_mode,
     }
 
 
@@ -347,6 +407,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-summary-csv", required=True)
     parser.add_argument("--output-by-year-csv", required=True)
+    parser.add_argument(
+        "--pit-success-include-same-lap",
+        action="store_true",
+        help=(
+            "when set, pit_success_h2 comparator matching uses [k,k+H]; "
+            "default is strict-future [k+1,k+H]"
+        ),
+    )
+    parser.add_argument(
+        "--pit-success-actionable-mode",
+        choices=[ACTIONABLE_MODE_PIT_NOW_ONLY, ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT],
+        default=ACTIONABLE_MODE_PIT_NOW_ONLY,
+        help=(
+            "action label set for pit_success_h2 comparator rows; "
+            "default is PIT_NOW only, use pit_now_plus_good_pit for sensitivity runs"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -357,6 +434,13 @@ def main() -> None:
     comparator_year, comparator_tag = comparator_source_year_and_tag(years, args.season_tag)
 
     spec = _target_to_contract(args.target_column)
+    if spec.outcome_mode == OUTCOME_PIT_SUCCESS_H2:
+        spec = ContractSpec(
+            outcome_mode=spec.outcome_mode,
+            view=spec.view,
+            actionable_mode=str(args.pit_success_actionable_mode),
+            truth_lens=spec.truth_lens,
+        )
 
     oof_path = Path(args.oof_csv)
     oof = pd.read_csv(oof_path)
@@ -459,6 +543,17 @@ def main() -> None:
             split_tag=f"batch_{args.profile}_{args.target_column}",
         )
 
+    include_same_lap = (
+        True
+        if spec.outcome_mode == OUTCOME_PIT_ANY_H2
+        else bool(args.pit_success_include_same_lap)
+    )
+    window_semantics = (
+        "official_same_lap_inclusive"
+        if include_same_lap
+        else "strict_future_kplus1_to_kplusH"
+    )
+
     comparator = _build_comparator_dataset(
         suggestions=suggestions,
         pit_evals=pit_evals,
@@ -467,7 +562,8 @@ def main() -> None:
         pit_timings=pit_timings if spec.outcome_mode == OUTCOME_PIT_ANY_H2 else None,
         actionable_mode=spec.actionable_mode,
         episode_level=(spec.view == "episode_level"),
-        include_same_lap=True,
+        include_same_lap=include_same_lap,
+        pit_success_no_match_as_negative=True,
     )
 
     summary_row = _build_metrics_row(
@@ -482,6 +578,7 @@ def main() -> None:
         positives=positives,
         prevalence=prevalence,
         selected_threshold=selected_threshold,
+        window_semantics=window_semantics,
     )
 
     by_year_rows: list[dict[str, object]] = []
@@ -513,11 +610,12 @@ def main() -> None:
                 target_column=args.target_column,
                 ap_raw=ap_raw_y,
                 ap_calibrated=ap_cal_y,
-                rows=rows_y,
-                positives=pos_y,
-                prevalence=prev_y,
-                selected_threshold=selected_threshold,
-            )
+                    rows=rows_y,
+                    positives=pos_y,
+                    prevalence=prev_y,
+                    selected_threshold=selected_threshold,
+                    window_semantics=window_semantics,
+                )
             row_y["year"] = int(year)
             by_year_rows.append(row_y)
 
@@ -538,6 +636,7 @@ def main() -> None:
     print(f"profile          : {args.profile}")
     print(f"target           : {args.target_column}")
     print(f"contract         : outcome={spec.outcome_mode}, view={spec.view}, mode={spec.actionable_mode}, lens={spec.truth_lens}")
+    print(f"window semantics : {window_semantics}")
     print(f"oof race/driver  : {len(oof_universe)}")
     print(f"truth universe   : {truth_universe_source}")
     print(f"summary csv      : {out_summary}")

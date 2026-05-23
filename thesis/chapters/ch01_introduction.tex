@@ -1,55 +1,97 @@
 \chapter{Introduction}
 \label{ch:introduction}
+\emergencystretch=2em
 
 \section{Context and Motivation}
 
-\textbf{Template intent.} Explain why Formula 1 pit-wall decision support is a strong case for streaming analytics plus machine learning.
+Formula 1 pit-wall decisions are streaming decision-support decisions: the same driver-lap can be judged differently depending on evolving race context, track status, and rival dynamics. A reproducible research setup therefore needs event-time processing semantics, replayable logs, and explicit state handling \citep{akidau2015dataflow,carbone2015flink,kreps2011kafka}.
 
+This thesis implements that setup as a replay-to-evaluation pipeline:
+\begin{center}
+FastF1 history $\rightarrow$ Kafka replay $\rightarrow$ Flink strategy outputs $\rightarrow$ JSONL/Parquet data lake $\rightarrow$ contract-based evaluation.
+\end{center}
+
+% TODO: expand prose
+
+\section{Research Goal and Scope}
+
+The goal is to compare three decision paradigms under one shared protocol:
 \begin{itemize}
-	\item Start from the operational problem: decisions are sequential, time-critical, and made under uncertainty.
-	\item Explain why batch-only analysis is insufficient for race-time decisions.
-	\item Position event-time processing and low-latency architecture as enabling conditions.
+    \item \textbf{Flink Strategy Engine}: deterministic stream-time strategy rules.
+    \item \textbf{Batch XGBoost}: offline learning with race-sequential OOF predictions \citep{chen2016xgboost,roberts2017cvstructured}.
+    \item \textbf{MOA Online Learner}: prequential test-then-train stream learner \citep{bifet2010moa}.
 \end{itemize}
 
-Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka, widanage2019indy500}.
-
-\section{Research Scope and Objectives}
-
-\textbf{Template intent.} Define exactly what the thesis will and will not do.
-
+Headline scope:
 \begin{itemize}
-	\item Scope: pit-stop recommendation as a supervised lap-level decision task in a streaming architecture.
-	\item Comparison target: deterministic heuristic strategy engine vs learned model on the same replay stream.
-	\item Explicit non-goals: full race-winning simulation, proprietary telemetry replication, and team-specific private strategy rules.
-	\item Add 2--4 research questions, each measurable in Chapter 6.
+    \item seasons 2022--2025,
+    \item shared truth universe \texttt{canonical\_sde\_truth},
+    \item main lens \texttt{clean\_actionable},
+    \item contracts \texttt{pit\_any\_h2} and corrected \texttt{pit\_success\_h2}.
 \end{itemize}
 
-Suggested references: \citep{sasikumar2025pitstop, hettmann2024datatopodium, dinh2025gradient, thomas2025xrlf1}.
+\section{Contracts Used in the Thesis}
+
+\subsection{\texttt{pit\_any\_h2}}
+At lap $k$, predict whether any eligible pit event occurs soon (horizon $H=2$).
+% TODO: add compact formal definition and exact comparator reference
+
+\subsection{\texttt{pit\_success\_h2} (corrected contract)}
+At lap $k$, predict whether a successful evaluated pit occurs in strict future horizon $[k{+}1,k{+}2]$.
+\begin{itemize}
+    \item Positive: matched pit outcome \texttt{SUCCESS\_*} or \texttt{OFFSET\_ADVANTAGE}.
+    \item Negative: no pit in horizon, or matched \texttt{FAILURE\_*}/\texttt{OFFSET\_DISADVANTAGE}.
+    \item Excluded from clean train/eval: unresolved/weather/unmapped outcomes.
+\end{itemize}
+
+Operational rule used in this thesis:
+\begin{itemize}
+    \item positive recommendation with no pit in horizon is a false positive (not excluded).
+\end{itemize}
+
+\section{Research Questions}
+
+\textbf{RQ1.} Can the Flink Strategy Engine be frozen as a fair deterministic baseline for 2022--2025 replay?
+
+\textbf{RQ2.} Under leakage-safe race-sequential OOF evaluation, how do Batch XGBoost profiles compare against Flink Strategy Engine on \texttt{pit\_any\_h2} and \texttt{pit\_success\_h2}?
+
+\textbf{RQ3.} Under prequential evaluation, does the MOA Online Learner provide competitive ranking and selected operating points under the same truth contract?
+
+\textbf{RQ4.} How much of observed behavior is model signal versus threshold-policy choice?
 
 \section{Contributions}
 
-\textbf{Template intent.} List the contribution claims in a thesis-safe and testable format.
-
 \begin{itemize}
-	\item A reproducible event-time data engineering pipeline for F1 replay analytics.
-	\item A leakage-aware ML protocol for pit-stop recommendation.
-	\item A fair comparison protocol between heuristic and ML decisions in identical operating conditions.
-	\item A dual-evidence evaluation layer separating decision-level comparator quality from OOF row-level PR discrimination evidence.
-	\item A model-agnostic MOA explainability protocol based on global surrogate selection, SHAP proxy, and temporal permutation stability analysis.
-	\item A reproducibility package (data contracts, scripts, environment, and experiment documentation).
+    \item A reproducible replay-to-evaluation pipeline grounded in executable code and auditable artifacts.
+    \item A corrected contract definition for \texttt{pit\_success\_h2} with strict operational scoring.
+    \item A fair three-way comparison (Flink Strategy Engine, Batch XGBoost, MOA Online Learner) under shared universe and lens.
+    \item A metric framework that separates:
+    \begin{itemize}
+        \item strict operational precision (apples-to-apples),
+        \item successful event coverage (recall-like),
+        \item matched-pit success rate (diagnostic only).
+    \end{itemize}
 \end{itemize}
 
-Suggested references: \citep{carrasco2023optimization, quiroga2024optimization, piccinotti2020openloop}.
+\section{Result Preview}
+
+% TODO: verify final wording against final_refresh/*.md before defense print.
+High-level preview from the corrected pipeline:
+\begin{itemize}
+    \item \texttt{pit\_any\_h2} is the cleaner learnable timing contract.
+    \item \texttt{pit\_success\_h2} is stricter, sparser, and more operating-policy-dependent.
+    \item Flink Strategy Engine, Batch XGBoost, and MOA Online Learner are complementary rather than strictly dominant across both contracts.
+\end{itemize}
 
 \section{Thesis Organization}
 
-\textbf{Template intent.} Provide a concise chapter roadmap.
-
 \begin{itemize}
-	\item Chapter 2: state of the art and research gap.
-	\item Chapter 3: problem definition, data, labels, and evaluation metrics.
-	\item Chapter 4: solution design and comparison protocol.
-	\item Chapter 5: implementation choices and reproducibility.
-	\item Chapter 6: evaluation campaign and discussion.
-	\item Chapter 7: conclusions, limitations, and future work.
+    \item Chapter~\ref{ch:state_of_the_art}: state of the art and methodological positioning.
+    \item Chapter~\ref{ch:problem_framing}: formal problem framing, contracts, and metric ledgers.
+    \item Chapter~\ref{ch:problem_solving}: problem solving, split into architecture and implementation experience.
+    \item Chapter~\ref{ch:experimental_evaluation}: corrected experimental evaluation and diagnostic interpretation.
+    \item Chapter~\ref{ch:conclusions}: conclusions, limitations, and future work.
 \end{itemize}
+
+\paragraph{Writing note.}
+Keep chapter wording stable with this terminology. Internal artifact IDs may still contain ``sde'' in filenames, but thesis-facing text should use ``Flink Strategy Engine''.
