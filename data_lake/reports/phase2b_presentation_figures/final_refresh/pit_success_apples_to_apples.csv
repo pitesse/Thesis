@@ -1,0 +1,6 @@
+System,positive_call_definition,predicted_positives,TP,FP_no_match,FP_failure,unknown_excluded,strict_precision,successful_event_coverage,F0.5,notes
+Flink Strategy Engine,PIT_NOW,1235,88,949,63,135,0.08,0.08333333333333333,0.08064516129032258,Main rule baseline. Matched-pit rate is diagnostic-only.
+Batch No-Year,score>=0.37,46,11,31,4,0,0.2391304347826087,0.010416666666666666,0.044354838709677415,selected operating point
+Batch Percent,score>=0.51,51,10,36,5,0,0.19607843137254902,0.00946969696969697,0.03968253968253969,selected operating point
+MOA No-Year,score>=0.58,52,15,36,1,0,0.28846153846153844,0.014204545454545454,0.05933544303797468,selected operating point
+MOA Percent,score>=0.58,86,31,51,3,1,0.36470588235294116,0.029356060606060608,0.11103151862464185,selected operating point

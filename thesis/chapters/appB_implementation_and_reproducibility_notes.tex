@@ -1,50 +1,143 @@
 \chapter{Appendix B, Implementation and Reproducibility Notes}
 
-\section{Configuration Parameters (Skeleton)}
+\section{Minimal Reproducibility Scope}
 
-\textbf{Skeleton intent.} Record only the parameters required to rerun the frozen pipeline.
+This appendix lists the minimal file groups required to reproduce the final experimental results (not the presentation figures).
 
-\begin{itemize}
-	\item Evaluation suffix: \texttt{2022\_2025\_merged}.
-	\item Racewise suffix: \texttt{2022\_2025\_racewise}.
-	\item Comparator horizon: $H=2$.
-	\item PR plot suffix: \texttt{2022\_2025}.
-	\item Surrogate selection minimum gain: \texttt{min\_f1\_gain=0.01}.
-\end{itemize}
-
-\section{Execution Commands (Skeleton)}
-
-\textbf{Skeleton intent.} Keep this as a reproducible command checklist.
+\subsection{Streaming Data Production and Processing}
 
 \begin{itemize}
-	\item Core evaluation artifacts:
-	\begin{itemize}
-		\item \texttt{python ml\_pipeline/evaluate\_model.py --years 2022 2023 2024 2025 --season-tag merged}
-	\end{itemize}
-	\item Discrimination package (OOF PR evidence):
-	\begin{itemize}
-		\item \texttt{python ml\_pipeline/plot\_discrimination\_curves.py --reports-dir data\_lake/reports --formats pdf png --suffix 2022\_2025}
-	\end{itemize}
-	\item MOA explainability package with shared surrogate selection:
-	\begin{itemize}
-		\item \texttt{python ml\_pipeline/explain\_moa\_shap\_proxy.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data\_lake/reports/moa\_dataset\_2022\_2025\_merged.csv --moa-predictions data\_lake/reports/moa\_arf\_predictions\_2022\_2025\_merged.pred --reports-dir data\_lake/reports --min-f1-gain 0.01}
-		\item \texttt{python ml\_pipeline/explain\_moa\_temporal\_permutation.py --years 2022 2023 2024 2025 --season-tag merged --moa-dataset-csv data\_lake/reports/moa\_dataset\_2022\_2025\_merged.csv --moa-predictions data\_lake/reports/moa\_arf\_predictions\_2022\_2025\_merged.pred --reports-dir data\_lake/reports --min-f1-gain 0.01}
-	\end{itemize}
-	\item Trust diagnostics and synthesis refresh:
-	\begin{itemize}
-		\item \texttt{python ml\_pipeline/plot\_trust\_diagnostics.py --reports-dir data\_lake/reports --suffix 2022\_2025\_merged --save-format pdf}
-		\item \texttt{python ml\_pipeline/build\_thesis\_synthesis.py --suffix 2022\_2025\_merged}
-		\item \texttt{python ml\_pipeline/generate\_thesis\_master\_results.py --suffix 2022\_2025\_merged --racewise-suffix 2022\_2025\_racewise}
-	\end{itemize}
+    \item Replay data extraction: \path{f1-telemetry-producer/src/prepare_race.py}
+    \item Kafka replay sender: \path{f1-telemetry-producer/src/stream_race.py}
+    \item Flink topology path:
+    \path{f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java}
+    \item Flink operators under:
+    \path{f1-telemetry-processor/src/main/java/com/polimi/f1/operators/}
 \end{itemize}
 
-\section{Data and Artifact Availability Notes (Skeleton)}
-
-\textbf{Skeleton intent.} Map each claim family to concrete files.
+\subsection{Thesis ML/MOA Experimental Pipeline}
 
 \begin{itemize}
-	\item Decision-level comparison and gates: \texttt{model\_evaluation\_*.csv}, \texttt{thesis\_synthesis\_*.csv}, \texttt{thesis\_master\_results\_*.md}.
-	\item OOF discrimination evidence: \texttt{pr\_metrics\_*.csv}, \texttt{pr\_operating\_points\_*.csv}, \texttt{pr\_curves\_*.pdf}.
-	\item MOA surrogate evidence: \texttt{moa\_surrogate\_model\_sweep.csv}, \texttt{moa\_shap\_proxy\_summary.csv}, \texttt{moa\_temporal\_permutation\_summary.csv}.
-	\item Explainability figures: \texttt{shap\_*.png}, \texttt{moa\_shap\_proxy\_*.png}, \texttt{moa\_temporal\_permutation\_heatmap.pdf}.
+    \item Dataset prep: \path{ml_pipeline/prep_data.py}
+    \item Batch training entrypoint: \path{ml_pipeline/train_model.py}
+    \item Batch training core: \path{ml_pipeline/lib/model_training_cv.py}
+    \item Batch evaluation: \path{ml_pipeline/evaluate_batch_dual_contract_run.py}
+    \item Shared universe build: \path{ml_pipeline/build_shared_truth_universe.py}
+    \item Frontier builder: \path{ml_pipeline/phase2b_threshold_frontier.py}
+    \item MOA export: \path{ml_pipeline/export_moa_dataset.py}
+    \item MOA classic prequential run: \path{ml_pipeline/run_moa_arf.py}
+    \item MOA continuous vote logger: \path{ml_pipeline/run_moa_vote_logger.py}
+    \item MOA vote logger Java source:
+    \texttt{MoaPrequentialVoteLogger.java} under \path{ml_pipeline/java_src/}
+    \item MOA evaluation: \path{ml_pipeline/evaluate_moa_dual_contract_run.py}
+    \item MOA orchestration: \path{ml_pipeline/run_sml_phase2b_dual_contract.py}
 \end{itemize}
+
+\section{Frozen Protocol Parameters}
+
+\begin{itemize}
+    \item Years: 2022 2023 2024 2025
+    \item Horizon: $H=2$
+    \item Headline truth universe: \texttt{canonical\_sde\_truth}
+    \item Headline lens: \texttt{clean\_actionable}
+    \item Profiles:
+    \begin{itemize}
+        \item \texttt{e0\_no\_source\_year}
+        \item \texttt{p1\_percent\_conservative\_v1}
+    \end{itemize}
+\end{itemize}
+
+\section{Command Skeleton (Core Experiment)}
+
+\subsection{1) Build E0 and P1 datasets}
+
+\begin{verbatim}
+OUT_E0=<path_to_e0_dataset.parquet>
+OUT_P1=<path_to_p1_dataset.parquet>
+
+.venv/bin/python ml_pipeline/prep_data.py \
+  --data-lake data_lake \
+  --years 2022 2023 2024 2025 \
+  --season-tag season \
+  --output "$OUT_E0" \
+  --feature-profile baseline \
+  --track-agnostic-mode off
+
+.venv/bin/python ml_pipeline/prep_data.py \
+  --data-lake data_lake \
+  --years 2022 2023 2024 2025 \
+  --season-tag season \
+  --output "$OUT_P1" \
+  --feature-profile percent_conservative_v1 \
+  --track-agnostic-mode track_percentage_v1
+\end{verbatim}
+
+\subsection{2) Batch OOF + evaluation (race-sequential expanding)}
+
+Use \path{ml_pipeline/train_model.py} +
+\path{ml_pipeline/evaluate_batch_dual_contract_run.py}
+for both profiles across six targets (raw/clean\_actionable/clean\_dry\_strategy $\times$ pit\_any/pit\_success), storing outputs under:
+\begin{verbatim}
+data_lake/reports/ml_phase2b_dual_contract_2022_2025/
+\end{verbatim}
+
+\subsection{3) Canonical truth universe + Batch frontier}
+
+\begin{verbatim}
+.venv/bin/python ml_pipeline/build_shared_truth_universe.py ...
+.venv/bin/python ml_pipeline/phase2b_threshold_frontier.py ...
+\end{verbatim}
+
+Outputs under:
+\begin{verbatim}
+data_lake/reports/ml_phase2b_dual_contract_2022_2025/
+\end{verbatim}
+
+\subsection{4) MOA Phase 2B orchestration}
+
+\begin{verbatim}
+TRUTH_UNIVERSE_CSV=<path_to_canonical_sde_truth_universe_csv>
+
+.venv/bin/python ml_pipeline/run_sml_phase2b_dual_contract.py \
+  --years 2022 2023 2024 2025 \
+  --run-export --run-moa --run-eval \
+  --run-matrix --run-frontier --run-prequential \
+  --run-native-sensitivity \
+  --truth-universe-race-driver-csv "$TRUTH_UNIVERSE_CSV" \
+  --truth-universe-events-csvs ... \
+  --moa-jar data_lake/tools/moa.jar \
+  --jobs auto --resume
+\end{verbatim}
+
+Outputs under:
+\begin{verbatim}
+data_lake/reports/sml_phase2b_dual_contract_2022_2025/
+\end{verbatim}
+
+Typical dataset locations used in this thesis run:
+\begin{itemize}
+    \item \path{data_lake/ml_training_dataset_2022_2025_dual_contract.parquet}
+    \item \path{data_lake/ml_training_dataset_2022_2025_dual_contract_p1_percent.parquet}
+\end{itemize}
+
+\section{Mandatory Input Artifacts}
+
+\begin{itemize}
+    \item Pit-truth eligibility audits (2022, 2023, 2024, 2025) for \texttt{c6\_cfg120\_fixed}.
+    \item Prepared pit-events CSV used by evaluators.
+    \item MOA JAR file at \path{data_lake/tools/moa.jar}.
+\end{itemize}
+
+\section{Validation and Integrity Checks}
+
+Before claiming results, confirm:
+\begin{itemize}
+    \item recommended operating-point CSVs exist for Batch and MOA,
+    \item canonical compact comparison CSVs exist for Batch and MOA,
+    \item SML OOF score uniqueness is continuous (not hard-decision-only),
+    \item report tables use row-level and event-level metrics consistently.
+\end{itemize}
+
+\paragraph{Writing note.}
+Keep Appendix B short and executable. Full bash loops can be referenced from
+\path{README.md} and script wrappers.

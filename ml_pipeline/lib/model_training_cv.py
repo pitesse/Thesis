@@ -168,9 +168,31 @@ def _prepare_matrix(
 
     work = df.copy()
 
+    train_eligible_col = ""
+    if str(target_column).startswith("target_pit_success_h2_"):
+        candidate = f"{target_column}_train_eligible"
+        if candidate in work.columns:
+            train_eligible_col = candidate
+
     work[target_column] = pd.to_numeric(work[target_column], errors="coerce")
     work = work[work[target_column].isin([0, 1])].copy()
     work[target_column] = work[target_column].astype(int)
+    if train_eligible_col:
+        eligible_mask = (
+            work[train_eligible_col]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .map({"true": True, "false": False, "1": True, "0": False})
+            .fillna(False)
+            .astype(bool)
+        )
+        work = work[eligible_mask].copy()
+        if work.empty:
+            raise ValueError(
+                f"no train-eligible rows remain for target={target_column} after "
+                f"applying {train_eligible_col}"
+            )
 
     work[GROUP_COLUMN] = work[GROUP_COLUMN].astype(str)
     source_year = _infer_source_year(work)

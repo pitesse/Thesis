@@ -293,6 +293,7 @@ def _match_actionable_to_outcomes(
     *,
     outcome_mode: str,
     include_same_lap: bool = True,
+    pit_success_no_match_as_negative: bool = True,
 ) -> pd.DataFrame:
     if actionable.empty:
         return _empty_comparator_dataset()
@@ -345,9 +346,16 @@ def _match_actionable_to_outcomes(
                 else:
                     outcome_class, exclusion_reason = "1", ""
 
-        if outcome_mode == OUTCOME_PIT_ANY_H2 and matched_pit_lap is None:
-            outcome_class = "0"
-            exclusion_reason = ""
+        if matched_pit_lap is None:
+            if outcome_mode == OUTCOME_PIT_ANY_H2:
+                outcome_class = "0"
+                exclusion_reason = ""
+            elif outcome_mode == OUTCOME_PIT_SUCCESS_H2 and pit_success_no_match_as_negative:
+                # Strict operational pit_success contract:
+                # no matched pit in horizon is a false positive prediction.
+                outcome_class = "0"
+                # Keep diagnostic reason so downstream audits can count no-match FPs.
+                exclusion_reason = "NO_MATCH_WITHIN_HORIZON"
 
         rows.append(
             {
@@ -383,6 +391,7 @@ def _build_comparator_dataset(
     episode_level: bool = False,
     episode_cooldown_laps: int = DEFAULT_EPISODE_COOLDOWN_LAPS,
     include_same_lap: bool = True,
+    pit_success_no_match_as_negative: bool = True,
 ) -> pd.DataFrame:
     deduped = _dedup_suggestions(suggestions)
     if outcome_mode not in OUTCOME_MODES:
@@ -415,6 +424,7 @@ def _build_comparator_dataset(
         horizon,
         outcome_mode=outcome_mode,
         include_same_lap=include_same_lap,
+        pit_success_no_match_as_negative=pit_success_no_match_as_negative,
     )
 
     if not result.empty:
@@ -474,7 +484,7 @@ def _print_summary(
         for reason, count in reason_counts.items():
             print(f"{reason}: {int(count)}")
 
-        no_match = excluded[excluded["exclusion_reason"] == "NO_MATCH_WITHIN_HORIZON"].copy()
+        no_match = dataset[dataset["exclusion_reason"] == "NO_MATCH_WITHIN_HORIZON"].copy()
         if not no_match.empty and "nearest_future_pit_distance" in no_match.columns:
             lead = pd.to_numeric(no_match["nearest_future_pit_distance"], errors="coerce")
             no_future = int(lead.isna().sum())

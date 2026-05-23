@@ -1,0 +1,17 @@
+target,metric,system,races_total_target,races_kept_target,races_kept_system,positives_min_filter,median_metric_system
+pit_any_h2,kappa,Flink Strategy Engine,92,92,92,3,0.0422003759680332
+pit_any_h2,kappa,Batch No-Year,92,92,91,3,0.0783366114076988
+pit_any_h2,kappa,Batch Percent,92,92,91,3,0.1987231572838073
+pit_any_h2,kappa,MOA Percent,92,92,92,3,0.13212510669289115
+pit_success_h2,kappa,Flink Strategy Engine,90,87,87,3,0.0
+pit_success_h2,kappa,Batch No-Year,90,87,86,3,0.0
+pit_success_h2,kappa,Batch Percent,90,87,86,3,0.0
+pit_success_h2,kappa,MOA Percent,90,87,87,3,0.0
+pit_any_h2,gmean,Flink Strategy Engine,92,92,92,3,0.1894180134768752
+pit_any_h2,gmean,Batch No-Year,92,92,91,3,0.2708859452434083
+pit_any_h2,gmean,Batch Percent,92,92,91,3,0.5509470692433989
+pit_any_h2,gmean,MOA Percent,92,92,92,3,0.3344835425109859
+pit_success_h2,gmean,Flink Strategy Engine,90,87,87,3,0.166083347747135
+pit_success_h2,gmean,Batch No-Year,90,87,86,3,0.0
+pit_success_h2,gmean,Batch Percent,90,87,86,3,0.0
+pit_success_h2,gmean,MOA Percent,90,87,87,3,0.0

@@ -1,68 +1,123 @@
 \chapter{Implementation Experience}
 \label{ch:implementation_experience}
 
-\section{Engineering Stack and Reproducibility Baseline}
+\section{Implementation Scope}
 
-\textbf{Skeleton intent.} Keep this section factual and implementation-oriented.
+This chapter documents the implementation decisions required to reproduce the thesis pipeline end-to-end, without turning the manuscript into a code dump.
 
-\begin{itemize}
-	\item Runtime stack: Python pipeline, Kafka/Flink replay infrastructure, and MOA baseline tooling.
-	\item Reproducibility policy: versioned scripts, fixed suffix conventions, and artifact-first reporting.
-	\item Determinism notes: what is deterministic by design and what may vary across runs.
-\end{itemize}
+\section{Phase Timeline (Engineering View)}
 
-\section{Pipeline Implementation Overview}
+\begin{enumerate}
+    \item Stream replay and Flink context outputs.
+    \item Deterministic baseline tuning and freeze (\texttt{c123} $\rightarrow$ \texttt{c5} $\rightarrow$ \texttt{c6\_cfg120\_fixed}).
+    \item Batch ML OOF pipeline (No-Year and Percent profiles).
+    \item MOA pipeline migration from hard predictions to continuous vote scores.
+    \item Comparator/frontier/report/audit packaging.
+\end{enumerate}
 
-\subsection{Replay, Ingestion, and Stream Processing}
+\section{Where Core Computation Happens in Code}
 
-\textbf{Skeleton intent.} Summarize only design decisions that affect data validity.
-
-\begin{itemize}
-	\item Event-time replay and ingestion path.
-	\item Stateful operator responsibilities and sink contracts.
-	\item Data-quality checks and deterministic de-duplication assumptions.
-\end{itemize}
-
-\subsection{Offline Dataset and Batch ML Path}
-
-\textbf{Skeleton intent.} Keep this subsection focused on OOF and policy artifacts.
+\subsection{Stream Ingestion and Race Context}
 
 \begin{itemize}
-	\item Dataset preparation flow and grouped temporal split implementation.
-	\item OOF generation and probability outputs used for discrimination analysis.
-	\item Threshold frontier and constrained policy outputs used for decision-level comparison.
+    \item Replay snapshot builder: \path{f1-telemetry-producer/src/prepare_race.py}.
+    \item Kafka replay sender: \path{f1-telemetry-producer/src/stream_race.py}.
+    \item Flink topology path:
+    \path{f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java}.
+    \item Key operators:
+    \begin{itemize}
+        \item \texttt{TrackStatusEnricher}, \texttt{RivalIdentificationFunction}, \texttt{DrsTrainDetector},
+        \item \texttt{TireDropDetector}, \texttt{DropZoneEvaluator}, \texttt{PitStrategyEvaluator},
+        \item \texttt{PitStopEvaluator}.
+    \end{itemize}
 \end{itemize}
 
-\subsection{Streaming ML Path and MOA Explainability Tooling}
-
-\textbf{Skeleton intent.} Capture the explainability implementation decisions as reusable protocol.
+\subsection{Batch ML Training Path}
 
 \begin{itemize}
-	\item MOA decoded-prediction alignment workflow.
-	\item Global surrogate model sweep and selection rule implementation.
-	\item SHAP proxy and temporal permutation scripts sharing the same selected surrogate.
-	\item Key artifacts: \texttt{moa\_surrogate\_model\_sweep.csv}, \texttt{moa\_shap\_proxy\_summary.csv}, \texttt{moa\_temporal\_permutation\_summary.csv}.
+    \item CLI orchestrator: \path{ml_pipeline/train_model.py}.
+    \item Core training implementation: \path{ml_pipeline/lib/model_training_cv.py}.
+    \item Estimator construction: \texttt{\_build\_model(...)} returning \texttt{XGBClassifier}.
+    \item Actual fit calls: \texttt{calib\_model.fit(...)} and \texttt{model.fit(...)} in CV fold loop.
+    \item OOF export fields include: \texttt{raw\_proba}, \texttt{calibrated\_proba}, fold/split metadata.
 \end{itemize}
 
-\section{Reporting and Figure-Generation Layer}
-
-\textbf{Skeleton intent.} Keep reporting flow explicit so reviewers can map claims to files.
+\subsection{MOA Streaming Path}
 
 \begin{itemize}
-	\item Unified methodological synthesis: \texttt{build\_thesis\_synthesis.py}.
-	\item Master comparison and explainability report: \texttt{generate\_thesis\_master\_results.py}.
-	\item New discrimination plotting stage: \texttt{plot\_discrimination\_curves.py}.
-	\item Output families: PR metrics/tables, PR figures, trust diagnostics, comparator summaries.
+    \item Standard prequential runner: \path{ml_pipeline/run_moa_arf.py} (EvaluatePrequential).
+    \item Continuous vote logger launcher: \path{ml_pipeline/run_moa_vote_logger.py}.
+    \item Java test-then-train implementation:
+    \texttt{MoaPrequentialVoteLogger.java} under \path{ml_pipeline/java_src/}.
+    \item Vote extraction point: \texttt{learner.getVotesForInstance(example)} and normalized positive score computation.
+    \item MOA run orchestrator: \path{ml_pipeline/lib/run_sml_phase2b_dual_contract.py}.
 \end{itemize}
 
-\section{Implementation Notes for Reviewer-Facing Readability}
+\section{Reproducible Execution Backbone}
 
-\textbf{Skeleton intent.} Reserve this section for concise engineering notes in final writing.
+\subsection{Data Preparation}
 
 \begin{itemize}
-	\item Naming cleanup from internal phase codenames to descriptive script/report names.
-	\item Separation between decision-level comparator metrics and OOF row-level discrimination metrics.
-	\item Explicit caveat policy for surrogate-based explainability claims.
+    \item Matrix builder: \path{ml_pipeline/prep_data.py}.
+    \item Final datasets:
+    \begin{itemize}
+        \item root: \path{data_lake/}
+        \item E0 and P1 Phase 2B parquet files (exact filenames in Appendix B).
+    \end{itemize}
 \end{itemize}
 
-Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka, brookshire2024leakage, roberts2017cvstructured}.
+\subsection{Batch + MOA Evaluators}
+
+\begin{itemize}
+    \item Batch evaluator: \path{ml_pipeline/evaluate_batch_dual_contract_run.py}.
+    \item MOA evaluator: \path{ml_pipeline/evaluate_moa_dual_contract_run.py}.
+    \item Frontier builder: \path{ml_pipeline/phase2b_threshold_frontier.py}.
+\end{itemize}
+
+\subsection{Audit and Delivery Safety}
+
+\begin{itemize}
+    \item Figure build: \path{ml_pipeline/build_phase2b_presentation_figures.py}.
+    \item Delivery audit: \path{ml_pipeline/audit_phase2b_delivery_coverage.py}.
+    \item Policy diagnostics:
+    \path{ml_pipeline/phase2b_pit_success_threshold_diagnostic.py} and
+    \path{ml_pipeline/phase2b_pit_success_batch_vs_moa_score_diagnostic.py}.
+\end{itemize}
+
+\section{Implementation Pseudocode (Concise)}
+
+\subsection{Batch OOF Loop}
+
+\begin{verbatim}
+for split in race_sequential_expanding_splits:
+    fit calibration model on inner-train
+    fit calibrator on inner-calibration scores
+    lock threshold policy on calibration partition
+    fit main XGBoost on outer-train
+    score outer-test -> raw_proba, calibrated_proba
+    append fold metrics + OOF rows
+aggregate folds -> leaderboard + OOF artifact
+\end{verbatim}
+
+\subsection{MOA Prequential Vote Loop}
+
+\begin{verbatim}
+initialize OzaBoostAdwin learner
+for each ARFF instance in order:
+    votes = learner.getVotesForInstance(instance)
+    positive_score = vote1 / (vote0 + vote1)
+    emit row_index, y_true, y_pred, votes, positive_score
+    learner.trainOnInstance(instance)
+\end{verbatim}
+
+\section{Major Engineering Corrections to Highlight}
+
+\begin{itemize}
+    \item Import-path hardening for package-safe execution of ML/MOA evaluators.
+    \item MOA conversion from hard predicted labels to continuous vote-score artifacts.
+    \item Explicit hard-decision frontier guard when score uniqueness $\leq 2$.
+    \item Source-integrity audit for Batch probability diagnostics (Phase2B naming vs validated OOF source).
+\end{itemize}
+
+\paragraph{Writing note.}
+Expand only implementation choices that affect correctness, fairness, or reproducibility; move incidental debugging details to Appendix B.

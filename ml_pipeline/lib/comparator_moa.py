@@ -12,8 +12,11 @@ try:
     from .comparator_heuristic import (
         DEFAULT_DATA_LAKE,
         DEFAULT_HORIZON,
+        DEFAULT_ACTIONABLE_MODE,
+        DEFAULT_EPISODE_COOLDOWN_LAPS,
         DEFAULT_SEASON_TAG,
         DEFAULT_YEAR,
+        ACTIONABLE_MODES,
         OUTCOME_MODES,
         OUTCOME_PIT_ANY_H2,
         OUTCOME_PIT_SUCCESS_H2,
@@ -38,8 +41,11 @@ except ImportError:
     from lib.comparator_heuristic import (  # type: ignore
         DEFAULT_DATA_LAKE,
         DEFAULT_HORIZON,
+        DEFAULT_ACTIONABLE_MODE,
+        DEFAULT_EPISODE_COOLDOWN_LAPS,
         DEFAULT_SEASON_TAG,
         DEFAULT_YEAR,
+        ACTIONABLE_MODES,
         OUTCOME_MODES,
         OUTCOME_PIT_ANY_H2,
         OUTCOME_PIT_SUCCESS_H2,
@@ -127,6 +133,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--moa-predictions", default=DEFAULT_MOA_PREDICTIONS, help="MOA prediction file path")
     parser.add_argument("--actionable-label", default=DEFAULT_ACTIONABLE_LABEL, help="label for MOA actions")
+    parser.add_argument(
+        "--actionable-mode",
+        choices=sorted(ACTIONABLE_MODES),
+        default=DEFAULT_ACTIONABLE_MODE,
+        help="which suggestion labels are treated as actionable during comparator scoring",
+    )
+    parser.add_argument(
+        "--episode-cooldown-laps",
+        type=int,
+        default=DEFAULT_EPISODE_COOLDOWN_LAPS,
+        help="episode suppression cooldown in laps for episode-level comparator view",
+    )
+    parser.add_argument(
+        "--strict-future",
+        action="store_true",
+        help="diagnostic mode only: match in [suggestion_lap+1, suggestion_lap+h] instead of including same lap",
+    )
     parser.add_argument("--min-mapping-purity", type=float, default=0.99, help="minimum purity to accept MOA code map")
     parser.add_argument("--year", type=int, default=DEFAULT_YEAR, help="comparator source year token for pit_evals")
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON, help="look ahead horizon in laps")
@@ -188,6 +211,8 @@ def main() -> None:
         args.horizon,
         outcome_mode=args.outcome_mode,
         pit_timings=pit_timings_df,
+        actionable_mode=args.actionable_mode,
+        include_same_lap=not args.strict_future,
     )
     episode_comparator: pd.DataFrame | None = None
     if args.episode_output:
@@ -197,7 +222,10 @@ def main() -> None:
             args.horizon,
             outcome_mode=args.outcome_mode,
             pit_timings=pit_timings_df,
+            actionable_mode=args.actionable_mode,
             episode_level=True,
+            episode_cooldown_laps=args.episode_cooldown_laps,
+            include_same_lap=not args.strict_future,
         )
 
     output_path = _resolve_output_path(data_lake, args.output)
@@ -219,6 +247,8 @@ def main() -> None:
         "pit_timings": str(pit_timings_path) if pit_timings_path is not None else "",
         "horizon": int(args.horizon),
         "outcome_mode": str(args.outcome_mode),
+        "actionable_mode": str(args.actionable_mode),
+        "strict_future": bool(args.strict_future),
         "diagnostics": diagnostics,
     }
     diagnostics_path.write_text(
@@ -233,11 +263,18 @@ def main() -> None:
         print(f"pit timings input    : {pit_timings_path}")
     print(f"target column        : {args.target_column}")
     print(f"outcome mode         : {args.outcome_mode}")
+    print(f"actionable mode      : {args.actionable_mode}")
+    print(f"strict future        : {args.strict_future}")
     print(f"output csv           : {output_path}")
     if episode_output_path is not None:
         print(f"episode csv          : {episode_output_path}")
     print(f"diagnostics json     : {diagnostics_path}")
-    _print_summary(comparator, suggestions, args.horizon)
+    _print_summary(
+        comparator,
+        suggestions,
+        args.horizon,
+        actionable_mode=args.actionable_mode,
+    )
 
 
 if __name__ == "__main__":

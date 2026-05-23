@@ -40,6 +40,13 @@ from lib.feature_profiles import (
 
 OUTCOME_PIT_SUCCESS_H2 = "pit_success_h2"
 OUTCOME_PIT_ANY_H2 = "pit_any_h2"
+ACTIONABLE_MODES = [
+    "good_pit_only",
+    "pit_now_only",
+    "pit_now_plus_good_pit",
+]
+DEFAULT_ACTIONABLE_MODE = "pit_now_plus_good_pit"
+DEFAULT_EPISODE_COOLDOWN_LAPS = 5
 
 
 @contextmanager
@@ -332,6 +339,23 @@ def parse_args() -> argparse.Namespace:
         default=OUTCOME_PIT_SUCCESS_H2,
         help="comparator outcome contract: success-only pits or any pit timing in window",
     )
+    parser.add_argument(
+        "--actionable-mode",
+        choices=ACTIONABLE_MODES,
+        default=DEFAULT_ACTIONABLE_MODE,
+        help="which suggestion labels are treated as actionable in comparator scoring",
+    )
+    parser.add_argument(
+        "--episode-cooldown-laps",
+        type=int,
+        default=DEFAULT_EPISODE_COOLDOWN_LAPS,
+        help="episode suppression cooldown in laps for episode-level comparator outputs",
+    )
+    parser.add_argument(
+        "--strict-future",
+        action="store_true",
+        help="diagnostic mode only: match in [suggestion_lap+1, suggestion_lap+h] instead of including same lap",
+    )
 
     parser.add_argument("--dataset", default="", help="training dataset used for parity/split audits")
     parser.add_argument("--oof-input", default="", help="winner OOF decisions csv")
@@ -452,6 +476,8 @@ def main() -> None:
     heuristic_comparator_episode = reports / f"heuristic_comparator_episode_{suffix}.csv"
     ml_comparator = reports / f"ml_comparator_{suffix}.csv"
     ml_comparator_episode = reports / f"ml_comparator_episode_{suffix}.csv"
+    sde_diag_summary = reports / f"sde_pit_any_diagnostics_summary_{suffix}.csv"
+    sde_diag_md = reports / f"sde_pit_any_diagnostics_{suffix}.md"
 
     phase_b_summary = reports / f"significance_summary_{suffix}.csv"
     phase_b_tests = reports / f"significance_tests_{suffix}.csv"
@@ -511,55 +537,89 @@ def main() -> None:
     def pipeline_script(name: str) -> str:
         return str(script_dir / name)
 
-    _run_step(
-        "Build heuristic comparator",
-        [
-            sys.executable,
-            pipeline_script("comparator_heuristic.py"),
-            "--data-lake",
-            str(data_lake),
-            "--year",
-            str(comparator_year),
-            "--season-tag",
-            comparator_tag,
-            "--horizon",
-            str(args.horizon),
-            "--outcome-mode",
-            args.outcome_mode,
-            "--pit-timings",
-            str(pit_timings_path),
-            "--output",
-            str(heuristic_comparator.resolve()),
-            "--episode-output",
-            str(heuristic_comparator_episode.resolve()),
-        ],
-    )
+    heuristic_cmp_cmd = [
+        sys.executable,
+        pipeline_script("comparator_heuristic.py"),
+        "--data-lake",
+        str(data_lake),
+        "--year",
+        str(comparator_year),
+        "--season-tag",
+        comparator_tag,
+        "--horizon",
+        str(args.horizon),
+        "--outcome-mode",
+        args.outcome_mode,
+        "--actionable-mode",
+        args.actionable_mode,
+        "--episode-cooldown-laps",
+        str(args.episode_cooldown_laps),
+        "--pit-timings",
+        str(pit_timings_path),
+        "--output",
+        str(heuristic_comparator.resolve()),
+        "--episode-output",
+        str(heuristic_comparator_episode.resolve()),
+    ]
+    if args.strict_future:
+        heuristic_cmp_cmd.append("--strict-future")
+    _run_step("Build heuristic comparator", heuristic_cmp_cmd)
 
-    _run_step(
-        "Build ML comparator",
-        [
-            sys.executable,
-            pipeline_script("comparator_ml.py"),
-            "--decisions",
-            str(oof_input),
-            "--data-lake",
-            str(data_lake),
-            "--year",
-            str(comparator_year),
-            "--season-tag",
-            comparator_tag,
-            "--horizon",
-            str(args.horizon),
-            "--outcome-mode",
-            args.outcome_mode,
-            "--pit-timings",
-            str(pit_timings_path),
-            "--output",
-            str(ml_comparator.resolve()),
-            "--episode-output",
-            str(ml_comparator_episode.resolve()),
-        ],
-    )
+    ml_cmp_cmd = [
+        sys.executable,
+        pipeline_script("comparator_ml.py"),
+        "--decisions",
+        str(oof_input),
+        "--data-lake",
+        str(data_lake),
+        "--year",
+        str(comparator_year),
+        "--season-tag",
+        comparator_tag,
+        "--horizon",
+        str(args.horizon),
+        "--outcome-mode",
+        args.outcome_mode,
+        "--actionable-mode",
+        args.actionable_mode,
+        "--episode-cooldown-laps",
+        str(args.episode_cooldown_laps),
+        "--pit-timings",
+        str(pit_timings_path),
+        "--output",
+        str(ml_comparator.resolve()),
+        "--episode-output",
+        str(ml_comparator_episode.resolve()),
+    ]
+    if args.strict_future:
+        ml_cmp_cmd.append("--strict-future")
+    _run_step("Build ML comparator", ml_cmp_cmd)
+
+    sde_diag_cmd = [
+        sys.executable,
+        pipeline_script("report_sde_pit_any_diagnostics.py"),
+        "--data-lake",
+        str(data_lake),
+        "--year",
+        str(comparator_year),
+        "--season-tag",
+        comparator_tag,
+        "--horizon",
+        str(args.horizon),
+        "--actionable-modes",
+        "pit_now_only",
+        "good_pit_only",
+        "pit_now_plus_good_pit",
+        "--episode-cooldown-laps",
+        str(args.episode_cooldown_laps),
+        "--output-summary-csv",
+        str(sde_diag_summary.resolve()),
+        "--output-md",
+        str(sde_diag_md.resolve()),
+    ]
+    if args.strict_future:
+        sde_diag_cmd.append("--include-strict-future-diagnostic")
+    _run_step("Consolidated SDE pit_any diagnostics", sde_diag_cmd)
 
     _run_step(
         "Significance evaluation",
@@ -969,6 +1029,9 @@ def main() -> None:
     summary_df["excluded_features"] = feature_plan.excluded_features_csv()
     summary_df["track_agnostic_mode"] = feature_plan.track_agnostic_mode
     summary_df["drop_source_year_feature"] = int(bool(args.drop_source_year_feature))
+    summary_df["comparator_actionable_mode"] = args.actionable_mode
+    summary_df["episode_cooldown_laps"] = int(args.episode_cooldown_laps)
+    summary_df["strict_future_window"] = int(bool(args.strict_future))
     evaluation_summary_output.parent.mkdir(parents=True, exist_ok=True)
     summary_df.to_csv(evaluation_summary_output, index=False)
 
@@ -984,6 +1047,9 @@ def main() -> None:
         f"- Comparator source token: year={comparator_year}, season_tag={comparator_tag}",
         f"- Target column: {args.target_column}",
         f"- Comparator outcome mode: {args.outcome_mode}",
+        f"- Comparator actionable mode: {args.actionable_mode}",
+        f"- Episode cooldown laps: {args.episode_cooldown_laps}",
+        f"- Strict-future comparator window: {bool(args.strict_future)}",
         f"- Feature profile: {feature_plan.feature_profile}",
         f"- Excluded features: {feature_plan.excluded_features_csv() or 'none'}",
         f"- Track-agnostic mode: {feature_plan.track_agnostic_mode}",
@@ -1030,6 +1096,8 @@ def main() -> None:
             f"- Dedicated SDE vs ML report: {phase_b_meeting_report}",
             f"- Dedicated SDE vs ML summary: {phase_b_meeting_summary}",
             f"- Dedicated SDE vs ML by year: {phase_b_meeting_by_year}",
+            f"- SDE pit_any diagnostics summary: {sde_diag_summary}",
+            f"- SDE pit_any diagnostics markdown: {sde_diag_md}",
             f"- Comparator files: {heuristic_comparator}, {ml_comparator}",
             f"- Episode comparator files: {heuristic_comparator_episode}, {ml_comparator_episode}",
             f"- Threshold sweep report: {phase_c_report}",

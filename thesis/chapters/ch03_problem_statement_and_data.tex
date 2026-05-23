@@ -1,100 +1,105 @@
-\chapter{Problem Statement and Data}
-\label{ch:problem_statement_and_data}
+\chapter{Problem Framing}
+\label{ch:problem_framing}
 
-\section{Formula 1 Pit Stop Decision Problem}
+\section{Decision Unit and Prediction Task}
 
-\textbf{Template intent.} Define the prediction task unambiguously.
+The common decision unit is a driver-lap row at lap index $k$. Each system can emit a positive recommendation at $k$ or abstain.
 
+% TODO: expand prose with compact notation block
+
+\subsection{Contract 1: \texttt{pit\_any\_h2}}
+Predict whether any eligible pit event occurs soon.
+
+\subsection{Contract 2: \texttt{pit\_success\_h2} (corrected)}
+Predict whether a successful evaluated pit occurs in strict future horizon $[k{+}1,k{+}2]$.
 \begin{itemize}
-	\item Inference unit: driver-lap decision point.
-	\item Target: binary label, pit in next $K$ laps (state your fixed $K$ and rationale).
-	\item Operational interpretation: decision support signal, not autonomous control.
+    \item $y=1$: matched pit outcome is \texttt{SUCCESS\_*} or \texttt{OFFSET\_ADVANTAGE}.
+    \item $y=0$: no pit in horizon, or matched \texttt{FAILURE\_*}/\texttt{OFFSET\_DISADVANTAGE}.
+    \item train/eval-unknown exclusion: \texttt{UNRESOLVED\_*}, \texttt{UNMAPPED\_*}, \texttt{WEATHER\_SURVIVAL\_STOP}, and equivalent non-classifiable outcomes.
 \end{itemize}
 
-Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, carrasco2023optimization, thomas2025xrlf1}.
+\section{Data Lineage and Reproducibility Boundary}
 
-\section{Data Sources and Acquisition}
-\subsection{FastF1 Data Interface}
+End-to-end lineage (code anchors):
+\begin{enumerate}
+    \item replay snapshot preparation (\path{f1-telemetry-producer/src/prepare_race.py});
+    \item event-time replay to Kafka (\path{f1-telemetry-producer/src/stream_race.py});
+    \item Flink race-context and strategy operators (\path{f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java});
+    \item JSONL artifacts in \path{data_lake/};
+    \item ML-ready matrix preparation (\path{ml_pipeline/prep_data.py}, \path{ml_pipeline/lib/data_preparation.py}).
+\end{enumerate}
 
-\textbf{Template intent.} Explain source provenance and reproducibility constraints.
+% TODO: insert final lineage figure
+% TODO: insert final figure from architecture section, source: thesis-local redraw based on code flow
 
+\section{Universe, Lenses, and Fair Comparison Boundary}
+
+Headline claims use:
 \begin{itemize}
-	\item Seasons/races included, extraction process, and versioning policy.
-	\item Data quality caveats (missing telemetry, weather noise, incidents).
+    \item universe: \texttt{canonical\_sde\_truth},
+    \item lens: \texttt{clean\_actionable},
+    \item years: 2022--2025.
 \end{itemize}
 
-Suggested references: \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop}.
-
-\subsection{Streaming Inputs and Event Types}
-
-\textbf{Template intent.} Define each stream as a contract.
-
+Sensitivity-only views:
 \begin{itemize}
-	\item Telemetry stream, lap stream, and track-status stream.
-	\item Event-time semantics, ordering assumptions, and replay settings.
+    \item \texttt{raw},
+    \item \texttt{clean\_dry\_strategy},
+    \item native-universe diagnostics (not headline).
 \end{itemize}
 
-Suggested references: \citep{akidau2015dataflow, carbone2015flink, kreps2011kafka}.
+\section{Imbalance and Baseline Difficulty}
 
-\section{Dataset Description}
-\subsection{Telemetry Stream}
-
-\textbf{Template intent.} List fields and their modeling role in few words.
-
+The task is heavily imbalanced. This chapter should report:
 \begin{itemize}
-	\item Mention sampling rate, key signals, and normalization choices.
-	\item State known limitations and filtering rules.
+    \item total driver-lap rows,
+    \item eligible rows for each contract/lens,
+    \item positive prevalence for \texttt{pit\_any\_h2} and corrected \texttt{pit\_success\_h2}.
 \end{itemize}
 
-\subsection{Lap Stream}
+% TODO: verify all counts from:
+% data_lake/reports/phase2b_presentation_figures/final_refresh/final_refresh_input_provenance.csv
+% data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_support_summary.csv
 
-\textbf{Template intent.} Describe lap-level context and pace variables.
+\section{Metric Ledger Definitions}
 
-\begin{itemize}
-	\item Timing, stint, compound, tire age, and gap-derived features.
-	\item Explain why lap-level aggregation is aligned with pit decision timing.
-\end{itemize}
+\subsection{Row-level operational ledger}
 
-\subsection{Track Status Stream}
+For strict operational scoring on \texttt{pit\_success\_h2}:
+\begin{equation}
+\text{strict precision} = \frac{TP}{TP + FP_{\text{no-match}} + FP_{\text{failure}}}.
+\end{equation}
 
-\textbf{Template intent.} Describe race-neutralization context.
+No-match positive predictions are false positives by definition in the corrected contract.
 
-\begin{itemize}
-	\item Encoding of green/yellow/VSC/SC and time availability constraints.
-	\item How this stream is used for filtering, labeling, and stress tests.
-\end{itemize}
+\subsection{Event-level coverage ledger}
 
-\section{Target Definition and Labeling Strategy}
+\begin{equation}
+\text{successful event coverage} =
+\frac{\text{unique successful events covered}}{\text{eligible successful events}}.
+\end{equation}
 
-\textbf{Template intent.} Make labeling auditable and leakage-safe.
+\subsection{Diagnostic-only matched-pit quality}
 
-\begin{itemize}
-	\item Exact positive/negative label rule and boundary conditions.
-	\item Inclusion/exclusion policy (for example wet phases, early laps, unresolved events).
-	\item Explicit anti-leakage policy: no derived heuristic outputs as ML inputs.
-\end{itemize}
+Matched-pit success rate is kept as diagnostic:
+\begin{equation}
+\frac{\text{matched successes}}{\text{matched successes}+\text{matched failures}}.
+\end{equation}
+It is \textbf{not} the main precision used for apples-to-apples comparison.
 
-\paragraph{Implemented fallback guardrail for missing post-pit gaps.}
-The ground-truth operator now uses a conservative salvage rule only for same-rival cycles where direct post-pit gap reconstruction is unavailable. The fallback compares pre-pit and post-pit relative pace against the same rival using local green, non-pit lap windows with minimum sample constraints. If this evidence is not available, the cycle remains unresolved as \texttt{UNRESOLVED\_MISSING\_POST\_GAP}. This preserves auditable uncertainty instead of forcing a strategic label from incomplete context, while staying aligned with lap-time decomposition and race-time optimization reasoning from motorsport strategy literature \citep{heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
+\section{Label Construction and Leakage Constraints}
 
-\subsection{Construct Validity and Label Scope}
-
-No official open Formula 1 pit-strategy ground-truth dataset was identified in the surveyed literature used in this thesis. As a result, labels are defined operationally from telemetry and lap context using explicit decision rules, not imported from an external authoritative source. This is consistent with recent motorsport studies that also operationalize pit outcomes from observable timing and position context \citep{hettmann2024datatopodium, dinh2025gradient, sasikumar2025pitstop, carrasco2023optimization, quiroga2024optimization}.
-
-The construct represented by the label is strategic pit outcome under observable race conditions, not total team performance. Therefore, the labeling scope intentionally excludes unobservable or weakly observable factors such as pit crew execution quality, hidden car damage, and team-internal strategy constraints. The unresolved policy is conservative by design: when rival context or post-pit comparability is insufficient, the event is retained in data lake artifacts but excluded from resolved binary supervision. This abstention policy limits label noise and leakage from ambiguous contexts \citep{brookshire2024leakage, roberts2017cvstructured}.
-
-External validity is bounded to the seasons, regulations, and telemetry quality covered by the replayed dataset. Claims are therefore framed as construct-valid for this operational setting, with qualitative triangulation in Chapter~\ref{ch:evaluation_campaign} used to assess plausibility against known race narratives.
-
-Suggested references: \citep{brookshire2024leakage, roberts2017cvstructured, hettmann2024datatopodium, sasikumar2025pitstop, heilmeier2020race, carrasco2023optimization, quiroga2024optimization}.
-
-\section{Evaluation Metrics}
-
-\textbf{Template intent.} Define metrics before results to avoid metric shopping.
+Target construction is implemented in \path{ml_pipeline/lib/data_preparation.py}. Leakage controls are enforced during matrix preparation and training (\path{ml_pipeline/lib/model_training_cv.py}, MOA export/eval path in \path{ml_pipeline/lib/run_sml_phase2b_dual_contract.py}).
 
 \begin{itemize}
-	\item Primary discrimination metrics for imbalance: precision, recall, F1, AUC-PR.
-	\item Calibration metrics: Brier score and reliability analysis.
-	\item Statistical comparison protocol: paired significance tests with corrected interpretation.
+    \item Post-pit outcome fields may define labels.
+    \item Post-pit outcome fields must not enter model features.
+    \item Target/truth/matched-event/eligibility markers are excluded from features.
 \end{itemize}
 
-Suggested references: \citep{saito2015prroc, davis2006relationship, brier1950verification, guo2017calibration, platt1999probabilistic, kull2017beta, dietterich1998approximate, nadeau2003inference, demsar2006statistical, walters2022comparing}.
+\section{Why Accuracy Alone is Inadequate}
+
+Under severe class imbalance, a high-accuracy classifier can still fail operationally. This motivates PR/AP reporting under skew \citep{saito2015prroc,davis2006relationship}, cost-sensitive thresholding \citep{elkan2001costsensitive}, and support-aware Kappa/G-Mean diagnostics \citep{cohen1960kappa,he2009imbalanced}.
+
+\paragraph{Writing note.}
+Keep this chapter formal and definition-driven. Avoid presenting final conclusions here; reserve comparative claims for Chapter~\ref{ch:experimental_evaluation}.

@@ -10,6 +10,8 @@ from sklearn.metrics import average_precision_score
 
 try:
     from .comparator_heuristic import (
+        ACTIONABLE_MODE_PIT_NOW_ONLY,
+        ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
         OUTCOME_PIT_ANY_H2,
         _build_comparator_dataset,
         _latest_jsonl,
@@ -41,6 +43,8 @@ except ImportError:
             sys.path.insert(0, _path_text)
 
     from comparator_heuristic import (  # type: ignore
+        ACTIONABLE_MODE_PIT_NOW_ONLY,
+        ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT,
         OUTCOME_PIT_ANY_H2,
         _build_comparator_dataset,
         _latest_jsonl,
@@ -72,9 +76,30 @@ def _extract_meta_and_target(dataset: pd.DataFrame, target_column: str) -> tuple
         raise ValueError(f"dataset missing required metadata columns: {missing}")
 
     work = dataset.copy()
+    train_eligible_col = ""
+    if str(target_column).startswith("target_pit_success_h2_"):
+        candidate = f"{target_column}_train_eligible"
+        if candidate in work.columns:
+            train_eligible_col = candidate
     work[target_column] = pd.to_numeric(work[target_column], errors="coerce")
     work = work[work[target_column].isin([0, 1])].copy()
     work[target_column] = work[target_column].astype(int)
+    if train_eligible_col:
+        eligible_mask = (
+            work[train_eligible_col]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .map({"true": True, "false": False, "1": True, "0": False})
+            .fillna(False)
+            .astype(bool)
+        )
+        work = work[eligible_mask].copy()
+        if work.empty:
+            raise ValueError(
+                f"no train-eligible rows remain for target={target_column} after "
+                f"applying {train_eligible_col}"
+            )
 
     meta = work[["race", "driver", "lapNumber"]].copy()
     meta["race"] = meta["race"].astype(str)
@@ -122,6 +147,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-oof-csv", default="", help="optional aligned MOA pseudo-OOF output")
     parser.add_argument("--output-summary-csv", required=True)
     parser.add_argument("--output-by-year-csv", required=True)
+    parser.add_argument(
+        "--pit-success-include-same-lap",
+        action="store_true",
+        help=(
+            "when set, pit_success_h2 comparator matching uses [k,k+H]; "
+            "default is strict-future [k+1,k+H]"
+        ),
+    )
+    parser.add_argument(
+        "--pit-success-actionable-mode",
+        choices=[ACTIONABLE_MODE_PIT_NOW_ONLY, ACTIONABLE_MODE_PIT_NOW_PLUS_GOOD_PIT],
+        default=ACTIONABLE_MODE_PIT_NOW_ONLY,
+        help=(
+            "action label set for pit_success_h2 comparator rows; "
+            "default is PIT_NOW only, use pit_now_plus_good_pit for sensitivity runs"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -131,6 +173,13 @@ def main() -> None:
     years = normalize_years(args.years)
     comparator_year, comparator_tag = comparator_source_year_and_tag(years, args.season_tag)
     spec = _target_to_contract(args.target_column)
+    if spec.outcome_mode != OUTCOME_PIT_ANY_H2:
+        spec = type(spec)(
+            outcome_mode=spec.outcome_mode,
+            view=spec.view,
+            actionable_mode=str(args.pit_success_actionable_mode),
+            truth_lens=spec.truth_lens,
+        )
 
     dataset_path = Path(args.dataset)
     pred_path = Path(args.moa_predictions)
@@ -264,6 +313,16 @@ def main() -> None:
         )
 
     pit_timings_for_comparator = pit_timings if spec.outcome_mode == OUTCOME_PIT_ANY_H2 else None
+    include_same_lap = (
+        True
+        if spec.outcome_mode == OUTCOME_PIT_ANY_H2
+        else bool(args.pit_success_include_same_lap)
+    )
+    window_semantics = (
+        "official_same_lap_inclusive"
+        if include_same_lap
+        else "strict_future_kplus1_to_kplusH"
+    )
     comparator = _build_comparator_dataset(
         suggestions=suggestions,
         pit_evals=pit_evals,
@@ -272,7 +331,8 @@ def main() -> None:
         pit_timings=pit_timings_for_comparator,
         actionable_mode=spec.actionable_mode,
         episode_level=(spec.view == "episode_level"),
-        include_same_lap=True,
+        include_same_lap=include_same_lap,
+        pit_success_no_match_as_negative=True,
     )
 
     summary_row = _build_metrics_row(
@@ -287,6 +347,7 @@ def main() -> None:
         positives=positives,
         prevalence=prevalence,
         selected_threshold=selected_threshold,
+        window_semantics=window_semantics,
     )
     summary_row["score_mode"] = str(diagnostics.get("score_mode", "unknown"))
     summary_row["score_is_hard_decision"] = bool(diagnostics.get("score_is_hard_decision", True))
@@ -339,6 +400,7 @@ def main() -> None:
                 positives=pos_y,
                 prevalence=prev_y,
                 selected_threshold=selected_threshold,
+                window_semantics=window_semantics,
             )
             row_y["score_mode"] = str(diagnostics.get("score_mode", "unknown"))
             row_y["score_is_hard_decision"] = bool(diagnostics.get("score_is_hard_decision", True))
@@ -380,6 +442,7 @@ def main() -> None:
         "contract         : "
         f"outcome={spec.outcome_mode}, view={spec.view}, mode={spec.actionable_mode}, lens={spec.truth_lens}"
     )
+    print(f"window semantics : {window_semantics}")
     print(f"truth universe   : {truth_universe_source}")
     print(f"moa rows aligned : {diagnostics.get('rows_aligned')}")
     print(f"score mode       : {diagnostics.get('score_mode')}")

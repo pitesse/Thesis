@@ -1,56 +1,50 @@
-\chapter{Conclusion}
-\label{ch:conclusion}
+\chapter{Conclusions}
+\label{ch:conclusions}
 
-\section{Summary of Achieved Outcomes}
+\section{Main Findings}
 
-\textbf{Skeleton intent.} Keep this section claim-oriented and linked to frozen artifacts.
-
+% TODO: expand prose with final verified values only.
+Summarize outcomes in this order:
 \begin{itemize}
-	\item Summarize the three-paradigm evaluation scope: SDE, Batch ML, and Streaming ML (MOA).
-	\item Separate decision-level comparator findings from OOF discrimination findings.
-	\item Report final integrated gate interpretation with explicit scope boundaries.
+    \item \texttt{pit\_any\_h2}: timing prediction as the cleaner learnable task;
+    \item \texttt{pit\_success\_h2}: stricter and sparser contract with stronger policy dependence;
+    \item complementary strengths of Flink Strategy Engine, Batch XGBoost, and MOA Online Learner;
+    \item effect of strict operational scoring on final interpretation.
 \end{itemize}
 
 \section{Methodological Contributions}
 
-\textbf{Skeleton intent.} State contributions as reproducible protocol blocks.
-
+State the contribution set explicitly:
 \begin{itemize}
-	\item Comparator fairness contract and closure audits.
-	\item OOF PR evidence package (overall, by-year, operating points).
-	\item MOA global surrogate protocol with model sweep, selection rule, SHAP proxy, and temporal permutation.
+    \item reproducible replay-to-evaluation pipeline;
+    \item shared truth-universe + lens protocol for fair comparison;
+    \item corrected \texttt{pit\_success\_h2} contract and strict operational scoring;
+    \item explicit separation of diagnostic matched-pit quality from apples-to-apples precision;
+    \item auditable final-refresh evidence package.
 \end{itemize}
 
-\section{Limitations}
+\section{Limits and Interpretation Boundaries}
 
-\textbf{Skeleton intent.} Keep limitations concrete, test-linked, and non-defensive.
-
+% TODO: replace bullets with final chapter-consistent wording.
 \begin{itemize}
-	\item Horizon-constrained comparator semantics and no-match exclusions.
-	\item Surrogate explainability limits for MOA internal attribution.
-	\item Deployment boundary conditions from integrated gates and split-integrity residual risks.
-	\item Forward-year generalization caveat for \texttt{\_source\_year} handling.
+    \item sparse positive support for \texttt{pit\_success\_h2} limits stability of per-race diagnostics;
+    \item threshold policy materially affects call volume/coverage trade-offs;
+    \item MOA scores are continuous vote scores and not calibrated probabilities by default;
+    \item surrogate explainability for online models remains an approximation.
 \end{itemize}
 
 \section{Future Work}
 
-\textbf{Skeleton intent.} Keep future work directly actionable from current artifacts.
-
+Priority roadmap:
 \begin{itemize}
-	\item Controlled ablation/remapping study for \texttt{\_source\_year} (for example \texttt{years\_since\_2022}).
-	\item Extended drift monitoring and recalibration policy triggers.
-	\item Additional streaming learners and surrogate-fidelity comparisons under the same protocol.
-	\item Broader operational validation beyond replay conditions.
+    \item two-stage policy (\texttt{pit\_any\_h2} candidate generation $\rightarrow$ \texttt{pit\_success\_h2} filtering);
+    \item adaptive threshold policies with explicit utility costs \citep{elkan2001costsensitive};
+    \item improved online calibration for stream scores;
+    \item richer team-utility labeling beyond current post-pit evaluator outcomes;
+    \item broader support-aware diagnostics with larger race sets.
 \end{itemize}
 
 \section{Final Positioning}
 
-\textbf{Skeleton intent.} Close with a concise thesis-position statement.
-
-\begin{itemize}
-	\item What is validated now (artifact-backed claims).
-	\item What remains exploratory (deferred claims).
-	\item Why the current pipeline is reviewer-ready from a reproducibility standpoint.
-\end{itemize}
-
-Suggested references: \citep{walters2022comparing, dietterich1998approximate, brookshire2024leakage, roberts2017cvstructured, gama2014drift, arora2024driftreview}.
+% TODO: expand to final paragraph.
+Close with a balanced statement: deterministic strategy logic and learned ranking systems should be evaluated as complementary decision tools under one reproducible, contract-corrected protocol.

@@ -1,19 +1,57 @@
 \chapter{Appendix A, Additional Experimental Material}
 
-\section{Additional Tables (Skeleton)}
+\section{Artifact Families}
+
+This appendix groups non-headline but relevant evidence.
 
 \begin{itemize}
-	\item Per-year comparator tables by protocol and paradigm.
-	\item OOF discrimination tables by year and score type.
-	\item MOA surrogate sweep table with full metric set.
-	\item Threshold operating-point sensitivity tables.
+    \item \textbf{Headline figure pack root:}
+    \path{data_lake/reports/phase2b_presentation_figures/}
+    \item \textbf{Batch Phase 2B artifacts:}
+    \path{data_lake/reports/ml_phase2b_dual_contract_2022_2025/}
+    \item \textbf{MOA Phase 2B artifacts:}
+    \path{data_lake/reports/sml_phase2b_dual_contract_2022_2025/}
 \end{itemize}
 
-\section{Additional Figures (Skeleton)}
+\section{Suggested Tables to Include in Final Draft}
 
 \begin{itemize}
-	\item PR curves (overall, by year, composite panel).
-	\item Temporal dynamics and trust diagnostics figures.
-	\item Batch SHAP and MOA surrogate SHAP visual pack.
-	\item MOA temporal permutation heatmap and agreement diagnostics.
+    \item Full recommended operating-point tables (all lenses, both contracts).
+    \item Per-year comparator summaries and per-year frontier outputs.
+    \item Pit-success threshold-policy sensitivity tables.
+    \item Race-support diagnostics for sparse-metric interpretation.
 \end{itemize}
+
+\section{Suggested Figures to Include in Final Draft}
+
+\begin{itemize}
+    \item Headline precision/recall/$F_{0.5}$ comparator bars.
+    \item Scored vs row\_tp vs truth-events-covered accounting bars.
+    \item Batch and MOA threshold frontiers.
+    \item PR/AP diagnostic curves.
+    \item Seasonal and race-level stability diagnostics (Kappa/G-Mean family).
+    \item Explainability pair: Batch direct SHAP and MOA surrogate SHAP.
+\end{itemize}
+
+\section{Historical vs Final Evidence Separation}
+
+Legacy ablation/provenance graph families, when retained, should be catalogued separately from final headline evidence.
+Use the current final-refresh manifest as authoritative pointer:
+\path{data_lake/reports/phase2b_presentation_figures/final_refresh/final_slide_assets_manifest.csv}
+
+Use this rule in the final manuscript:
+\begin{itemize}
+    \item only corrected final Phase 2B figures in headline chapters,
+    \item historical/legacy visuals only as provenance appendix with explicit labeling.
+\end{itemize}
+
+\section{Optional Additional Diagnostics}
+
+\begin{itemize}
+    \item Detailed overlap audit for Flink Strategy Engine TP vs Batch/MOA TP sets.
+    \item Score-distribution diagnostics for missed Flink Strategy Engine TP cases.
+    \item Frontier monotonicity and scored-support diagnostics.
+\end{itemize}
+
+\paragraph{Writing note.}
+Keep Appendix A as a map of ``where evidence lives''; do not duplicate full tables already available as CSV/MD artifacts.

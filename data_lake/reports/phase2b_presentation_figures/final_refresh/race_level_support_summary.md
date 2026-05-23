@@ -1,0 +1,14 @@
+# Race Level Support Summary
+
+| target | system | races_total_target | races_kept_target | races_kept_system | positives_min_filter |
+| --- | --- | --- | --- | --- | --- |
+| pit_any_h2 | Flink Strategy Engine | 92 | 92 | 92 | 3 |
+| pit_any_h2 | Batch No-Year | 92 | 92 | 91 | 3 |
+| pit_any_h2 | Batch Percent | 92 | 92 | 91 | 3 |
+| pit_any_h2 | MOA No-Year | 92 | 92 | 92 | 3 |
+| pit_any_h2 | MOA Percent | 92 | 92 | 92 | 3 |
+| pit_success_h2 | Flink Strategy Engine | 92 | 87 | 87 | 3 |
+| pit_success_h2 | Batch No-Year | 92 | 87 | 86 | 3 |
+| pit_success_h2 | Batch Percent | 92 | 87 | 86 | 3 |
+| pit_success_h2 | MOA No-Year | 92 | 87 | 87 | 3 |
+| pit_success_h2 | MOA Percent | 92 | 87 | 87 | 3 |
