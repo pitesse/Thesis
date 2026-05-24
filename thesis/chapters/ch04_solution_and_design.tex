@@ -1,146 +1,146 @@
 \chapter{Problem Solving: Architecture and Implementation}
 \label{ch:problem_solving}
 
-\section{Chapter Scope}
+% \section{Chapter Scope}
 
-This chapter is intentionally split into:
-\begin{itemize}
-    \item \textbf{Part I --- Architectural solution}: what was designed and why.
-    \item \textbf{Part II --- Implementation experience}: how the design was realized in reproducible code.
-\end{itemize}
+% This chapter is intentionally split into:
+% \begin{itemize}
+%     \item \textbf{Part I --- Architectural solution}: what was designed and why.
+%     \item \textbf{Part II --- Implementation experience}: how the design was realized in reproducible code.
+% \end{itemize}
 
-\section{Part I --- Architectural Solution}
-\subsection{End-to-End Architecture Overview}
+% \section{Part I --- Architectural Solution}
+% \subsection{End-to-End Architecture Overview}
 
-The implemented architecture follows this reproducible path:
-\begin{enumerate}
-    \item historical race extraction and replay packaging;
-    \item Kafka replay of telemetry/laps/track-status streams;
-    \item Flink event-time processing for race context and strategy logic;
-    \item JSONL data lake as immutable operational trace;
-    \item ML matrix preparation under contract constraints;
-    \item Batch XGBoost and MOA Online Learner branches;
-    \item shared comparator and threshold-frontier evaluation.
-\end{enumerate}
+% The implemented architecture follows this reproducible path:
+% \begin{enumerate}
+%     \item historical race extraction and replay packaging;
+%     \item Kafka replay of telemetry/laps/track-status streams;
+%     \item Flink event-time processing for race context and strategy logic;
+%     \item JSONL data lake as immutable operational trace;
+%     \item ML matrix preparation under contract constraints;
+%     \item Batch XGBoost and MOA Online Learner branches;
+%     \item shared comparator and threshold-frontier evaluation.
+% \end{enumerate}
 
-% TODO: insert final architecture diagram
-% TODO: insert figure based on code path:
-% f1-telemetry-producer -> Kafka -> f1-telemetry-processor -> data_lake -> ml_pipeline
+% % TODO: insert final architecture diagram
+% % TODO: insert figure based on code path:
+% % f1-telemetry-producer -> Kafka -> f1-telemetry-processor -> data_lake -> ml_pipeline
 
-\subsection{Event Sourcing and Replay}
+% \subsection{Event Sourcing and Replay}
 
-\begin{itemize}
-    \item Snapshot preparation: \path{f1-telemetry-producer/src/prepare_race.py}
-    \item Stream replay: \path{f1-telemetry-producer/src/stream_race.py}
-    \item Ordered topic replay for deterministic regeneration \citep{kreps2011kafka}.
-\end{itemize}
+% \begin{itemize}
+%     \item Snapshot preparation: \path{f1-telemetry-producer/src/prepare_race.py}
+%     \item Stream replay: \path{f1-telemetry-producer/src/stream_race.py}
+%     \item Ordered topic replay for deterministic regeneration \citep{kreps2011kafka}.
+% \end{itemize}
 
-\subsection{Flink Event-Time Processing and Strategy Logic}
+% \subsection{Flink Event-Time Processing and Strategy Logic}
 
-Main topology entrypoint:
-\path{f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java}
+% Main topology entrypoint:
+% \path{f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java}
 
-Operator families to document in final prose:
-\begin{itemize}
-    \item track-status and race-state enrichment,
-    \item rival/gap context construction,
-    \item tyre degradation and drop-zone reasoning,
-    \item Flink Strategy Engine recommendation logic (\texttt{MONITOR}, \texttt{GOOD\_PIT}, \texttt{PIT\_NOW}),
-    \item post-pit outcome classification in \texttt{PitStopEvaluator}.
-\end{itemize}
+% Operator families to document in final prose:
+% \begin{itemize}
+%     \item track-status and race-state enrichment,
+%     \item rival/gap context construction,
+%     \item tyre degradation and drop-zone reasoning,
+%     \item Flink Strategy Engine recommendation logic (\texttt{MONITOR}, \texttt{GOOD\_PIT}, \texttt{PIT\_NOW}),
+%     \item post-pit outcome classification in \texttt{PitStopEvaluator}.
+% \end{itemize}
 
-\subsection{Recommendation vs Outcome Separation}
+% \subsection{Recommendation vs Outcome Separation}
 
-The architecture enforces a strict semantic separation:
-\begin{itemize}
-    \item \textbf{Recommendation path}: ``should we recommend a pit now?''
-    \item \textbf{Outcome path}: ``was the actual pit strategically successful?''
-\end{itemize}
+% The architecture enforces a strict semantic separation:
+% \begin{itemize}
+%     \item \textbf{Recommendation path}: ``should we recommend a pit now?''
+%     \item \textbf{Outcome path}: ``was the actual pit strategically successful?''
+% \end{itemize}
 
-This separation is central to corrected \texttt{pit\_success\_h2} label construction and leakage control.
+% This separation is central to corrected \texttt{pit\_success\_h2} label construction and leakage control.
 
-\subsection{Truth, Comparator, and Frontier Architecture}
+% \subsection{Truth, Comparator, and Frontier Architecture}
 
-The comparator layer translates each system's positive calls into contract-consistent outcomes under shared horizon/lens constraints.
+% The comparator layer translates each system's positive calls into contract-consistent outcomes under shared horizon/lens constraints.
 
-Core evaluation scripts:
-\begin{itemize}
-    \item Batch: \path{ml_pipeline/lib/evaluate_batch_dual_contract_run.py}
-    \item MOA: \path{ml_pipeline/lib/evaluate_moa_dual_contract_run.py}
-    \item Shared comparator logic: \path{ml_pipeline/lib/comparator_heuristic.py}
-    \item Operating frontier: \path{ml_pipeline/lib/phase2b_threshold_frontier.py}.
-\end{itemize}
+% Core evaluation scripts:
+% \begin{itemize}
+%     \item Batch: \path{ml_pipeline/lib/evaluate_batch_dual_contract_run.py}
+%     \item MOA: \path{ml_pipeline/lib/evaluate_moa_dual_contract_run.py}
+%     \item Shared comparator logic: \path{ml_pipeline/lib/comparator_heuristic.py}
+%     \item Operating frontier: \path{ml_pipeline/lib/phase2b_threshold_frontier.py}.
+% \end{itemize}
 
-\subsection{System Families Compared}
+% \subsection{System Families Compared}
 
-\begin{itemize}
-    \item \textbf{Flink Strategy Engine}: deterministic online rule baseline.
-    \item \textbf{Batch XGBoost}: offline race-sequential OOF learner \citep{chen2016xgboost,roberts2017cvstructured}.
-    \item \textbf{MOA Online Learner}: online prequential test-then-train learner \citep{bifet2010moa}.
-\end{itemize}
+% \begin{itemize}
+%     \item \textbf{Flink Strategy Engine}: deterministic online rule baseline.
+%     \item \textbf{Batch XGBoost}: offline race-sequential OOF learner \citep{chen2016xgboost,roberts2017cvstructured}.
+%     \item \textbf{MOA Online Learner}: online prequential test-then-train learner \citep{bifet2010moa}.
+% \end{itemize}
 
-\section{Part II --- Implementation Experience}
-\subsection{Implementation Phase Timeline}
+% \section{Part II --- Implementation Experience}
+% \subsection{Implementation Phase Timeline}
 
-% TODO: replace list with compact timeline figure (5-7 milestones only)
-\begin{enumerate}
-    \item replay/data-lake path stabilization;
-    \item Flink Strategy Engine freeze;
-    \item Batch XGBoost OOF hardening;
-    \item MOA vote-score prequential upgrade;
-    \item contract-aware comparator/frontier correction;
-    \item final-refresh evidence package build.
-\end{enumerate}
+% % TODO: replace list with compact timeline figure (5-7 milestones only)
+% \begin{enumerate}
+%     \item replay/data-lake path stabilization;
+%     \item Flink Strategy Engine freeze;
+%     \item Batch XGBoost OOF hardening;
+%     \item MOA vote-score prequential upgrade;
+%     \item contract-aware comparator/frontier correction;
+%     \item final-refresh evidence package build.
+% \end{enumerate}
 
-\subsection{Batch XGBoost Implementation Choices}
+% \subsection{Batch XGBoost Implementation Choices}
 
-\begin{itemize}
-    \item Training entrypoint: \path{ml_pipeline/train_model.py}
-    \item CV/training core: \path{ml_pipeline/lib/model_training_cv.py}
-    \item Matrix preparation: \path{ml_pipeline/prep_data.py}
-    \item Split protocol: race-sequential expanding OOF folds.
-    \item Leakage filtering: remove target/truth/matched-event/eligibility markers before fitting.
-\end{itemize}
+% \begin{itemize}
+%     \item Training entrypoint: \path{ml_pipeline/train_model.py}
+%     \item CV/training core: \path{ml_pipeline/lib/model_training_cv.py}
+%     \item Matrix preparation: \path{ml_pipeline/prep_data.py}
+%     \item Split protocol: race-sequential expanding OOF folds.
+%     \item Leakage filtering: remove target/truth/matched-event/eligibility markers before fitting.
+% \end{itemize}
 
-\subsection{MOA Online Learner Implementation Choices}
+% \subsection{MOA Online Learner Implementation Choices}
 
-\begin{itemize}
-    \item MOA orchestrator: \path{ml_pipeline/lib/run_sml_phase2b_dual_contract.py}
-    \item MOA launcher: \path{ml_pipeline/run_moa_vote_logger.py}
-    \item Vote-logger Java class: \path{ml_pipeline/java_src/MoaPrequentialVoteLogger.java}
-    \item Ordering guarantee: test-then-train per instance.
-    \item Positive score: continuous vote-derived score (not calibrated probability by default).
-\end{itemize}
+% \begin{itemize}
+%     \item MOA orchestrator: \path{ml_pipeline/lib/run_sml_phase2b_dual_contract.py}
+%     \item MOA launcher: \path{ml_pipeline/run_moa_vote_logger.py}
+%     \item Vote-logger Java class: \path{ml_pipeline/java_src/MoaPrequentialVoteLogger.java}
+%     \item Ordering guarantee: test-then-train per instance.
+%     \item Positive score: continuous vote-derived score (not calibrated probability by default).
+% \end{itemize}
 
-\subsection{Data Preparation and Contract Enforcement}
+% \subsection{Data Preparation and Contract Enforcement}
 
-\begin{itemize}
-    \item Target construction source: \path{ml_pipeline/lib/data_preparation.py}
-    \item \texttt{pit\_success\_h2} strict contract enforcement:
-    \begin{itemize}
-        \item positive = successful pit soon,
-        \item negative = no pit soon or failed/disadvantage pit,
-        \item unresolved/weather/unmapped = not train-eligible.
-    \end{itemize}
-\end{itemize}
+% \begin{itemize}
+%     \item Target construction source: \path{ml_pipeline/lib/data_preparation.py}
+%     \item \texttt{pit\_success\_h2} strict contract enforcement:
+%     \begin{itemize}
+%         \item positive = successful pit soon,
+%         \item negative = no pit soon or failed/disadvantage pit,
+%         \item unresolved/weather/unmapped = not train-eligible.
+%     \end{itemize}
+% \end{itemize}
 
-\subsection{Reproducibility and Audit Layer}
+% \subsection{Reproducibility and Audit Layer}
 
-\begin{itemize}
-    \item final-refresh package builder: \path{ml_pipeline/lib/build_final_refresh_package.py}
-    \item presentation asset builder: \path{ml_pipeline/lib/build_final_slide_assets.py}
-    \item delivery/integrity audit: \path{ml_pipeline/lib/audit_phase2b_delivery_coverage.py}
-    \item final result printer: \path{ml_pipeline/print_final_results.py}
-\end{itemize}
+% \begin{itemize}
+%     \item final-refresh package builder: \path{ml_pipeline/lib/build_final_refresh_package.py}
+%     \item presentation asset builder: \path{ml_pipeline/lib/build_final_slide_assets.py}
+%     \item delivery/integrity audit: \path{ml_pipeline/lib/audit_phase2b_delivery_coverage.py}
+%     \item final result printer: \path{ml_pipeline/print_final_results.py}
+% \end{itemize}
 
-\subsection{Implementation Risks and Corrective Actions}
+% \subsection{Implementation Risks and Corrective Actions}
 
-\begin{itemize}
-    \item \textbf{Contract drift risk}: fixed by explicit corrected \texttt{pit\_success\_h2} semantics.
-    \item \textbf{Metric-ledger confusion risk}: fixed by strict row-level vs event-level separation.
-    \item \textbf{Stale artifact risk}: fixed by provenance manifests and stale checks.
-    \item \textbf{Fallback contamination risk}: fixed by explicit no-phase2a fallback checks.
-\end{itemize}
+% \begin{itemize}
+%     \item \textbf{Contract drift risk}: fixed by explicit corrected \texttt{pit\_success\_h2} semantics.
+%     \item \textbf{Metric-ledger confusion risk}: fixed by strict row-level vs event-level separation.
+%     \item \textbf{Stale artifact risk}: fixed by provenance manifests and stale checks.
+%     \item \textbf{Fallback contamination risk}: fixed by explicit no-phase2a fallback checks.
+% \end{itemize}
 
-\paragraph{Writing note.}
-Keep this chapter implementation-centered: explain only design choices that affect correctness, fairness, and reproducibility.
+% \paragraph{Writing note.}
+% Keep this chapter implementation-centered: explain only design choices that affect correctness, fairness, and reproducibility.

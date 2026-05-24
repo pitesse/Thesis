@@ -1,151 +1,151 @@
 \chapter{Experimental Evaluation}
 \label{ch:experimental_evaluation}
 
-\section{Experimental Setup and Frozen Protocol}
+% \section{Experimental Setup and Frozen Protocol}
 
-Headline claims are computed under one fixed contract:
-\begin{itemize}
-    \item seasons: 2022--2025,
-    \item truth universe: \texttt{canonical\_sde\_truth},
-    \item main lens: \texttt{clean\_actionable},
-    \item targets: \texttt{pit\_any\_h2}, corrected \texttt{pit\_success\_h2},
-    \item systems: Flink Strategy Engine, Batch No-Year, Batch Percent, MOA No-Year, MOA Percent.
-\end{itemize}
+% Headline claims are computed under one fixed contract:
+% \begin{itemize}
+%     \item seasons: 2022--2025,
+%     \item truth universe: \texttt{canonical\_sde\_truth},
+%     \item main lens: \texttt{clean\_actionable},
+%     \item targets: \texttt{pit\_any\_h2}, corrected \texttt{pit\_success\_h2},
+%     \item systems: Flink Strategy Engine, Batch No-Year, Batch Percent, MOA No-Year, MOA Percent.
+% \end{itemize}
 
-% TODO: verify all setup statements against:
-% data_lake/reports/phase2b_presentation_figures/final_refresh/final_refresh_input_provenance.csv
+% % TODO: verify all setup statements against:
+% % data_lake/reports/phase2b_presentation_figures/final_refresh/final_refresh_input_provenance.csv
 
-\section{Metrics and Ledger Semantics}
+% \section{Metrics and Ledger Semantics}
 
-\subsection{Main metrics}
-\begin{itemize}
-    \item precision, successful-event coverage (recall-like), $F_{0.5}$;
-    \item AP/PR for ranking diagnostics of score-based systems;
-    \item support-aware diagnostics (Kappa, G-Mean, balanced accuracy; optional MCC where explicitly reported).
-\end{itemize}
+% \subsection{Main metrics}
+% \begin{itemize}
+%     \item precision, successful-event coverage (recall-like), $F_{0.5}$;
+%     \item AP/PR for ranking diagnostics of score-based systems;
+%     \item support-aware diagnostics (Kappa, G-Mean, balanced accuracy; optional MCC where explicitly reported).
+% \end{itemize}
 
-\subsection{Critical semantic distinction}
-\begin{itemize}
-    \item \textbf{strict operational precision}: used for apples-to-apples comparison;
-    \item \textbf{matched-pit success rate}: diagnostic-only for Flink Strategy Engine strategy quality.
-\end{itemize}
+% \subsection{Critical semantic distinction}
+% \begin{itemize}
+%     \item \textbf{strict operational precision}: used for apples-to-apples comparison;
+%     \item \textbf{matched-pit success rate}: diagnostic-only for Flink Strategy Engine strategy quality.
+% \end{itemize}
 
-% TODO: insert compact ledger-definition table with equations from Chapter 3.
+% % TODO: insert compact ledger-definition table with equations from Chapter 3.
 
-\section{Training and Runtime Comparison}
+% \section{Training and Runtime Comparison}
 
-Use runtime evidence from:
-\begin{itemize}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/training_runtime_slide_table.csv}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/training_runtime_comparison.png}
-\end{itemize}
+% Use runtime evidence from:
+% \begin{itemize}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/training_runtime_slide_table.csv}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/training_runtime_comparison.png}
+% \end{itemize}
 
-% TODO: insert final table
-% TODO: verify that Batch runtime = race-sequential OOF train/eval and MOA runtime = prequential test-then-train only
+% % TODO: insert final table
+% % TODO: verify that Batch runtime = race-sequential OOF train/eval and MOA runtime = prequential test-then-train only
 
-\section{Flink Strategy Engine Baseline}
+% \section{Flink Strategy Engine Baseline}
 
-Summarize the freeze decision and baseline role used in final comparisons.
+% Summarize the freeze decision and baseline role used in final comparisons.
 
-% TODO: insert compact freeze rationale table (include internal IDs only as artifact provenance)
-% TODO: source check: data_lake/reports/final_sde_c6_cfg120_fixed_raw_clean_aggregate_2022_2025.csv
+% % TODO: insert compact freeze rationale table (include internal IDs only as artifact provenance)
+% % TODO: source check: data_lake/reports/final_sde_c6_cfg120_fixed_raw_clean_aggregate_2022_2025.csv
 
-\section{Headline Result: \texttt{pit\_any\_h2}}
+% \section{Headline Result: \texttt{pit\_any\_h2}}
 
-Primary recap source:
-\begin{itemize}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_any_final_recap.csv}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_any_headline_comparison.png}
-\end{itemize}
+% Primary recap source:
+% \begin{itemize}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_any_final_recap.csv}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_any_headline_comparison.png}
+% \end{itemize}
 
-% TODO: insert final figure
-% TODO: verify number from pit_any_final_recap.csv
+% % TODO: insert final figure
+% % TODO: verify number from pit_any_final_recap.csv
 
-\section{Accounting Clarification for Decision vs Event Ledgers}
+% \section{Accounting Clarification for Decision vs Event Ledgers}
 
-Use a compact table/diagram to show:
-\begin{itemize}
-    \item predicted positives and row-level outcomes;
-    \item successful-event coverage denominator and numerator;
-    \item why these ledgers answer different questions.
-\end{itemize}
+% Use a compact table/diagram to show:
+% \begin{itemize}
+%     \item predicted positives and row-level outcomes;
+%     \item successful-event coverage denominator and numerator;
+%     \item why these ledgers answer different questions.
+% \end{itemize}
 
-% TODO: insert explanatory table based on final_refresh CSV package.
+% % TODO: insert explanatory table based on final_refresh CSV package.
 
-\section{Headline Result: \texttt{pit\_success\_h2} (strict contract)}
+% \section{Headline Result: \texttt{pit\_success\_h2} (strict contract)}
 
-\subsection{Apples-to-apples strict operational comparison}
-Source:
-\begin{itemize}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_apples_to_apples.csv}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_apples_to_apples_main.png}
-\end{itemize}
+% \subsection{Apples-to-apples strict operational comparison}
+% Source:
+% \begin{itemize}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_apples_to_apples.csv}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_apples_to_apples_main.png}
+% \end{itemize}
 
-\subsection{Flink diagnostic vs operational precision}
-Source:
-\begin{itemize}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_sde_diagnostic.csv}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_sde_diagnostic_operational_vs_matched.png}
-\end{itemize}
+% \subsection{Flink diagnostic vs operational precision}
+% Source:
+% \begin{itemize}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_sde_diagnostic.csv}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_sde_diagnostic_operational_vs_matched.png}
+% \end{itemize}
 
-% TODO: insert both figures
-% TODO: explicitly state that matched-pit success rate is not main precision
+% % TODO: insert both figures
+% % TODO: explicitly state that matched-pit success rate is not main precision
 
-\section{Threshold-Policy Sensitivity}
+% \section{Threshold-Policy Sensitivity}
 
-Source:
-\begin{itemize}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_threshold_sensitivity.csv}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_threshold_sensitivity_slide.csv}
-\end{itemize}
+% Source:
+% \begin{itemize}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_threshold_sensitivity.csv}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_threshold_sensitivity_slide.csv}
+% \end{itemize}
 
-Interpretation rule:
-\begin{itemize}
-    \item selected points are operational;
-    \item relaxed points are diagnostic sensitivity unless policy is explicitly changed.
-\end{itemize}
+% Interpretation rule:
+% \begin{itemize}
+%     \item selected points are operational;
+%     \item relaxed points are diagnostic sensitivity unless policy is explicitly changed.
+% \end{itemize}
 
-\section{PR/AP Ranking Diagnostics}
+% \section{PR/AP Ranking Diagnostics}
 
-Sources:
-\begin{itemize}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pr_curve_pit_any_final.png}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pr_curve_pit_success_final.png}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/ap_summary_final.csv}
-\end{itemize}
+% Sources:
+% \begin{itemize}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pr_curve_pit_any_final.png}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pr_curve_pit_success_final.png}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/ap_summary_final.csv}
+% \end{itemize}
 
-% TODO: insert PR figures with caption:
-% "row-level ranking diagnostic, not operational precision"
+% % TODO: insert PR figures with caption:
+% % "row-level ranking diagnostic, not operational precision"
 
-\section{Support-Aware Race-Level Diagnostics}
+% \section{Support-Aware Race-Level Diagnostics}
 
-Sources:
-\begin{itemize}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_kappa_pit_any.png}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_gmean_pit_any.png}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_kappa_pit_success.png}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_gmean_pit_success.png}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_support_summary.csv}
-    \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_metric_summary.csv}
-\end{itemize}
+% Sources:
+% \begin{itemize}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_kappa_pit_any.png}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_gmean_pit_any.png}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_kappa_pit_success.png}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_gmean_pit_success.png}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_support_summary.csv}
+%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_metric_summary.csv}
+% \end{itemize}
 
-% TODO: insert figures and state support filter threshold explicitly in text (not just in captions).
+% % TODO: insert figures and state support filter threshold explicitly in text (not just in captions).
 
-\section{Explainability Results}
+% \section{Explainability Results}
 
-Use corrected final explainability outputs only.
+% Use corrected final explainability outputs only.
 
-% TODO: insert final_refresh explainability figure(s) and path(s) once frozen
-% TODO: verify direct Batch SHAP vs MOA surrogate SHAP semantics before writing conclusions
+% % TODO: insert final_refresh explainability figure(s) and path(s) once frozen
+% % TODO: verify direct Batch SHAP vs MOA surrogate SHAP semantics before writing conclusions
 
-\section{Threats to Validity}
+% \section{Threats to Validity}
 
-\begin{itemize}
-    \item support sparsity (especially \texttt{pit\_success\_h2}) and race-level metric volatility;
-    \item contract-policy coupling (threshold choice materially changes operating behavior);
-    \item comparator assumptions and horizon strictness;
-    \item surrogate explainability limitations for streaming models.
-\end{itemize}
+% \begin{itemize}
+%     \item support sparsity (especially \texttt{pit\_success\_h2}) and race-level metric volatility;
+%     \item contract-policy coupling (threshold choice materially changes operating behavior);
+%     \item comparator assumptions and horizon strictness;
+%     \item surrogate explainability limitations for streaming models.
+% \end{itemize}
 
-\paragraph{Writing note.}
-Every reported value in this chapter must be traceable to files in \path{data_lake/reports/phase2b_presentation_figures/final_refresh/}. Do not use ad-hoc markdown snapshots as authoritative numeric sources.
+% \paragraph{Writing note.}
+% Every reported value in this chapter must be traceable to files in \path{data_lake/reports/phase2b_presentation_figures/final_refresh/}. Do not use ad-hoc markdown snapshots as authoritative numeric sources.

@@ -1,105 +1,105 @@
 \chapter{Problem Framing}
 \label{ch:problem_framing}
 
-\section{Decision Unit and Prediction Task}
+% \section{Decision Unit and Prediction Task}
 
-The common decision unit is a driver-lap row at lap index $k$. Each system can emit a positive recommendation at $k$ or abstain.
+% The common decision unit is a driver-lap row at lap index $k$. Each system can emit a positive recommendation at $k$ or abstain.
 
-% TODO: expand prose with compact notation block
+% % TODO: expand prose with compact notation block
 
-\subsection{Contract 1: \texttt{pit\_any\_h2}}
-Predict whether any eligible pit event occurs soon.
+% \subsection{Contract 1: \texttt{pit\_any\_h2}}
+% Predict whether any eligible pit event occurs soon.
 
-\subsection{Contract 2: \texttt{pit\_success\_h2} (corrected)}
-Predict whether a successful evaluated pit occurs in strict future horizon $[k{+}1,k{+}2]$.
-\begin{itemize}
-    \item $y=1$: matched pit outcome is \texttt{SUCCESS\_*} or \texttt{OFFSET\_ADVANTAGE}.
-    \item $y=0$: no pit in horizon, or matched \texttt{FAILURE\_*}/\texttt{OFFSET\_DISADVANTAGE}.
-    \item train/eval-unknown exclusion: \texttt{UNRESOLVED\_*}, \texttt{UNMAPPED\_*}, \texttt{WEATHER\_SURVIVAL\_STOP}, and equivalent non-classifiable outcomes.
-\end{itemize}
+% \subsection{Contract 2: \texttt{pit\_success\_h2} (corrected)}
+% Predict whether a successful evaluated pit occurs in strict future horizon $[k{+}1,k{+}2]$.
+% \begin{itemize}
+%     \item $y=1$: matched pit outcome is \texttt{SUCCESS\_*} or \texttt{OFFSET\_ADVANTAGE}.
+%     \item $y=0$: no pit in horizon, or matched \texttt{FAILURE\_*}/\texttt{OFFSET\_DISADVANTAGE}.
+%     \item train/eval-unknown exclusion: \texttt{UNRESOLVED\_*}, \texttt{UNMAPPED\_*}, \texttt{WEATHER\_SURVIVAL\_STOP}, and equivalent non-classifiable outcomes.
+% \end{itemize}
 
-\section{Data Lineage and Reproducibility Boundary}
+% \section{Data Lineage and Reproducibility Boundary}
 
-End-to-end lineage (code anchors):
-\begin{enumerate}
-    \item replay snapshot preparation (\path{f1-telemetry-producer/src/prepare_race.py});
-    \item event-time replay to Kafka (\path{f1-telemetry-producer/src/stream_race.py});
-    \item Flink race-context and strategy operators (\path{f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java});
-    \item JSONL artifacts in \path{data_lake/};
-    \item ML-ready matrix preparation (\path{ml_pipeline/prep_data.py}, \path{ml_pipeline/lib/data_preparation.py}).
-\end{enumerate}
+% End-to-end lineage (code anchors):
+% \begin{enumerate}
+%     \item replay snapshot preparation (\path{f1-telemetry-producer/src/prepare_race.py});
+%     \item event-time replay to Kafka (\path{f1-telemetry-producer/src/stream_race.py});
+%     \item Flink race context and strategy operators (\path{f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java});
+%     \item JSONL artifacts in \path{data_lake/};
+%     \item ML-ready matrix preparation (\path{ml_pipeline/prep_data.py}, \path{ml_pipeline/lib/data_preparation.py}).
+% \end{enumerate}
 
-% TODO: insert final lineage figure
-% TODO: insert final figure from architecture section, source: thesis-local redraw based on code flow
+% % TODO: insert final lineage figure
+% % TODO: insert final figure from architecture section, source: thesis-local redraw based on code flow
 
-\section{Universe, Lenses, and Fair Comparison Boundary}
+% \section{Universe, Lenses, and Fair Comparison Boundary}
 
-Headline claims use:
-\begin{itemize}
-    \item universe: \texttt{canonical\_sde\_truth},
-    \item lens: \texttt{clean\_actionable},
-    \item years: 2022--2025.
-\end{itemize}
+% Headline claims use:
+% \begin{itemize}
+%     \item universe: \texttt{canonical\_sde\_truth},
+%     \item lens: \texttt{clean\_actionable},
+%     \item years: 2022--2025.
+% \end{itemize}
 
-Sensitivity-only views:
-\begin{itemize}
-    \item \texttt{raw},
-    \item \texttt{clean\_dry\_strategy},
-    \item native-universe diagnostics (not headline).
-\end{itemize}
+% Sensitivity-only views:
+% \begin{itemize}
+%     \item \texttt{raw},
+%     \item \texttt{clean\_dry\_strategy},
+%     \item native-universe diagnostics (not headline).
+% \end{itemize}
 
-\section{Imbalance and Baseline Difficulty}
+% \section{Imbalance and Baseline Difficulty}
 
-The task is heavily imbalanced. This chapter should report:
-\begin{itemize}
-    \item total driver-lap rows,
-    \item eligible rows for each contract/lens,
-    \item positive prevalence for \texttt{pit\_any\_h2} and corrected \texttt{pit\_success\_h2}.
-\end{itemize}
+% The task is heavily imbalanced. This chapter should report:
+% \begin{itemize}
+%     \item total driver-lap rows,
+%     \item eligible rows for each contract/lens,
+%     \item positive prevalence for \texttt{pit\_any\_h2} and corrected \texttt{pit\_success\_h2}.
+% \end{itemize}
 
-% TODO: verify all counts from:
-% data_lake/reports/phase2b_presentation_figures/final_refresh/final_refresh_input_provenance.csv
-% data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_support_summary.csv
+% % TODO: verify all counts from:
+% % data_lake/reports/phase2b_presentation_figures/final_refresh/final_refresh_input_provenance.csv
+% % data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_support_summary.csv
 
-\section{Metric Ledger Definitions}
+% \section{Metric Ledger Definitions}
 
-\subsection{Row-level operational ledger}
+% \subsection{Row-level operational ledger}
 
-For strict operational scoring on \texttt{pit\_success\_h2}:
-\begin{equation}
-\text{strict precision} = \frac{TP}{TP + FP_{\text{no-match}} + FP_{\text{failure}}}.
-\end{equation}
+% For strict operational scoring on \texttt{pit\_success\_h2}:
+% \begin{equation}
+% \text{strict precision} = \frac{TP}{TP + FP_{\text{no-match}} + FP_{\text{failure}}}.
+% \end{equation}
 
-No-match positive predictions are false positives by definition in the corrected contract.
+% No-match positive predictions are false positives by definition in the corrected contract.
 
-\subsection{Event-level coverage ledger}
+% \subsection{Event-level coverage ledger}
 
-\begin{equation}
-\text{successful event coverage} =
-\frac{\text{unique successful events covered}}{\text{eligible successful events}}.
-\end{equation}
+% \begin{equation}
+% \text{successful event coverage} =
+% \frac{\text{unique successful events covered}}{\text{eligible successful events}}.
+% \end{equation}
 
-\subsection{Diagnostic-only matched-pit quality}
+% \subsection{Diagnostic-only matched-pit quality}
 
-Matched-pit success rate is kept as diagnostic:
-\begin{equation}
-\frac{\text{matched successes}}{\text{matched successes}+\text{matched failures}}.
-\end{equation}
-It is \textbf{not} the main precision used for apples-to-apples comparison.
+% Matched-pit success rate is kept as diagnostic:
+% \begin{equation}
+% \frac{\text{matched successes}}{\text{matched successes}+\text{matched failures}}.
+% \end{equation}
+% It is \textbf{not} the main precision used for apples-to-apples comparison.
 
-\section{Label Construction and Leakage Constraints}
+% \section{Label Construction and Leakage Constraints}
 
-Target construction is implemented in \path{ml_pipeline/lib/data_preparation.py}. Leakage controls are enforced during matrix preparation and training (\path{ml_pipeline/lib/model_training_cv.py}, MOA export/eval path in \path{ml_pipeline/lib/run_sml_phase2b_dual_contract.py}).
+% Target construction is implemented in \path{ml_pipeline/lib/data_preparation.py}. Leakage controls are enforced during matrix preparation and training (\path{ml_pipeline/lib/model_training_cv.py}, MOA export/eval path in \path{ml_pipeline/lib/run_sml_phase2b_dual_contract.py}).
 
-\begin{itemize}
-    \item Post-pit outcome fields may define labels.
-    \item Post-pit outcome fields must not enter model features.
-    \item Target/truth/matched-event/eligibility markers are excluded from features.
-\end{itemize}
+% \begin{itemize}
+%     \item Post-pit outcome fields may define labels.
+%     \item Post-pit outcome fields must not enter model features.
+%     \item Target/truth/matched-event/eligibility markers are excluded from features.
+% \end{itemize}
 
-\section{Why Accuracy Alone is Inadequate}
+% \section{Why Accuracy Alone is Inadequate}
 
-Under severe class imbalance, a high-accuracy classifier can still fail operationally. This motivates PR/AP reporting under skew \citep{saito2015prroc,davis2006relationship}, cost-sensitive thresholding \citep{elkan2001costsensitive}, and support-aware Kappa/G-Mean diagnostics \citep{cohen1960kappa,he2009imbalanced}.
+% Under severe class imbalance, a high-accuracy classifier can still fail operationally. This motivates PR/AP reporting under skew \citep{saito2015prroc,davis2006relationship}, cost-sensitive thresholding \citep{elkan2001costsensitive}, and support-aware Kappa/G-Mean diagnostics \citep{cohen1960kappa,he2009imbalanced}.
 
-\paragraph{Writing note.}
-Keep this chapter formal and definition-driven. Avoid presenting final conclusions here; reserve comparative claims for Chapter~\ref{ch:experimental_evaluation}.
+% \paragraph{Writing note.}
+% Keep this chapter formal and definition-driven. Avoid presenting final conclusions here; reserve comparative claims for Chapter~\ref{ch:experimental_evaluation}.

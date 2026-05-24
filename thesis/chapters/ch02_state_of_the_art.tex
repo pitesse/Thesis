@@ -1,96 +1,195 @@
 \chapter{State of the Art}
 \label{ch:state_of_the_art}
 
-\section{Streaming and Event-Time Foundations}
+\section{Overview}
 
-The architecture is grounded in event-time stream processing and replayable logs, not ingestion-time shortcuts. Core references are the Dataflow model and Flink/Kafka stream infrastructure \citep{akidau2015dataflow,carbone2015flink,kreps2011kafka}.
+The analysis of Formula 1 race strategy has progressively moved from retrospective summaries and driver/team feeling decisions toward data-driven and live-like decision support systems. 
+Modern telemetry, timing data, and event logs make it possible to reconstruct the evolution of a race at fine temporal granularity, transforming each lap into a 
+sequence of data events which can be analyzed and interpreted. 
+In the case of pit stop strategy, this shift is particularly relevant: a pit decision depends on tyre age, gaps between drivers, lap times,
+traffic, race phase, track status \& conditions, rival behaviour, and the expected post stop advantage. As a consequence, the central challenge 
+is to predict whether a pit stop will occur, and also to evaluate whether a decision support system can emit useful pit calls under realistic temporal and statistical 
+constraints.
 
-\begin{itemize}
-    \item Event-time ordering and watermarks for causal processing.
-    \item Stateful keyed operators for race-context accumulation.
-    \item Replayability for reproducible experimental regeneration.
-\end{itemize}
+This setting introduces methodological difficulties. 
+First, the data is inherently sequential: the state available at lap $k$ must be processed without using information from future laps, since in a live 
+scenario the information is not available. 
+Second, pit events are rare compared with the total number of driver-lap observations, making standard accuracy based evaluation inadequate.
+Third, the evaluation target isn't unique: predicting that a pit will happen soon and predicting that a future pit will be evaluated as successful are related but distinct 
+goals. 
+Finally, historical replay is useful for reproducibility, but it needs separation between event generation, stream processing, supervised learning, 
+and final comparison of the results.
 
-% TODO: expand prose and include one short comparative paragraph on event-time vs processing-time.
+The state of the art reviewed in this chapter is organized around these challenges. It begins with event-time stream processing and replayable logs, which provide 
+the infrastructure for reconstructing historical races as live-like streams. It then examines motorsport strategy and pit stop decision support literature, which motivates 
+the race context variables involved in pit decisions. The chapter then discusses learning approaches for pit stop prediction based on race-state features, 
+distinguishing between offline Batch learning and online prequential learning. 
+The final sections focus on evaluation under class imbalance and temporal dependence, followed by explainability and score interpretation 
+as tools for validating the methodology. This structure provides the background needed to pitch the thesis as an end-to-end replay-to-evaluation pipeline for comparing a 
+Flink Strategy Engine, Batch XGBoost, and a MOA Online Learner under aligned pit-decision contracts.
 
-\section{Race Strategy Decision Support Literature}
+% \begin{table}[t]
+% \centering
+% \caption{Research areas related to the thesis and their role in the proposed pipeline.}
+% \label{tab:state_of_art_taxonomy}
+% \begin{tabular}{p{0.25\linewidth}p{0.32\linewidth}p{0.32\linewidth}}
+% \toprule
+% Area & Contribution to the thesis & Remaining gap addressed by this work \\
+% \midrule
+% Stream processing & Event-time execution, replayable logs, stateful computation & Does not define pit-decision semantics or evaluation contracts \\
+% Motorsport strategy & Pit windows, tyre degradation, undercut/overcut, traffic context & Often focuses on optimization or simulation rather than aligned learner comparison \\
+% Batch learning & Learns patterns from historical race-state features & Requires race-wise validation and leakage control \\
+% Online learning & Evaluates models in stream order through prequential test-then-train & Requires comparable feature and truth contracts against Batch learning \\
+% Imbalanced evaluation & PR/AP, F-score variants, Kappa, G-Mean & Needs domain-specific row/event accounting for pit decisions \\
+% Explainability & Feature attribution and shortcut detection & Must be used as methodology debugging, not only visualization \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
 
-Race strategy support combines tactical heuristics, simulation/optimization, and recent data-driven approaches \citep{heilmeier2020race,carrasco2023optimization,quiroga2024optimization,piccinotti2020openloop,widanage2019indy500}.
+\section{Streaming and Event-Time Processing}
 
-\begin{itemize}
-    \item Optimization-oriented work formalizes undercut/overcut and stop-window trade-offs.
-    \item Data-driven work often improves prediction, but reproducibility and evaluation-contract alignment are frequently under-specified.
-\end{itemize}
+The increasing availability of fine-grained sports timing data has made it possible to analyze races as sequences of evolving states.
+In Formula 1, each lap changes the information available to a strategy system: tyre age increases, gaps to rivals evolve, track status may 
+change, and previous decisions constrain future options. Pit stop decision support is therefore inherently temporal. A recommendation at lap $k$ must be based on 
+the information available up to that point, rather than on the completed entire race viewed retrospectively.
 
-% TODO: classify cited papers by objective (timing vs utility vs simulation) in final prose.
+This requirement naturally connects the problem to event-time stream processing. The Dataflow model formalizes concepts such as event time, windowing, watermarks, 
+and the handling of out-of-order events \citep{akidau2015dataflow}. The distinction between event time and processing time is particularly important in this thesis. 
+Historical races can be processed faster or slower than real time during replay, but the logic of the race must still follow the timestamps and lap order of the original
+ event sequence. In other words, the system should reconstruct the causal structure of the race to mirror the actual race progression. 
 
-\section{Batch Learning for Tabular Racing Context}
+Apache Flink offers an effective framework for stateful stream processing over keyed event streams \citep{carbone2015flink}. This is relevant because 
+race context must be accumulated over time for each driver, race, and track-status sequence; it's not possible to reconstruct the state from individual events. 
+Kafka-style logs complement this setting by providing a replayable ingestion layer, where historical events can be published again as ordered streams \citep{kreps2011kafka}. 
+Together, these concepts support the core streaming data engineering requirement of the thesis: transforming past race data into reproducible live-like streams.
 
-Batch XGBoost is a strong baseline for heterogeneous tabular features under skewed labels \citep{chen2016xgboost}. In this thesis, its relevance is methodological:
-\begin{itemize}
-    \item robust non-linear feature interactions,
-    \item compatibility with structured cross-validation,
-    \item direct TreeSHAP interpretability path.
-\end{itemize}
+However, stream-processing systems only provide the computational foundation of the live-like replay. They do not define what information is strategically meaningful 
+in a pit stop decision, nor how such a decision should be evaluated. This requires domain-specific race strategy reasoning, which is discussed in the next section.
 
-Related motorsport ML references should be used as context, not as replacements for method-grounding citations \citep{sasikumar2025pitstop,hettmann2024datatopodium,dinh2025gradient}.
 
-\section{Online Learning and Prequential Evaluation}
+\section{Pit stop Strategy and Motorsport Decision Support}
 
-MOA provides the stream-mining framework and prequential evaluation mechanics used here \citep{bifet2010moa}. Drift literature frames why online adaptation matters \citep{gama2014drift,bifet2007adwin,gomes2017arf,arora2024driftreview}.
+Pit stop strategy is one of the most visible and tactical decisions in circuit racing. A stop can restore tyre performance and create future 
+pace advantage, but it also introduces an immediate time loss and may place the driver into traffic from slower cars. The value of a pit stop is therefore context-dependent: 
+the same stop can be beneficial in one race state and damaging in another, depending on tyre degradation, gaps to rivals, pit-loss time, race phase, the circuit,
+safety-car context, and the possibility of undercut or overcut moves.
 
-\begin{itemize}
-    \item Prequential loop: test on each instance, then train on that instance.
-    \item Stream metrics are sensitive to ordering, support, and drift regime.
-\end{itemize}
+Existing motorsport strategy research has approached this problem from different perspectives. Optimization-oriented work formalizes pit stop planning as the search for 
+stop laps and tyre choices that minimize race time or maximize expected race outcome \citep{carrasco2023optimization,quiroga2024optimization,piccinotti2020openloop}. 
+Other contributions focus on virtual strategy engineering and data-driven motorsport analytics, combining historical or live data with domain-specific reasoning 
+\citep{heilmeier2020race,widanage2019indy500}. These works are important because they identify the strategic variables that should be considered when reasoning about pit stops.
 
-% TODO: if ARF/ADWIN internals are not central in final code path, keep them as contextual citations only.
+At the same time, the objective of this thesis is not to compute a globally optimal race plan. Instead, the focus is on decision support from replayed race states: 
+given the information available at a given lap, the system should decide whether a pit event is imminent, or whether an imminent pit event is likely to be evaluated as
+strategically successful. This difference matters because the thesis is concerned with the evaluation of decision rules and learning systems, 
+rather than with solving a complete race-strategy optimization problem, which may seem as a similar challenge.
 
-\section{Imbalanced Evaluation and Threshold Policy}
+The strategy literature therefore motivates the race context variables used by the system, but it does not by itself provide a comparative framework for deterministic,
+Batch, and online learners. Once race context has been extracted from the stream, the problem can also be studied as a prediction over driver-lap feature rows. 
+This motivates the learning-based perspective introduced next.
 
-Under rare positives, PR/AP diagnostics are more informative than ROC-focused summaries \citep{saito2015prroc,davis2006relationship}. Cost-sensitive threshold policy is an explicit design choice, not a by-product \citep{elkan2001costsensitive}.
 
-For this thesis:
-\begin{itemize}
-    \item Kappa is used as chance-corrected diagnostic agreement \citep{cohen1960kappa}.
-    \item G-Mean is used as imbalance-aware class-balance diagnostic \citep{he2009imbalanced}.
-\end{itemize}
+\section{Learning Approaches for Race-State Prediction}
 
-% TODO: add one compact metric-purpose table in final writing.
+The transformation of race streams into structured driver-lap observations makes it possible to study pit decision support as a supervised learning problem. 
+Each row summarizes the performance of a driver at a given lap, while the target describes whether a relevant event (pit stop) occurs in a short future horizon. In this thesis, 
+this formulation is used for two related contracts: predicting whether any pit stop will occur soon, and predicting whether a successful evaluated pit stop will occur soon.
 
-\section{Leakage and Structured Validation}
+This setting is naturally suited to tabular learning. The input features are heterogeneous: they may include lap-time information, tyre age, relative pace, 
+race progress, gaps, and other race context signals. Gradient-boosted tree models are commonly used in such settings because they can capture non-linear interactions
+ between variables without requiring the same preprocessing assumptions as many linear models. XGBoost is therefore a relevant Batch-learning baseline for this thesis 
+ \citep{chen2016xgboost}. It also provides a direct path to explainability for tree models, which is useful for inspecting whether the model relies on meaningful race-state signals.
 
-Temporal and grouped split discipline is essential when rows share race context and future outcomes \citep{roberts2017cvstructured,brookshire2024leakage}.
+Recent motorsport machine-learning work provides broader context for the use of predictive models in racing scenarios 
+\citep{sasikumar2025pitstop,hettmann2024datatopodium,dinh2025gradient}. These studies support the idea that race-state data can contain useful predictive signal. 
+However, racing data also introduces validation challenges. Rows from the same race are temporally and contextually dependent, and features derived from future 
+outcomes can easily create leakage if not removed from the learning matrix.
 
-\begin{itemize}
-    \item Structured OOF validation is required for fair downstream frontier selection.
-    \item Feature filtering must remove target/truth/matched-event shortcuts.
-\end{itemize}
+For this reason, Batch learning is treated in this thesis also as an evaluation design problem. Race-wise and race-sequential
+out-of-fold evaluation are required to make learned predictions comparable to streaming decisions. This naturally leads to the second learning paradigm considered 
+in the thesis: online learning under prequential evaluation.
 
-\section{Explainability and Probability-Quality Caveats}
 
-Explainability references:
-\begin{itemize}
-    \item SHAP additive attribution \citep{lundberg2017shap}.
-    \item TreeSHAP for tree ensembles (Batch XGBoost) \citep{lundberg2018treeshap}.
-\end{itemize}
+\section{Online Learning and Stream Evaluation}
 
-Calibration/probability-quality references:
-\begin{itemize}
-    \item probability quality vs ranking quality distinction \citep{niculescu2005goodprob},
-    \item optional calibration caveat context \citep{guo2017calibration}.
-\end{itemize}
+Batch learning assumes that training data is available before the model is evaluated. In contrast, online learning considers a setting in which examples arrive 
+sequentially and the model may be updated over time. This is relevant for decision support over streams, where the chronological order of observations 
+is part of the problem definition.
 
-% TODO: keep calibration subsection short unless explicit calibration diagnostics are central to final claims.
+MOA is a framework for stream mining designed for online learning experiments over large or evolving data streams \citep{bifet2010moa}. An important evaluation protocol in 
+this setting is prequential evaluation. Each instance is first used for testing, and only afterwards used for training. This test-then-train order preserves the 
+causal constraint that the model should not learn from the same row before being evaluated on it.
 
-\section{Research Gap Addressed by This Thesis}
+Online learning is also connected to concept drift, where the statistical properties of the stream change over time \citep{gama2014drift,arora2024driftreview}. 
+Adaptive methods such as ADWIN and Adaptive Random Forests are part of this broader literature \citep{bifet2007adwin,gomes2017arf}. In this thesis, this literature 
+is used mainly to motivate the comparison between an offline learner trained race-wise and an online learner evaluated in stream order. The central questions are 
+whether a streaming learner can predict pit targets and whether its behaviour differs meaningfully from Batch XGBoost when both are evaluated under 
+aligned feature and truth contracts.
 
-\begin{itemize}
-    \item End-to-end replay-to-evaluation reproducibility.
-    \item Shared truth-universe evaluation across deterministic, batch, and streaming paradigms.
-    \item Explicit dual-ledger accounting (row decisions vs event coverage).
-    \item Corrected strict operational \texttt{pit\_success\_h2} contract and threshold-policy interpretation.
-\end{itemize}
+The selected online learner configuration is OzaBoostADWIN. This choice combines an online boosting scheme with ADWIN-based 
+adaptation, providing a stream learning baseline that can emit per instance votes in prequential order \citep{oza2005boosting,bifet2007adwin}. 
+In this thesis, the role of this learner is comparative, it is used to study how an online learner behaves under the same feature and 
+truth contracts used for Batch XGBoost. The thesis does not focus on proving concept-drift adaptation itself, but on comparing offline and online decision-support 
+paradigms under a shared evaluation protocol.
 
-\paragraph{Writing note.}
-Avoid over-citation. Use core method citations for claims that depend on them, and keep recent motorsport references as contextual support unless directly reused in implementation.
+
+\section{Evaluation under Imbalance and Temporal Dependence}
+
+Pit stop prediction is a rare event problem. In a full race dataset, most driver-lap rows do not correspond to an imminent pit stop, and an even smaller subset 
+corresponds to an imminent successful evaluated pit stop. Under this imbalance, standard accuracy can be misleading: a system that almost always predicts the majority 
+no-pit class may appear accurate while providing unuseful decision support.
+
+For this reason, precision--recall analysis is more informative than accuracy or ROC-based summaries when the positive class is rare \citep{saito2015prroc,davis2006relationship}. 
+Average Precision summarizes ranking quality across thresholds, while precision and recall describe the behaviour of selected decision policies. In this thesis, 
+these metrics are interpreted carefully because the output of a pit decision system is a row level classification problem and also a real pit event may be surrounded 
+by several nearby positive rows.
+
+Threshold policy is also part of the evaluation problem. A model may assign useful scores, but the system must decide at which score it should actually emit a pit call.
+Cost-sensitive learning motivates the idea that thresholds should reflect the relative cost of false positives and false negatives \citep{elkan2001costsensitive}. 
+In pit strategy, false positive advice can be costly because an unnecessary stop may damage track position or compromise the race. This motivates the use of precision weighted 
+measures such as $F_{0.5}$ and the explicit analysis of threshold sensitivity.
+
+Additional metrics are useful for inspecting behaviour under imbalance. Cohen's Kappa measures agreement beyond chance \citep{cohen1960kappa}, while G-Mean captures 
+the balance between positive and negative recognition \citep{he2009imbalanced}. In this thesis, these metrics are used to complement precision--recall analysis and to 
+inspect the behaviour of the system under different decision thresholds.
+
+Temporal dependence creates a second evaluation challenge. Rows from the same race share track conditions, event history, and strategic context, 
+so random row level splits can overestimate generalization. Structured validation is therefore important when examples are grouped or temporally correlated 
+\citep{roberts2017cvstructured}. Leakage risks are particularly relevant when target derived variables, future outcomes, or matched event markers are accidentally 
+included in the feature matrix \citep{brookshire2024leakage}.
+
+The evaluation protocol used in this thesis builds on these concerns and introduces a accounting distinction specific to the domain. Positive decision rows are evaluated 
+at row level for precision, while real pit events are counted at event level for coverage. This prevents repeated positive rows around the same pit event from being 
+treated as multiple independent successful detections.
+
+
+\section{Explainability and Score Interpretation}
+
+Explainability is used in this thesis both as an interpretability tool and as a methodological diagnostic. In predictive systems based on race-state features, 
+it is not sufficient to know that a model produces a useful score. It is also important to inspect whether the model relies on plausible strategic signals or on 
+shortcut variables that encode dataset structure.
+
+SHAP provides a general framework for additive feature attribution \citep{lundberg2017shap}. For tree ensembles, TreeSHAP provides an efficient and consistent 
+attribution method \citep{lundberg2018treeshap}. This is particularly relevant for Batch XGBoost, where explanations can be computed directly from the trained tree model. 
+In this thesis, SHAP is used both to describe feature influence and also to detect the role of season identity as a shortcut risk.
+
+Score interpretation is a related but separate issue. A score can be useful for ranking examples even if it is not a calibrated probability. 
+Probability-quality literature highlights the distinction between discriminative ranking and calibrated probability estimates \citep{niculescu2005goodprob,guo2017calibration}. 
+This distinction is especially important for the MOA Online Learner, whose vote scores are used for threshold frontiers and precision--recall diagnostics but are not treated 
+as true probabilities without calibration.
+
+
+\section{Positioning of This Thesis}
+
+The reviewed literature provides the individual building blocks for this thesis. Stream-processing systems provide event-time 
+execution, stateful computation, and replayability. Motorsport strategy research identifies the variables and trade-offs involved in pit stop decisions. Batch and online 
+learning provide alternative ways to learn from race-state data. Imbalance aware evaluation and validation designed to avoid leakage define the methodological constraints needed for 
+trustworthy comparison.
+
+The contribution of this thesis is to combine these elements into a reproducible pit-decision evaluation pipeline. Historical races are replayed as live-like streams, 
+processed by a Flink Strategy Engine, converted into auditable data lake artifacts, and used to compare deterministic rules, race-wise Batch XGBoost, and a MOA Online 
+Learner under aligned contracts.
+
+The thesis therefore focuses on two questions. First, whether pit timing can be learned from historical race-state patterns. Second, whether successful pit call prediction
+can be evaluated under a stricter operational contract that treats no-match calls and failed-pit calls as false positives while keeping unresolved outcomes out of the clean 
+training and evaluation universe.
