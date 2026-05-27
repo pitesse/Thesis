@@ -3,11 +3,11 @@
 
 \section{Overview}
 
-Formula 1 strategy analysis has progressively expanded from retrospective summaries and experience-based decisions toward live-like decision support systems built from historical and streaming data.
+Formula 1 strategy analysis has progressively expanded from retrospective summaries and experience-based decisions toward live-like decision support systems built from streaming data.
 Modern telemetry, timing data, and event logs make it possible to reconstruct the evolution of a race at fine temporal granularity, transforming each race into a
 sequence of events that can be processed, analyzed, and compared.
 For pit stop strategy, this shift matters: a pit decision depends on tyre age, gaps between drivers, lap times,
-traffic, race phase, track status and weather conditions, rival behaviour, and the expected advantage after the stop. The challenges are twofold:
+traffic, race phase, track status and weather conditions, rival behaviour, and the expected advantage after the stop. The challenges are:
 estimating whether a pit stop is likely to occur soon, and evaluating whether a decision support system can emit meaningful pit calls under realistic temporal and statistical
 constraints.
 
@@ -20,7 +20,7 @@ goals.
 Lastly, historical replay is useful for reproducibility, but it requires separation between event generation, stream processing, supervised learning,
 and final comparison of the results.
 
-The state of the art reviewed in this chapter is organized around these challenges. It begins with event-time stream processing and replayable logs, which provide
+The state of the art reviewed in this chapter is organized around these. It begins with event-time stream processing and replayable logs, which provide
 the infrastructure for reconstructing historical races as live-like streams. It then examines motorsport strategy and pit stop decision support literature, which motivates
 the race context variables involved in pit decisions. The chapter then discusses learning approaches for pit stop prediction based on race state features,
 distinguishing between offline Batch learning and online prequential learning.
@@ -28,23 +28,6 @@ The final sections focus on evaluation under class imbalance and temporal depend
 as tools for validating the methodology. This structure provides the background needed to position the thesis as a complete pipeline from replay to evaluation for comparing a
 Flink Strategy Engine, Batch XGBoost, and a MOA Online Learner under aligned pit decision contracts.
 
-% \begin{table}[t]
-%     \centering
-%     \caption{Research areas related to the thesis and their role in the proposed pipeline.}
-%     \label{tab:state_of_art_taxonomy}
-%     \begin{tabular}{p{0.25\linewidth}p{0.32\linewidth}p{0.32\linewidth}}
-%         \toprule
-%         Area                  & Contribution to the thesis                                           & Remaining gap addressed by this work                                               \\
-%         \midrule
-%         Stream processing     & Event-time execution, replayable logs, stateful computation          & Does not define pit decision semantics or evaluation contracts                     \\
-%         Motorsport strategy   & Pit windows, tyre degradation, undercut/overcut, traffic context     & Often focuses on optimization or simulation rather than aligned learner comparison \\
-%         Batch learning        & Learns patterns from historical race state features                  & Requires race-wise validation and leakage control                                  \\
-%         Online learning       & Evaluates models in stream order through prequential test-then-train & Requires comparable feature and truth contracts against Batch learning             \\
-%         Imbalanced evaluation & PR/AP, F-score variants, Kappa, G-Mean                               & Needs row/event accounting for pit decisions                                       \\
-%         Explainability        & Feature attribution and shortcut detection                           & Supports methodology debugging, not only visualization                             \\
-%         \bottomrule
-%     \end{tabular}
-% \end{table}
 
 \section{Streaming and Event-Time Processing}
 
@@ -55,15 +38,15 @@ the information that would have been available at that moment.
 
 Historical race analysis also requires a data sourcing layer. In Formula 1, timing, lap, telemetry, and session information can be accessed through libraries such as FastF1,
 which provide a practical interface to historical race data. Such a source provides the raw material needed to reconstruct the evolution
-of a race: lap progression, driver timing, stint information, and contextual signals. Before any streaming or learning method can be applied, these data must be normalized
+of a race with lap progression, driver timing, stint information, and contextual signals. Before any streaming or learning method can be applied, these data must be normalized
 into a representation that can be replayed and compared across experiments.
 
-This motivates an event sourcing view of the race. Instead of treating the race only as a final table of results, the race can be represented as an ordered sequence of
-events. Each event updates part of the race state: a lap is completed, a track status changes, a timing value is observed, or a pit-related event occurs. This representation
+This motivates an event sourcing view of the race. The race can be represented as an ordered sequence of
+events. Each event updates part of the race state when a lap is completed, a track status changes, a timing value is observed, or a pit-related event occurs. This representation
 is valuable for reproducibility because the same historical sequence can be replayed multiple times under controlled conditions.
 
 This temporal structure directly connects the problem to event-time stream processing. The Dataflow model formalizes concepts such as event time, windowing, watermarks,
-and out-of-order event handling \citep{akidau2015dataflow}. Event time associates each event with the timestamp of the original phenomenon, while processing time
+and out of order event handling \citep{akidau2015dataflow}. Event time associates each event with the timestamp of the original phenomenon, while processing time
 describes when the system observes the event. In a replay experiment, this separation is useful because the replay can run faster or slower than real time while the
 logic still follows the chronology of the original race.
 
@@ -71,20 +54,29 @@ Windowing and watermarks define how a stream processor reasons over time. Window
 progress of event time and allow the system to handle events that arrive late or out of order. These concepts matter when several streamed events are combined and later on analyzed.
 Telemetry, lap events, and track status updates describe different parts of the same race, and the processor must combine them into a coherent race state.
 
-Apache Flink provides the execution framework for stateful stream processing \citep{carbone2015flink}. Its main role in this context is the management of evolving
-state. A race decision depends on information accumulated across previous events: the current tyre stint, the gaps to other drivers, the recent pace trend, the track
-status, and the actions already taken. Keyed state allows this information to be maintained separately for each driver and race. Event-time operators then update this
-state as new events arrive, preserving the temporal order required by the replay.
+\textbf{Apache Flink} is a distributed stream processing framework designed to process continuous event streams with stateful operators and event-time semantics
+\citep{carbone2015flink}. Its role is to execute computations that evolve as new events arrive.
+This property is relevant for race analysis because the state of a driver is built progressively from the current tyre stint, the gaps to other drivers, the recent pace trend,
+the track status, and the actions already taken all depend on previous events.
 
-Kafka provides the log-based ingestion layer \citep{kreps2011kafka}. A Kafka topic stores an ordered sequence of events that can be consumed by one or more downstream
-components. This property is useful for reproducible race analysis because the same historical race can be published again with the same event order. Different
-processing or learning components can then consume the same stream and be compared under the same input conditions.
+Flink supports this type of computation through keyed state and event-time operators. Keyed state allows the processor to maintain separate evolving contexts for each
+driver and race, while event-time operators update these contexts according to the chronology of the replayed events. This makes the framework suitable for situations where
+the same stream contains many interleaved entities, such as different drivers, laps, and race sessions. In a pit decision setting, this stateful view is needed before any
+strategy signal or learning feature can be derived from the stream.
+
+\textbf{Kafka} is a distributed event streaming platform based on persistent logs \citep{kreps2011kafka}. A Kafka topic stores an ordered sequence of records that can be produced
+by one component and consumed by one or more downstream components. This model is useful when several parts of a system need to observe the same stream without tightly
+coupling the producer to the consumers.
+
+For race replay, Kafka provides the ingestion layer between historical data and stream processing. Once historical race events are published to a topic, the same ordered
+sequence can be consumed by the stream processor and replayed again for debugging or experimental regeneration. This supports reproducible comparison because different processing
+or learning components can consume the same race stream and be evaluated under the same input conditions.
 
 Together, the Dataflow model, Flink, and Kafka provide the streaming foundation needed for replay-based race analysis. Historical race data can be represented as ordered
 events, replayed through a log, and processed by stateful operators that maintain the evolving race context.
 
 A reproducible pipeline also needs persistent intermediate outputs. Columnar formats such as Parquet are useful for storing replayable snapshots, while data lake outputs
-allow stream processing results to be reused by later evaluation and learning stages. This storage layer separates the production of race events from downstream analysis:
+allow stream processing results to be reused by later evaluation and learning stages. This storage layer separates the production of race events from downstream analysis because
 the same processed artifacts can feed deterministic evaluation, Batch learning, online learning, and report generation.
 The next section moves from this stream infrastructure to the race strategy concepts needed to interpret pit stop decisions.
 
@@ -92,8 +84,8 @@ The next section moves from this stream infrastructure to the race strategy conc
 \section{Pit Stop Strategy and Motorsport Decision Support}
 
 Pit stop strategy is one of the main tactical choices in circuit racing. A stop can restore tyre performance and create future
-pace advantage, while also introducing an immediate time loss and changing the driver's track position. After the stop, the driver may also rejoin behind slower cars and lose additional time in traffic.
-The value of a pit stop therefore depends on race context:
+pace advantage, while also introducing an immediate time loss and changing the driver's track position. After the stop, the driver may also rejoin behind slower cars and 
+lose additional time in traffic. The value of a pit stop therefore depends on the race because
 the same stop can be beneficial in one situation and damaging in another, depending on tyre degradation, gaps to rivals, circuit characteristics,
 safety car phases, traffic after the stop, and the possibility of undercut or overcut moves.
 
@@ -114,7 +106,7 @@ needed to reason about pit stops: pace evolution, tyre degradation, pit loss, tr
 
 This literature provides the domain background for interpreting pit decisions from replayed race states. At a given lap, the available information can be
 used to ask whether a pit event is becoming likely and whether such a pit event would be strategically favourable. The focus is therefore on decision support from
-observed race context: the system must reason from the state available at that moment, and the evaluation must later check whether the resulting pit calls correspond
+observed race context where the system must reason from the state available at that moment, and the evaluation must later check whether the resulting pit calls correspond
 to meaningful race events.
 
 The strategy literature motivates the race context variables used by the system, while the comparison between deterministic rules, Batch learning, and online learning
@@ -125,13 +117,13 @@ rows. This learning perspective is introduced next.
 \section{Learning Approaches for Race State Prediction}
 
 After race context has been transformed into driver-lap observations, pit decision support can also be studied as a supervised learning problem.
-Each row describes the state of a driver at a given lap, while the target describes whether a relevant event occurs in a short future horizon.
+Each row describes the performance of a driver at a given lap, while the target describes whether a relevant event occurs in a short future horizon.
 The formulation is used for two related contracts: predicting whether any pit stop will occur soon, and predicting whether a successful evaluated pit stop
 will occur soon.
 
-This representation leads to a tabular learning setting. The input features describe different aspects of the race state: lap time information, tyre age, relative pace,
+This representation leads to a tabular learning setting. The input features describe different aspects of the race state like lap time information, tyre age, relative pace,
 race progress, gaps to other drivers, and other context signals. These variables may interact in non-linear ways. For example, tyre age may have a different meaning
-depending on track position, traffic, race phase, or the gap to a rival. Gradient-boosted tree models are often used for this type of structured data because they can model
+depending on track position, traffic, race phase, or the gap to a rival. \textbf{Gradient-boosted tree models} are often used for this type of structured data because they can model
 such interactions without requiring the same assumptions as linear models. This makes XGBoost a suitable Batch learning baseline for the thesis \citep{chen2016xgboost}.
 Its tree structure also supports later inspection of feature influence, which is useful when checking whether the model relies on meaningful race state signals.
 
@@ -143,7 +135,7 @@ Recent motorsport machine learning work shows that predictive models can be appl
 \citep{sasikumar2025pitstop,hettmann2024datatopodium,dinh2025gradient}. These works provide domain context, although the exact validation setting remains important.
 Rows from the same race are temporally and contextually dependent, and features derived from future outcomes can easily create leakage if they enter the learning matrix.
 
-For this reason, the Batch learner is evaluated through race-wise and race-sequential out-of-fold predictions. The objective is to make the learned predictions comparable
+For this reason, the Batch learner can be evaluated through race-wise and race-sequential out-of-fold predictions. The objective is to make the learned predictions comparable
 to decisions produced in stream order, where future rows are not available at prediction time. This leads to the second learning paradigm considered in the work: online
 learning under prequential evaluation.
 
@@ -155,7 +147,7 @@ samples arrive sequentially, predictions are produced as the stream progresses, 
 decision support over streams, where the chronological order of the observations is part of the problem. A model that receives race states one after another should be
 evaluated in the same order, since future rows would not be available at prediction time.
 
-MOA is a framework for stream mining and online learning experiments over large or evolving data streams \citep{bifet2010moa}. Its role is practical in this context because
+\textbf{MOA} is a framework for stream mining and online learning experiments over large or evolving data streams \citep{bifet2010moa}. Its role is practical in this context because
 it provides learners, stream readers, and evaluation protocols designed for sequential data. Instead of fitting a model once and then applying it to a fixed test set, MOA
 supports an incremental workflow where the learner can update its internal state as new samples arrive. This matches the structure of a replayed race, where the model observes
 a sequence of driver-lap states rather than an unordered collection of rows.
@@ -163,8 +155,8 @@ a sequence of driver-lap states rather than an unordered collection of rows.
 This makes MOA a natural experimental counterpart to Batch learning: the same feature rows can be consumed as a stream, and the learner can produce predictions in the
 same order in which the rows are observed.
 
-A common evaluation protocol in this setting is prequential evaluation. Each instance is first used for testing and only afterwards for training. This test-then-train order
-preserves the causal constraint of the stream: the model is evaluated before it can learn from the same row. In a racing context, this protocol is important because it avoids
+A common evaluation protocol in this setting is prequential evaluation. Each instance is first used for testing and only afterwards for training. This test then train order
+preserves the causal constraint of the stream since the model is evaluated before it can learn from the same row. In a racing context, this protocol is important because it avoids
 using information from a lap before producing the prediction for that lap. It also gives a direct way to compare online predictions with the chronological order used by the
 streaming pipeline.
 
@@ -243,7 +235,7 @@ SHAP provides a general framework for additive feature attribution \citep{lundbe
 can be decomposed into the effects of the input variables. For tree ensembles, TreeSHAP provides an efficient and consistent attribution method \citep{lundberg2018treeshap}.
 This is particularly relevant for Batch XGBoost, where explanations can be computed directly from the trained tree model.
 
-SHAP is used to inspect feature influence and to detect shortcut risks such as season identity. For Batch XGBoost, the explanation refers directly to the
+For Batch XGBoost, the explanation refers directly to the
 trained tree model. For the MOA learner, SHAP is used through a surrogate model fitted to MOA predictions, so those explanations are treated as approximate diagnostics
 rather than direct explanations of the online model. The surrogate explanation describes the behaviour learned from MOA outputs, not the internal
 mechanism of the MOA learner itself.
@@ -269,4 +261,6 @@ evaluation contracts.
 The contribution of this thesis is to combine these elements into a reproducible pipeline for pit decision evaluation. The emphasis is on comparing different decision
 paradigms under aligned artifacts, targets, and metrics: a Flink Strategy Engine, a Batch XGBoost learner, and a MOA Online Learner.
 
-This thesis therefore focuses on two questions. First, whether pit timing can be learned from historical race state patterns. Second, whether successful pit call prediction can be evaluated under a stricter operational contract that treats no-match calls and calls matched to failed pit outcomes as false positives, while keeping unresolved or noisy outcomes out of the clean training and evaluation universe.
+This thesis therefore focuses on two questions. First, whether pit timing can be learned from historical race state patterns. Second, whether successful pit call prediction 
+can be evaluated under a stricter operational contract that treats no-match calls and calls matched to failed pit outcomes as false positives, while keeping unresolved 
+or noisy outcomes out of the clean training and evaluation universe.
