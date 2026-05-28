@@ -1,146 +1,604 @@
-\chapter{Problem Solving: Architecture and Implementation}
+\chapter{Problem Solving: Architecture and Implementation Experience}
 \label{ch:problem_solving}
 
 \section{Chapter Scope}
 
-This chapter is intentionally split into:
+This chapter explains how the problems described in Chapter~\ref{ch:problem_framing} are addressed.
+The focus moves from the conceptual framing of the task to the operational design of the system, describing the architectural and implementation choices adopted to make the pipeline work.
+
+The chapter is divided into two parts, the first part presents the architecture of the solution at a high level.
+It mainly covers the streaming data engineering layer, including event sourcing, event streaming, and stream processing with Kafka and Flink.
+It then describes the architectural choices used to construct the feature pipeline, feed the learning models, and compare their outputs.
+The final part of the architectural overview introduces the models and their connection with the pipeline.
+The goal is to explain how they are integrated into the overall system rather then discuss the learning algorithms in depth.
+
+The second part zooms into the architecture and describes the implementation experience in more detail.
+It explains the practical choices behind the implementation and how the problems introduced earlier were addressed at code and pipeline level.
+This includes the choices that allowed the three decision paradigms to run, produce comparable outputs, and be evaluated under the same contracts.
+The section also discusses the main algorithms, corrections, and implementation decisions that shaped the final system.
+
+The quantitative results of the implementation and the comparison between paradigms are discussed in the following chapter.
+
+
+\section{Architecture of the Solution}
+
+This section describes the architecture of the implemented system. The emphasis is placed on the streaming data engineering part of the pipeline,
+since this is the component that connects historical race data, live-like replay, stateful processing, and the artifacts later used for learning and evaluation.
+The section first introduces the complete system view, and then discusses the main architectural blocks separately.
+
+\subsection{Full Architecture Overview}
+
+The system architecture is organized into three logical layers, as shown in Figure~\ref{fig:full_architecture}. The first layer is the \textit{Streaming Core Layer}.
+It contains the components used to transform historical Formula 1 data into a replayable and processable stream. Historical data are first extracted from FastF1,
+then converted into race events and replayed through Kafka topics. These topics are consumed by Flink, which processes the stream, maintains the race state, emits live
+alerts, and persists JSONL artifacts used by the following stages. This layer is the operational base of the pipeline and is described in more detail in the next subsections.
+
+The second layer is the \textit{Evaluation and Modelling Layer}. This layer starts from the artifacts produced by the streaming core and converts them into datasets,
+feature matrices, and truth contracts. It includes the preparation of the Parquet training dataset, the definition of the prediction contracts, the evaluation of the
+Flink Strategy Engine, and the training and evaluation of the learning-based approaches. After the models produce their scores or labels, the comparator and the threshold
+frontier are used to make their outputs comparable under the same evaluation rules.
+
+The final layer is the \textit{Delivery Layer}. Once the comparison artifacts have been produced, this layer is responsible for generating the material used to inspect
+and report the results. It includes result analysis, figures, and audit checks over the produced data. The goal of this layer is
+to make the outputs traceable and usable for the final experimental discussion presented in Chapter~\ref{ch:experimental_evaluation}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{Images/ch4/full_architecture.png}
+    \caption{High-level architecture of the pipeline.}
+    \label{fig:full_architecture}
+\end{figure}
+
+
+\subsection{Ingestion and Replay Architecture}
+
+The pipeline starts in the Streaming Core Layer with the event sourcing stage. In this stage, a Python script retrieves historical race data from FastF1 and prepares the first
+replayable representation of the race. The extracted data are cleaned, normalized, and enriched with the fields required by the replay and strategy pipeline. The details of
+this preparation step are discussed later in Section~\ref{sec:historical_race_replay}. At this level, the relevant architectural point is that the race is prepared once and stored as a Parquet artifact,
+so that the same session can be replayed multiple times without repeating the extraction process.
+
+The replay stage is handled by a second Python script. This script reads the prepared Parquet data and publishes the race events to Kafka, race by race. The replay follows the
+original event time of the race, so the order of the streamed observations reflects the natural progression of the session rather than the speed at which the experiment is executed.
+This separation between preparation and replay makes the stream controllable: the same race snapshot can be replayed again for debugging, regeneration of artifacts, or comparison
+between different downstream configurations.
+
+Kafka organizes the replay into three topics with different granularities: telemetry, laps, and track status. The telemetry topic contains the highest-frequency stream and describes
+continuous car-level signals. The laps topic emits one event per driver and completed lap, carrying more aggregated information such as lap time, position, tyre life, stint information,
+and pit-related markers. The track-status topic is sparser and represents global race conditions, such as yellow flags, virtual safety cars, safety cars, and similar session-level
+events. Keeping these streams separated allows the processing layer to combine high-frequency car behaviour, lap-level race state, and global race context when needed.
+
+The ingestion and replay architecture therefore provides a reproducible entry point for the whole system. Historical data are fetched, prepared, stored once, and then streamed
+through Kafka in a consistent and analyzable form. This supports the main experimental requirement of the pipeline: the same historical race can be replayed several times while
+preserving the same input evidence for the following Flink, learning, and evaluation stages.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{Images/ch4/ingestion&replay.png}
+    \caption{Ingestion and replay architecture. Historical race data are extracted and stored once as replay-ready Parquet artifacts, then replayed through Kafka as telemetry,
+        lap, and track-status streams.}
+    \label{fig:ingestion_replay_architecture}
+\end{figure}
+
+
+\subsection{Flink Stream-Processing Architecture}
+
+After the replay stage publishes the race topics to Kafka, Flink consumes them and becomes the main stream-processing component of the system. Its role is to transform the
+incoming race streams into race-aware strategy signals and persistent artifacts. The processing follows event time, so the state of the race is updated according to the original
+race chronology rather than according to the execution speed of the replay.
+
+At this architectural level, the relevant point is that Flink maintains the evolving race context needed by the downstream components. Event-time processing is used to order
+race observations, state is used to remember information such as track status, gaps, tyre history, and previous driver context, while windows group events around race and lap-level
+situations. On top of this stateful layer, strategy operators compute the main intermediate signals used by the system, including rival context, tyre drops, drop zones, pit evaluations,
+and pit suggestions. The detailed logic used to construct these signals is described later in Sections~\ref{sec:race_context_building} and~\ref{sec:pit_suggestion_and_classification}.
+
+The output of this stage has two forms. Live alerts are sent back to Kafka so that they can be consumed during the replay, while JSONL artifacts are persisted to the data lake
+and reused by the feature, learning, and evaluation stages. Flink therefore acts as the boundary between live-like stream processing and reproducible downstream analysis.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{Images/ch4/flink.png}
+    \caption{Flink stream-processing architecture.}
+    \label{fig:flink_stream_processing_architecture}
+\end{figure}
+
+\subsection{Data Lake and Feature Architecture}
+
+After the Flink processing stage, the stream outputs are persisted in the data lake as JSONL artifacts. This storage step defines the boundary between the live-like streaming part of
+the system and the reproducible learning and evaluation part. The same race replay can generate live alerts during execution, but the downstream models and comparators require
+stable files that can be inspected, joined, and reused without running the stream again.
+
+The data lake contains several families of artifacts. The pit timing and pit evaluation outputs describe the truth side of the problem, since they record real pit events and the
+post pit outcome labels. The drop-zone and tyre-degradation outputs describe additional race context generated by the stream-processing logic. The pit suggestion stream stores the
+rule-based decisions emitted by the Flink Strategy Engine, while the ML feature stream stores the per-driver, per-lap rows used by the learning pipeline.
+
+Dataset preparation starts from these JSONL files and converts them into a Parquet training dataset. This step performs deduplication, joins the different stream outputs,
+and builds the horizon-based labels used by the prediction contracts. The prepared dataset may still contain diagnostic fields, matched-pit information, and truth-related columns,
+because these fields are useful for audit and downstream comparison. Leakage-safe filtering is applied later when the learner feature matrix is built, by excluding target columns,
+truth fields, matched-pit fields, eligibility fields, and other metadata that should not be available as model input.
+
+Dataset preparation also defines the feature contract used by the learning branches.
+This step applies feature filtering and selected feature transformations, fields that would expose target information or shortcut information are removed, while some
+raw race quantities are converted into more comparable representations. For example, race progress and driver pace can be expressed as percentage features, so
+that the learner receives values that are less tied to a specific circuit length or absolute lap time scale. The detailed motivation for source-year removal and the percent
+feature profile is discussed later in Section~\ref{sec:source_year_removal} and Section~\ref{sec:percent_feature_profile}.
+
+This architecture keeps the feature construction step traceable. The learning models do not access the original race outcome directly; they receive a filtered and aligned dataset
+derived from the persisted stream outputs. In this way, the data lake acts as the contract boundary between streaming engineering, Batch and MOA learning, and the final evaluation
+protocol.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{Images/ch4/dataset_prep.png}
+    \caption{Data lake and feature architecture.}
+    \label{fig:data_lake_feature_architecture}
+\end{figure}
+
+\subsection{Truth and Comparator Architecture}
+
+After the data lake boundary has been defined, the next architectural step is to define how predictions are compared with the truth. This layer is needed because the three decision
+systems produce different types of output. Before these outputs can be compared, they have to be converted into positive calls and matched against the same prediction contracts.
+
+The two main contracts are \texttt{pit\_any\_h2} and \texttt{pit\_success\_h2}. Both use a two-lap horizon, but the matching convention depends on the contract. In the
+\texttt{pit\_any\_h2} contract, a positive call at lap $k$ is correct if an eligible pit stop is matched in the same-lap-inclusive window $[k, k+2]$. This contract represents
+the pit timing problem. In the \texttt{pit\_success\_h2} contract, a positive call is correct only if an eligible future pit stop is matched in the decision window and that stop is
+later classified as successful by the post pit evaluation pipeline. This second contract is stricter, because the system must predict both the timing of the pit and the fact that
+the pit will correspond to a positive strategic outcome.
+
+The truth used for training and comparison comes from real pit events and from their classification after
+the stop has occurred. The comparator uses this truth layer to evaluate the calls produced by Flink, Batch XGBoost, and MOA with the same horizon and the same eligible event universe.
+
+
+\subsection{Model Architecture}
+
+The final architectural block concerns the way the three decision systems are connected to the common evaluation pipeline. At this point,
+the truth contracts and the feature artifacts have already been defined. The remaining issue is that the systems do not produce the same type of output, even though they
+must be evaluated under the same contracts.
+
+The Flink Strategy Engine emits rule-based recommendation labels, such as \texttt{MONITOR}, \texttt{GOOD\_PIT}, and \texttt{PIT\_NOW}. For the operational comparison,
+\texttt{PIT\_NOW} is treated as a positive pit call. Batch XGBoost instead produces out-of-fold probability scores, while the MOA Online Learner produces vote-based
+scores during prequential evaluation. For both learning-based systems, positive calls are obtained by applying a selected threshold to the score.
+
+The model architecture therefore hides the difference in output format behind a common decision representation. After conversion, each system produces the same logical
+object: a positive call associated with a race, a driver, and a lap. The comparator can then match these calls against the same future horizon truth contracts.
+In this way, the three systems keep their different decision mechanisms, while the final scoring remains shared.
+
+\newpage
+\section{Implementation Experience}
+
+This section moves from the architectural view to the implementation choices that made the pipeline executable. The previous section described the system as a set of connected
+layers; this section explains how those layers were implemented, how the main components exchange data, and which corrections were needed to obtain comparable outputs from the
+three decision paradigms.
+
+The discussion follows the main stages of the implemented pipeline:
 \begin{itemize}
-    \item \textbf{Part I --- Architectural solution}: what was designed and why.
-    \item \textbf{Part II --- Implementation experience}: how the design was realized in reproducible code.
+    \item historical race replay
+    \item persisted stream artifacts produced by Flink
+    \item construction of race context
+    \item separation between pit suggestions and pit outcome classification
+    \item corrections introduced to reduce invalid comparisons and leakage risks
+    \item Batch and MOA branches, including feature profiles, MOA export, and vote logging
 \end{itemize}
 
-\section{Part I --- Architectural Solution}
-\subsection{End-to-End Architecture Overview}
+\subsection{Historical Race Replay}
+\label{sec:historical_race_replay}
 
-The implemented architecture follows this reproducible path:
-\begin{enumerate}
-    \item historical race extraction and replay packaging;
-    \item Kafka replay of telemetry/laps/track-status streams;
-    \item Flink event-time processing for race context and strategy logic;
-    \item JSONL data lake as immutable operational trace;
-    \item ML matrix preparation under contract constraints;
-    \item Batch XGBoost and MOA Online Learner branches;
-    \item shared comparator and threshold-frontier evaluation.
-\end{enumerate}
-
-% TODO: insert final architecture diagram
-% TODO: insert figure based on code path:
-% f1-telemetry-producer -> Kafka -> f1-telemetry-processor -> data_lake -> ml_pipeline
-
-\subsection{Event Sourcing and Replay}
-
+The entry point of the pipeline is the \texttt{prepare\_race.py} script. This script loads a FastF1 race session and builds the replay snapshot used by the rest of the system.
+The prepared snapshot contains three families of events:
 \begin{itemize}
-    \item Snapshot preparation: \path{f1-telemetry-producer/src/prepare_race.py}
-    \item Stream replay: \path{f1-telemetry-producer/src/stream_race.py}
-    \item Ordered topic replay for deterministic regeneration \citep{kreps2011kafka}.
+    \item telemetry events, which are the highest frequency observations and describe car level signals
+    \item lap events, which are produced once per driver and completed lap
+    \item track-status events, which describe global race conditions, such as yellow flags, virtual safety cars, and safety cars
 \end{itemize}
 
-\subsection{Flink Event-Time Processing and Strategy Logic}
+Each event family is normalized before being inserted into the replay dataframe. In this context, normalization means that the different sources are converted into a common
+event representation with a timestamp, a routing topic, and the fields required by the downstream Java models. Each row is tagged with the Kafka topic that will receive it
+during replay: \texttt{f1-telemetry}, \texttt{f1-laps}, or \texttt{f1-track-status}. This topic tag is kept inside the prepared snapshot and later used by the streaming script
+to route each event to the correct Kafka topic.
 
-Main topology entrypoint:
-\path{f1-telemetry-processor/src/main/java/com/polimi/f1/F1StreamingJob.java}
+The lap events receive additional context needed by the strategy pipeline. In particular, the preparation step computes an approximate \texttt{GapToCarAhead} from cumulative
+lap time differences, enriches the lap rows with weather columns, preserves team and stint information, and adds the total number of laps for the race. Pit-loss priors are also
+injected into the replay dataframe through the \texttt{PitLoss}, \texttt{VscPitLoss}, and \texttt{ScPitLoss} columns. These values give the downstream logic a consistent
+estimate of the pit cost under green-flag, virtual-safety-car, and safety-car conditions.
 
-Operator families to document in final prose:
+After the three event families have been built, they are merged into a single replay dataframe and sorted by their absolute event timestamp. This produces the chronological
+event time order used during replay. The preparation step also removes the long post race tail by keeping only events that occur within a configurable buffer after the last
+completed lap. This avoids replay pauses caused by irrelevant post race feed activity, while preserving the useful end-of-race context.
+
+The result of this stage is a replay ready Parquet file named according to the pattern \texttt{<year>\_<race>\_<session>\_prepared.parquet}. This file freezes the historical
+race into a deterministic artifact. The race can then be replayed multiple times without repeating the FastF1 extraction and preparation process.
+
+The second stage is implemented in \texttt{stream\_race.py}. This script loads the prepared Parquet file, optionally filters the replay from a selected starting lap, and
+publishes the rows to Kafka. The replay follows the original event-time spacing, scaled by a configurable speed multiplier. Instead of sleeping incrementally between rows,
+the script anchors the first event to the current wall clock and computes the target wall-clock time of every following event from its original timestamp. This avoids cumulative
+drift during high-speed replay and keeps the stream aligned with the intended race chronology.
+
+\subsection{Persisted Stream Outputs}
+\label{sec:persisted_stream_outputs}
+
+Once the race events have been published to Kafka, the \texttt{F1StreamingJob} consumes the three input topics and processes them inside Flink. The detailed logic used
+to build race context and strategy decisions is discussed later in Sections~\ref{sec:race_context_building} and~\ref{sec:pit_suggestion_and_classification}. The focus here
+is the persistence layer: after the stream has been processed, the intermediate and final outputs are serialized and stored so that they can be reused by the offline stages
+of the pipeline.
+
+The Flink job builds the race state using event-time processing, watermarks, keyed state, broadcast track status state, and session windows. These mechanisms allow the
+processor to combine events that arrive from different topics and to maintain a coherent view of the race while the replay is running. The strategy and truth operators
+then emit typed output streams, which are serialized as newline delimited JSON and persisted through Flink \texttt{FileSink} operators.
+
+The persisted artifacts are grouped according to their role in the pipeline:
 \begin{itemize}
-    \item track-status and race-state enrichment,
-    \item rival/gap context construction,
-    \item tyre degradation and drop-zone reasoning,
-    \item Flink Strategy Engine recommendation logic (\texttt{MONITOR}, \texttt{GOOD\_PIT}, \texttt{PIT\_NOW}),
-    \item post-pit outcome classification in \texttt{PitStopEvaluator}.
+    \item \texttt{pit\_timings}, which records where and when real pit stops occurred
+    \item \texttt{pit\_evals}, which stores the post pit strategic outcome labels, such as success, failure, or unresolved cases
+    \item \texttt{drop\_zones}, which estimates the position and traffic context in which a driver would rejoin after a pit stop
+    \item \texttt{tire\_drops}, which records tyre degradation alerts detected from lap pace behaviour
+    \item \texttt{lift\_coast}, which records lift-and-coast alerts, related to early throttle release before braking phases
+    \item \texttt{pit\_suggestions}, which stores the rule-based strategy labels emitted by the Flink Strategy Engine, such as \texttt{MONITOR}, \texttt{GOOD\_PIT}, and \texttt{PIT\_NOW}
+    \item \texttt{ml\_features}, which contains the denormalized driver-lap rows used by the Batch and MOA learning branches
 \end{itemize}
 
-\subsection{Recommendation vs Outcome Separation}
+The sink behaviour is also relevant for reproducibility. The JSONL outputs are written as rolling part files in the data lake, using a policy based on file size and time.
+This avoids keeping the produced artifacts only in memory or in transient stream state. Once the replay has completed and the files have been finalized, the downstream preparation
+scripts can reuse the same artifacts for dataset construction, model evaluation, and comparison reruns.
 
-The architecture enforces a strict semantic separation:
-\begin{itemize}
-    \item \textbf{Recommendation path}: ``should we recommend a pit now?''
-    \item \textbf{Outcome path}: ``was the actual pit strategically successful?''
-\end{itemize}
+In parallel, some live outputs are also routed back to Kafka. Strategic alerts are sent to \texttt{f1-alerts}, while ML feature rows are also published to \texttt{f1-ml-features}.
+These Kafka outputs are useful for live inspection and online consumption during the replay. The thesis evaluation, however, uses the persisted JSONL artifacts as the authoritative
+source, because they provide stable files that can be reused across reruns and across system comparisons.
 
-This separation is central to corrected \texttt{pit\_success\_h2} label construction and leakage control.
+The persisted stream outputs therefore form the operational boundary between the streaming execution and the reproducible offline stages. Once these files have been produced,
+the rest of the pipeline can prepare datasets, build truth contracts, train models, and compare systems without depending on the live execution state of Flink.
 
-\subsection{Truth, Comparator, and Frontier Architecture}
 
-The comparator layer translates each system's positive calls into contract-consistent outcomes under shared horizon/lens constraints.
+\subsection{Race Context Building in Flink}
+\label{sec:race_context_building}
 
-Core evaluation scripts:
-\begin{itemize}
-    \item Batch: \path{ml_pipeline/lib/evaluate_batch_dual_contract_run.py}
-    \item MOA: \path{ml_pipeline/lib/evaluate_moa_dual_contract_run.py}
-    \item Shared comparator logic: \path{ml_pipeline/lib/comparator_heuristic.py}
-    \item Operating frontier: \path{ml_pipeline/lib/phase2b_threshold_frontier.py}.
-\end{itemize}
+This subsection describes how the main race context signals are computed inside Flink. As introduced in Section~\ref{sec:historical_race_replay}, the stream processor receives three
+input streams from Kafka: telemetry events, lap events, and track-status events. These streams describe different parts of the same race, so they have to be combined before the
+system can produce strategy suggestions, truth artifacts, and learning features.
 
-\subsection{System Families Compared}
+The simplest context signal is the track status. Track-status events are sparse global events, while telemetry events arrive at a much higher frequency for each car. The
+\texttt{TrackStatusEnricher} uses Flink broadcast state to make the latest track status available to the keyed telemetry stream. Each telemetry event can then be enriched
+with the current race status. If no status update has been received yet, the default value is green flag. This gives the later operators a consistent view of whether the race
+is running under normal conditions, virtual safety car, safety car, or another status.
 
-\begin{itemize}
-    \item \textbf{Flink Strategy Engine}: deterministic online rule baseline.
-    \item \textbf{Batch XGBoost}: offline race-sequential OOF learner \citep{chen2016xgboost,roberts2017cvstructured}.
-    \item \textbf{MOA Online Learner}: online prequential test-then-train learner \citep{bifet2010moa}.
-\end{itemize}
+The rival and gap context is built at lap level. Lap events are grouped with event-time session windows keyed by race and lap. Inside each window, the events are sorted by race
+position, and the \texttt{RivalIdentificationFunction} identifies the driver ahead, the driver behind, and the corresponding gaps for each car. This position-based construction
+keeps the local race context more stable than a purely timestamp-based grouping, especially in cases where lapped cars or irregular lap completion times could make the ordering
+harder to interpret. The same operator also emits one \texttt{MLFeatureRow} side output for every valid driver-lap row, combining lap information with the local gap context.
+These side outputs become the denormalized driver-lap rows used later by the learning pipeline.
 
-\section{Part II --- Implementation Experience}
-\subsection{Implementation Phase Timeline}
+Tyre degradation is computed per driver. The \texttt{TireDropDetector} keeps keyed state for the current stint, the best lap observed in that stint, and the number of consecutive
+slow laps. The detector ignores the opening laps, pit in-laps, pit out-laps, non-green laps, and large isolated anomalies. For the remaining laps, it compares the current lap
+time with the best lap of the stint using a dynamic percentage threshold:
+\[
+    lapTime > stintBestLap \cdot (1 + thresholdPct)
+\]
+where:
+\[
+    thresholdPct =
+    \max(compoundBase - fuelAdjust - hotTrackAdjust,; thresholdFloor)
+\]
+The compound base changes with tyre compound, the fuel adjustment makes the detector more sensitive as the race progresses, and the hot-track adjustment lowers the threshold
+when the track temperature is high. An alert is emitted only after two consecutive laps above the threshold, so that isolated traffic or driving mistakes are less likely to
+be treated as tyre degradation.
 
-% TODO: replace list with compact timeline figure (5-7 milestones only)
-\begin{enumerate}
-    \item replay/data-lake path stabilization;
-    \item Flink Strategy Engine freeze;
-    \item Batch XGBoost OOF hardening;
-    \item MOA vote-score prequential upgrade;
-    \item contract-aware comparator/frontier correction;
-    \item final-refresh evidence package build.
-\end{enumerate}
+The drop-zone context is computed at race level by the \texttt{DropZoneEvaluator}. The operator maintains a recent full-grid snapshot and evaluates candidate pit situations
+from the current race order. For a driver at position $P$, the evaluator walks the cars behind that driver and accumulates their \texttt{GapToCarAhead} values until the
+accumulated gap reaches the pit-loss estimate:
+\[
+    \sum_{j=P+1}^{m} gapToCarAhead_j \geq pitLoss
+\]
+The first position where this condition is reached defines the estimated rejoin slot after the pit stop. The pit-loss value is selected according to the current track status,
+using the green-flag, virtual-safety-car, or safety-car estimate carried by the lap event. The operator also emits explicit status codes when the situation cannot be evaluated
+cleanly, for example because the tyre age is too low, the track status is not suitable, or the gap context is incomplete.
 
-\subsection{Batch XGBoost Implementation Choices}
+These context-building operators provide the state used by the downstream strategy logic. Track status, rival information, tyre degradation, and drop-zone estimates are used by
+the Flink Strategy Engine to score pit situations and are also persisted as artifacts for later inspection and learning. The strategy scoring and the separation between pit
+suggestions and pit classification are described in Section~\ref{sec:pit_suggestion_and_classification}.
 
-\begin{itemize}
-    \item Training entrypoint: \path{ml_pipeline/train_model.py}
-    \item CV/training core: \path{ml_pipeline/lib/model_training_cv.py}
-    \item Matrix preparation: \path{ml_pipeline/prep_data.py}
-    \item Split protocol: race-sequential expanding OOF folds.
-    \item Leakage filtering: remove target/truth/matched-event/eligibility markers before fitting.
-\end{itemize}
 
-\subsection{MOA Online Learner Implementation Choices}
+\subsection{Pit Suggestion and Pit Classification Logic}
+\label{sec:pit_suggestion_and_classification}
 
-\begin{itemize}
-    \item MOA orchestrator: \path{ml_pipeline/lib/run_sml_phase2b_dual_contract.py}
-    \item MOA launcher: \path{ml_pipeline/run_moa_vote_logger.py}
-    \item Vote-logger Java class: \path{ml_pipeline/java_src/MoaPrequentialVoteLogger.java}
-    \item Ordering guarantee: test-then-train per instance.
-    \item Positive score: continuous vote-derived score (not calibrated probability by default).
-\end{itemize}
+After the race context has been constructed, the pipeline separates two different types of reasoning. The first one is the online recommendation path, implemented by the 
+\texttt{PitStrategyEvaluator}. The second one is the post pit classification path, implemented by the \texttt{PitStopEvaluator}. The separation is intentional because recommendation 
+labels are decisions produced before a pit stop, while pit evaluation labels are truth artifacts produced after a real pit cycle has unfolded.
 
-\subsection{Data Preparation and Contract Enforcement}
+The \texttt{PitStrategyEvaluator} acts before the pit decision is known. It does not use future information, such as whether a pit will actually happen or how the gap will 
+evolve after the stop. Its input is the current race context: lap state, tyre life, pace behaviour, track status, traffic after a possible stop, rival pressure, race progress, 
+and uncertainty. From these signals, the operator computes a continuous pit desirability score in the range $0$--$100$.
 
-\begin{itemize}
-    \item Target construction source: \path{ml_pipeline/lib/data_preparation.py}
-    \item \texttt{pit\_success\_h2} strict contract enforcement:
-    \begin{itemize}
-        \item positive = successful pit soon,
-        \item negative = no pit soon or failed/disadvantage pit,
-        \item unresolved/weather/unmapped = not train-eligible.
-    \end{itemize}
-\end{itemize}
+Conceptually, the score can be read as:
+\[
+    S =
+    S_{pace}
+    \cdot S_{track}
+    \cdot S_{traffic}
+    \cdot P_{strategy}
+    \cdot S_{urgency}
+    \cdot S_{timing}
+    \cdot P_{eor}
+    \cdot B_{competitive}
+    - P_{uncertainty}.
+\]
+The terms do not all have the same role. Pace, urgency, timing pressure, track status, and competitive pressure can increase the score. Strategy feasibility and end-of-race 
+conditions may reduce it, while uncertainty penalizes weak or incomplete signals. The purpose of the score is to summarize 
+how attractive a pit call looks from the information available at that lap.
 
-\subsection{Reproducibility and Audit Layer}
+The continuous score is converted into recommendation labels through thresholds:
+\[
+    \texttt{MONITOR} \geq 40,\qquad
+    \texttt{GOOD\_PIT} \geq 60,\qquad
+    \texttt{PIT\_NOW} \geq 80.
+\]
+These raw labels are then filtered by actionability gates. The gates reduce aggressive recommendations when the context is not suitable, for example when the estimated 
+rejoin traffic is too poor, the call appears too early, or the timing evidence is weak. The implementation also includes emission gating, so the same driver is not repeatedly 
+alerted on consecutive laps unless the score escalates, the label changes, or the track status creates a new opportunity. A separate \texttt{LOST\_CHANCE} label is emitted when 
+a previously strong pit opportunity decays below the alert threshold while the degradation trend is still worsening.
 
-\begin{itemize}
-    \item final-refresh package builder: \path{ml_pipeline/lib/build_final_refresh_package.py}
-    \item presentation asset builder: \path{ml_pipeline/lib/build_final_slide_assets.py}
-    \item delivery/integrity audit: \path{ml_pipeline/lib/audit_phase2b_delivery_coverage.py}
-    \item final result printer: \path{ml_pipeline/print_final_results.py}
-\end{itemize}
+The \texttt{PitStopEvaluator} follows the opposite direction. It acts only after a real pit entry has been observed. Its task is to classify the completed pit cycle by looking 
+at the post pit evidence, especially the evolution of the gap with respect to the relevant rival. This output is used as truth for the successful pit contract, it is never 
+derived from the recommendation labels produced by the Flink Strategy Engine.
 
-\subsection{Implementation Risks and Corrective Actions}
+The evaluator is implemented as a state machine. When a pit entry is detected, the operator registers a pending pit cycle and stores the pre pit context, including the driver, 
+lap, stint, track status, tyre age, baseline lap time, and nearby rivals. The cycle first waits for a settle period, so that the immediate pit in lap and out lap noise does not 
+dominate the classification. After the settle period, the evaluator waits for rival evidence or for an offset timeout. The cycle is then resolved with an outcome label, or marked 
+as unresolved when the available evidence is not sufficient.
 
-\begin{itemize}
-    \item \textbf{Contract drift risk}: fixed by explicit corrected \texttt{pit\_success\_h2} semantics.
-    \item \textbf{Metric-ledger confusion risk}: fixed by strict row-level vs event-level separation.
-    \item \textbf{Stale artifact risk}: fixed by provenance manifests and stale checks.
-    \item \textbf{Fallback contamination risk}: fixed by explicit no-phase2a fallback checks.
-\end{itemize}
+The main comparison is based on the change in gap before and after the pit, normalized by a baseline lap time:
+\[
+    \Delta_{gap}\% =
+    \frac{postGap - preGap}{baselineLapTime} \cdot 100.
+\]
+This normalization avoids using the same raw second threshold on circuits with very different lap times. A small gap change has a different meaning on a short circuit than on a 
+long one, so the percentage form makes the rule less tied to a specific track. In the same strategy case, a sufficiently favourable gap delta leads to success labels such as 
+\texttt{SUCCESS\_UNDERCUT} or \texttt{SUCCESS\_OVERCUT}; stable gap conditions can produce \texttt{SUCCESS\_DEFEND}; and poor post pit conditions can lead to failure labels such as 
+\texttt{FAILURE\_TRAFFIC} or \texttt{FAILURE\_PACE\_DEFICIT}.
 
-\paragraph{Writing note.}
-Keep this chapter implementation-centered: explain only design choices that affect correctness, fairness, and reproducibility.
+The evaluator also handles cases that do not fit a clean same strategy comparison. If the relevant rival does not pit within the expected time, the pit cycle can be treated as 
+an offset strategy and classified as \texttt{OFFSET\_ADVANTAGE} or \texttt{OFFSET\_DISADVANTAGE}. Stops under caution can be classified as free stop situations when the gap 
+distortion is small. Wet weather stops and incomplete evidence are kept in separate families, such as \texttt{WEATHER\_SURVIVAL\_STOP} or \texttt{UNRESOLVED\_*}. These labels are 
+important later because the clean learning and evaluation contracts do not treat every historical pit cycle as equally reliable evidence.
+
+% TODO maybe add state machine graph here
+
+The two paths therefore produce different artifacts with different meanings.\\ \texttt{PitStrategyEvaluator} produces online recommendations from the current race state. 
+\texttt{PitStopEvaluator} produces post pit outcome labels from completed pit cycles. Keeping them separate prevents the evaluation from confusing a decision emitted by the 
+system with the truth used to judge that decision.
+
+
+\subsection{Addressing Invalid Data and Leakage Risks}
+
+At this point the pipeline was able to replay races, produce stream artifacts, and feed the learning branches, but this was not sufficient for the final thesis comparison. 
+A working pipeline can still produce unfair results if the systems are evaluated on different subsets of the data, if future information leaks into the model input, or if 
+ambiguous pit outcomes are mixed with clean decision cases. A correction phase was therefore introduced before freezing the final protocol.
+
+The first correction concerned the denominator of the comparison. The three systems do not start from the same output table. Batch XGBoost and MOA are evaluated from the 
+learner rows produced by the ML pipeline, while the Flink Strategy Engine is evaluated from the archived \texttt{pit\_suggestions} emitted during replay. These sources may 
+cover slightly different races or drivers because of filtering, missing artifacts, replay coverage, or invalid data. If the outputs were compared directly, a difference in 
+the final metrics could partly come from a different evaluation population rather than from a different decision method.
+To remove this ambiguity, the pipeline builds an explicit shared truth universe before the final comparison. The script \texttt{build\_shared\_truth\_universe.py} extracts a 
+\texttt{race, driver} set from the Batch out-of-fold table and another \texttt{race, driver} set from the archived Flink Strategy Engine suggestions. It then computes their 
+intersection which becomes the common denominator for the evaluators: Batch, MOA, and Flink are judged only on race-driver pairs that are present in both the ML 
+outputs and the Flink replay outputs. The comparison is therefore based on an explicit alignment step.
+The alignment happens first at race-driver level. After that, each evaluator still applies its own row or call logic inside the aligned pairs: Batch and MOA use their scored 
+driver-lap rows, while the Flink comparator uses its positive strategy calls. When event universe files are provided, the same idea is also applied to pit events, so coverage 
+and event level metrics are computed over the same eligible pit population. This avoids denominator drift between row-level scoring, positive-call matching, and event coverage.
+
+The second correction concerned truth eligibility. Historical race data contain pit events that are valid observations, but weak evidence for supervised learning or headline 
+comparison. For example unresolved pit cycles, wet-weather stops, red-flag or suspension contexts, early race situations, and cases with missing or out-of-range pit context. 
+Keeping all of them in a single truth definition would make the target easier to misunderstand.
+
+For this reason, the pipeline defines explicit truth lenses. The \texttt{raw} lens keeps all deduplicated \texttt{pit\_timings} events inside the evaluated universe. The 
+\texttt{clean\_actionable} lens removes events that are not suitable for an operational pit decision, such as lap-one cases, red-flag or suspended situations, missing context, 
+and pit events outside the aligned universe. The \texttt{clean\_dry\_strategy} lens starts from \texttt{clean\_actionable} and further removes wet, intermediate, rain-affected, 
+and caution-sensitive cases. These lenses are stored as boolean eligibility flags, for example \texttt{eligible\_raw}, \texttt{eligible\_clean\_actionable}, and 
+\texttt{eligible\_clean\_dry\_strategy}. Target construction and comparator metrics then read those flags instead of rebuilding the eligibility logic independently.
+
+A third correction was required for temporal evaluation. Random row splits are not appropriate for this task. Rows from the same race share context, and neighbouring laps often 
+describe the same strategic episode. If one row from a race is used for training and a nearby row from the same race is used for testing, the split can expose information that 
+would not be available in a real decision setting. The Batch branch therefore uses protocols structured by race. The grouped race protocol keeps all rows from the same race inside 
+the same fold, while the expanding race sequential protocol orders races by \texttt{source\_year} and race name, trains on past races, and tests on the next race in the sequence. 
+This produces out-of-fold scores without testing on races already present in the training fold.
+
+The MOA branch follows the same chronological idea, but in online form. Its evaluation is prequential: for each instance, the learner first produces a prediction and vote information, 
+and only after that it updates itself with the same instance. This preserves the test-then-train order of online learning. For the \texttt{pit\_success\_h2} comparator, the default 
+strict setting uses future matching for the success contract, so a successful pit prediction at lap $k$ is matched against future pit evidence in the horizon unless same-lap 
+inclusion is explicitly enabled as a diagnostic option.
+
+The next risk was feature leakage. The prepared dataset intentionally keeps several columns that are useful for audit and comparison. These include matched pit information, 
+truth lens flags, train eligibility flags, and target-specific diagnostic fields. Removing them too early would make the pipeline harder to inspect. The correction is therefore 
+applied when the learner matrix is built.
+
+The matrix builder removes the selected target column and every target-like or truth-like column before training. This includes all \texttt{target\_*} columns, aliases such as 
+\texttt{pit\_any\_h2\_*} and \texttt{pit\_success\_h2\_*}, horizon labels, matched pit fields, truth lens fields, eligibility flags, and train eligibility indicators. For 
+\texttt{pit\_success\_h2}, the target-specific \texttt{*\_train\_eligible} mask is also applied before the final training and evaluation rows are formed. The remaining model 
+input is restricted to features describing the state of the race, with further exclusions depending on the selected feature profile.
+
+The \texttt{pit\_success\_h2} contract required a separate correction because the outcome labels of real pit cycles are not always binary. During target construction, the lookup 
+for \texttt{pit\_success\_h2} searches for evaluated pit outcomes in the future horizon $[k+1,k+2]$. Matched outcomes are then mapped into three groups. Results such as 
+\texttt{SUCCESS\_*} and \texttt{OFFSET\_ADVANTAGE} are treated as successful. Results such as \texttt{FAILURE\_*} and \texttt{OFFSET\_DISADVANTAGE} are treated as negative. 
+Unresolved, unmapped, weather survival, or otherwise ambiguous outcomes are marked as unknown.
+
+Unknown outcomes are not reliable supervised labels, so they are excluded from the clean train eligible rows. Lens eligibility is applied after this mapping: a successful 
+matched pit can still be removed from the clean contract if the pit event is outside the selected truth lens. This is different from the comparator behaviour for positive calls 
+with no matched pit. In strict operational mode, a positive \texttt{pit\_success\_h2} call that finds no eligible pit inside the horizon is counted as a false positive. The reason 
+is practical: the system still emitted a successful-pit call, and in an operational setting that call would have been unnecessary.
+
+These corrections brought the original working pipeline into the evaluation protocol used in the thesis.
+The aim was to make sure that Flink, Batch XGBoost, and MOA are compared on the same evidence, under the same contracts, and without columns derived from the answer entering the 
+learner input.
+
+\subsection{Flink Strategy Engine Tuning}
+
+Before freezing the Flink Strategy Engine, several rule based variants were tested. The variants were implemented inside the \texttt{PitStrategyEvaluator} through 
+deterministic strategy modules and runtime flags. The comparator and the truth contracts were not changed between variants. This made it possible to isolate the effect of 
+the decision policy itself, while keeping the downstream evaluation path fixed.
+
+The conservative profile kept the main score, timing gates, and actionability gates as the dominant decision path. Optional promotion mechanisms were disabled, especially 
+rival pressure promotions. This profile reduced noisy \texttt{PIT\_NOW} emissions, but also limited the reach of the rule based system in situations where nearby rivals 
+created a strong strategic pressure.
+
+The rival pressure profile enabled additional promotion logic. When relevant rivals had recently pitted, the system could promote a near actionable situation into a stronger 
+recommendation. The goal was to capture cases where the raw score was close to the threshold, but the race context suggested that waiting could lose the strategic window.
+
+The guarded rival pressure profile kept this idea, but added stricter guards. Promotions were allowed only when urgency, timing pressure, recent lap bounds, and gap conditions 
+supported the call. Additional controls were also used for caution situations and very close traffic. This version was selected as the final Flink Strategy Engine profile 
+because it preserved the extra reach of rival pressure while reducing unstable promotions.
+
+All variants emitted the same \texttt{pit\_suggestions} schema and were evaluated with the same downstream comparator. The only changing element was the decision policy 
+inside the Flink Strategy Engine. This separation is useful because it keeps the rule based baseline comparable with Batch XGBoost and MOA, while still allowing the rule 
+logic to be tuned before the final experiment.
+
+
+% TODO REVIEW THIS
+\subsection{Batch ML Pipeline}
+
+The Batch learning branch is implemented through \texttt{train\_model.py}. This script acts as the entry point for the offline learner pipeline. 
+It can prepare the dataset, validate the replay contracts, run cross-validated training, write the model leaderboard, and export the out-of-fold prediction table used 
+by the downstream comparator. In the final thesis runs, the Batch branch is evaluated through the \texttt{expanding\_race\_sequential} split protocol, so that model scores are 
+produced on races that were not present in the corresponding training prefix.
+
+The first step is the construction of the learner matrix. The prepared Parquet dataset still contains targets, audit fields, matched pit information, and eligibility columns. 
+These fields are useful for inspection, but they cannot become model inputs. The matrix builder therefore applies the target-specific row mask, especially for 
+\texttt{pit\_success\_h2}, where the corresponding \texttt{*\_train\_eligible} column removes rows with unreliable success labels. It then drops metadata and leakage columns 
+such as \texttt{race}, \texttt{driver}, \texttt{lapNumber}, all \texttt{target\_*} columns, matched-pit fields, truth-lens fields, and eligibility markers. Depending on the 
+selected feature profile, \texttt{\_source\_year} and other profile-specific fields can also be removed. The remaining categorical variables are one-hot encoded, and boolean 
+columns are cast to numeric values before training.
+
+The split protocol is designed around races, not individual rows. In the race sequential setup, the dataset is read as an ordered sequence of \texttt{(source\_year, race)} 
+pairs. Each fold trains on the races that appear before the current test race and evaluates on the next unseen race. This produces out-of-fold predictions while preserving 
+the chronological structure of the dataset. The implementation also checks that the race groups used for training and testing do not overlap; if an overlap is detected, 
+execution stops instead of silently accepting a leaking fold.
+
+The model used in this branch is \texttt{XGBClassifier} with binary logistic objective and \texttt{aucpr} as evaluation metric. Class imbalance is handled through 
+\texttt{scale\_pos\_weight}, either from a fixed grid or from the observed class distribution, depending on the configuration. The goal of the Batch branch is therefore 
+not to simulate online learning, but to provide a strong offline learner evaluated under a race-aware protocol.
+
+Each outer fold also contains an inner calibration and threshold selection step. The training part of the fold is split again by race groups into a fit block and a 
+calibration block. The model is fitted on the fit block, then its scores on the calibration block are used to fit the selected calibrator and to choose threshold policies. 
+The outer test race is not used during this step. This keeps threshold selection separate from the rows on which the fold is finally evaluated.
+
+Two threshold policies are produced for each fold. The unconstrained policy selects the threshold with the best $F_1$ score on the calibration rows. The constrained policy 
+uses a precision floor and a simple utility score,
+\[
+utility = TP - fpCost \cdot FP,
+\]
+so that false positive calls can be penalized more strongly. If no threshold satisfies the precision floor, the policy falls back to the maximum precision candidate. The 
+selected thresholds are then applied to the calibrated scores of the outer test race.
+
+The output of the Batch branch is the winner out-of-fold table. For each evaluated driver-lap row, the table stores the race, driver, lap number, target label, raw probability, 
+calibrated probability, fold metadata, selected thresholds, and binary predictions under the different threshold policies. This table is the authoritative Batch prediction 
+artifact used by the comparator and by the later threshold frontier analysis.
+
+The leaderboard aggregates the fold metrics for each configuration and selects the winner according to the configured model selection policy, with PR-AUC used as the main 
+ranking signal and additional diagnostics kept for inspection. Calibration is treated as a probability quality diagnostic and as an input to threshold selection. It does 
+not make the scores perfect probabilities, but it gives the Batch branch a more controlled score scale before comparison with Flink and MOA.
+
+
+
+\subsection{Source-Year Removal}
+\label{sec:source_year_removal}
+% Slide 34.
+%
+% Goal:
+% Explain implementation phase 6 briefly (problem + concrete switch in pipeline).
+%
+% Content to cover:
+% \begin{itemize}
+%     \item Prepared datasets include \texttt{\_source\_year} as metadata by construction.
+%     \item Risk: the model can exploit season identity/regulation distribution instead of race-state mechanisms.
+%     \item Implementation switch: \texttt{--drop-source-year-feature} in both
+%           Batch training and MOA export; enforced in \texttt{\_select\_feature\_columns(...)}.
+%     \item Final No-Year and Percent comparisons are run with this flag enabled.
+%     \item Keep mention short: detailed attribution evidence (SHAP/permutation) can be referenced later in evaluation.
+% \end{itemize}
+
+
+\subsection{Percent Feature Profile}
+\label{sec:percent_feature_profile}
+% Slide 35.
+%
+% Goal:
+% Explain implementation phase 7 with exact feature changes (what is removed, what is added).
+%
+% Content to cover:
+% \begin{itemize}
+%     \item Profile used in final thesis: \texttt{percent\_conservative\_v1}
+%           with track mode \texttt{track\_percentage\_v1}.
+%     \item Removed by profile exclusion list: \texttt{team}, \texttt{rainfall}
+%           (plus \texttt{\_source\_year} removal when No-Year-style flag is active).
+%     \item Added race-relative features in this conservative mode:
+%           \begin{itemize}
+%               \item \texttt{race\_progress\_pct = lapNumber / scheduledLaps};
+%               \item \texttt{lapTime\_vs\_driver\_prev\_mean\_pct = lapTime / causal\_driver\_past\_mean}.
+%           \end{itemize}
+%     \item Important precision note:
+%           in code these ``pct'' fields are clipped ratios (not percentage points),
+%           mainly bounded to stable ranges for robustness.
+%     \item Team-level and race-level lap-bucket ratio features exist in other profile modes,
+%           but are not enabled in \texttt{percent\_conservative\_v1}.
+%     \item Contract consistency:
+%           the same filtered matrix builder (\texttt{\_prepare\_matrix}) is reused for Batch and MOA export,
+%           so both paradigms receive the same feature universe.
+% \end{itemize}
+
+
+\subsection{MOA Export}
+
+% Slide 36.
+%
+% Goal:
+% Explain implementation phase 8.
+%
+% Content to cover:
+% \begin{itemize}
+%     \item MOA requires a different input format from XGBoost;
+%     \item the export step converts the Batch feature matrix into a MOA-compatible stream dataset;
+%     \item the matrix contract is preserved;
+%     \item exported elements include CSV, ARFF, schema JSON, and binary target labels;
+%     \item Batch and MOA differ in learning paradigm, not in input semantics.
+% \end{itemize}
+
+
+\subsection{MOA Prequential Evaluation}
+
+% Slide 37.
+%
+% Goal:
+% Explain implementation phase 9.
+%
+% Content to cover:
+% \begin{itemize}
+%     \item streaming ML is evaluated in stream order;
+%     \item for each instance, the learner predicts first;
+%     \item the prediction and vote information are logged;
+%     \item the learner then trains on the same instance;
+%     \item this preserves the test-then-train order;
+%     \item the current prediction cannot use future rows.
+% \end{itemize}
+
+
+\subsection{MOA Vote Logger}
+
+% Slide 38.
+%
+% Goal:
+% Explain implementation phase 10.
+%
+% Content to cover:
+% \begin{itemize}
+%     \item initial MOA output was mostly hard 0/1 labels;
+%     \item hard labels made threshold sweeps weak;
+%     \item the custom logger records class votes before training on the instance;
+%     \item \texttt{positive\_score = vote\_1 / (vote\_0 + vote\_1)};
+%     \item the learning protocol remains unchanged;
+%     \item continuous vote scores enable AP, PR curves, and threshold-frontier diagnostics.
+% \end{itemize}
+
+
+\section{Chapter Summary}
+
+% Briefly close the chapter:
+% the architecture creates a reproducible path from historical races to stream artifacts,
+% and the implementation experience shows how the Flink, Batch, and MOA branches were made
+% comparable under the same contracts.
+% The quantitative comparison is left to Chapter~\ref{ch:experimental_evaluation}.
