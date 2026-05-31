@@ -2,7 +2,7 @@
 \label{ch:experimental_evaluation}
 
 This chapter evaluates the resulting systems under a fixed experimental protocol,
-the goal is to compare the behaviour of the Flink Strategy Engine, Batch XGBoost, and the MOA Online Learner on the same pit decision contracts.
+the goal is to compare the behaviour of the Flink Strategy Engine, Batch XGBoost, and the MOA Online Learner on the same pit decision contracts \cite{chen2016xgboost,bifet2010moa,oza2005boosting,bifet2007adwin}.
 
 The evaluation is organized around the two targets introduced earlier: \texttt{pit\_any\_h2}, which measures whether a pit stop is predicted within the evaluation
 horizon, and \texttt{pit\_success\_h2}, which measures whether a successful evaluated pit stop is predicted. The chapter first defines the frozen protocol, then reports
@@ -15,7 +15,7 @@ pit calls.
 Before presenting the results, the evaluation protocol is fixed explicitly. This is necessary because the systems do not produce the same type of output and do not naturally
 operate on identical tables as described in Chapter \ref{ch:problem_solving} Section \ref{sec:corrections}. The Flink Strategy Engine emits rule based recommendation labels,
 Batch XGBoost emits out-of-fold probability scores, and MOA emits vote based scores
-in prequential order. The protocol defines how these outputs are converted into comparable positive calls and how those calls are matched against truth.
+in prequential order \cite{chen2016xgboost,bifet2010moa,oza2005boosting,bifet2007adwin}. The protocol defines how these outputs are converted into comparable positive calls and how those calls are matched against truth.
 All headline results are computed on seasons 2022--2025, which is the ground effect F1 car era. The truth universe mode is \texttt{canonical\_sde\_truth}, and the main lens is \texttt{clean\_actionable}. This means
 that the comparison uses the shared SDE-defined truth universe and removes cases that are not considered fair actionable strategy decisions under the clean lens. By doing so
 comparing systems on different race, driver, or event populations is avoided.
@@ -35,8 +35,8 @@ The compared systems are:
     \item MOA Online Learner with the Percent feature profile
 \end{itemize}
 
-The Batch systems are evaluated with race sequential out-of-fold predictions. Each score is produced on a race that was not used in the corresponding training prefix.
-The MOA systems are evaluated with the prequential test-then-train protocol where each row is predicted first and then used for learning. The Flink Strategy Engine is evaluated
+The Batch systems are evaluated with race sequential out-of-fold predictions. Each score is produced on a race that was not used in the corresponding training prefix \cite{roberts2017cvstructured}.
+The MOA systems are evaluated with the prequential test-then-train protocol where each row is predicted first and then used for learning \cite{bifet2010moa,oza2005boosting}. The Flink Strategy Engine is evaluated
 from its persisted \texttt{pit\_suggestions} artifacts, with the selected frozen rule profile.
 
 The evaluation artifacts were also checked for protocol consistency before reporting the results. In particular, the \texttt{pit\_success\_h2} evaluation uses the corrected success
@@ -51,7 +51,7 @@ counting these no match calls as false positives gives a more realistic operatio
 
 As described in Section~\ref{sec:flink_tuning}, the Flink Strategy Engine was not used in its first rule configuration. Several deterministic variants were tested before
 comparing the rule based system with Batch XGBoost and MOA. This step was needed to obtain a stable rule baseline, while keeping the later comparison independent from the
-tuning of the learning models.
+tuning of the learning models \cite{heilmeier2020race,carrasco2023optimization}.
 
 The first variant was the strict profile. In this configuration, the engine mainly relied on the base score, timing gates, and actionability gates. Optional promotion
 mechanisms were disabled, especially the rival pressure promotion. This made the system conservative: it emitted fewer strong pit calls and avoided some noisy recommendations,
@@ -100,8 +100,8 @@ each profile and target. Dataset preparation and MOA export are treated as separ
 
 The difference between Batch and MOA is expected from the evaluation protocols described in Chapter~\ref{ch:problem_solving}. Batch XGBoost uses race-sequential out-of-fold
 evaluation: the model is trained on the previous races, tested on the next held-out race, then trained again on a larger prefix and tested on the following race. This repeated
-fitting makes the Batch branch slower. MOA instead runs once over the exported stream in prequential order. Each instance is predicted and then used for training, so
-the learner processes the stream in a single pass.
+fitting makes the Batch branch slower \cite{roberts2017cvstructured}. MOA instead runs once over the exported stream in prequential order. Each instance is predicted and then used for training, so
+the learner processes the stream in a single pass \cite{bifet2010moa,oza2005boosting}.
 
 \begin{table}[htbp]
     \centering
@@ -137,7 +137,7 @@ recognize when a pit window is approaching.
 
 The task is still strongly imbalanced. At learner-matrix level, the \texttt{clean\_actionable} \texttt{pit\_any\_h2} target contains 93,623 driver-lap rows,
 but only 5,855 of them are positive rows. This means that positive pit-timing situations represent about 6.3\% of the learner rows. A low absolute precision is
-therefore expected: most driver-lap situations are not close to a pit stop, so emitting a positive call is difficult and false positives are easy to produce.
+therefore expected: most driver-lap situations are not close to a pit stop, so emitting a positive call is difficult and false positives are easy to produce \cite{he2009imbalanced}.
 
 The 5,855 positive rows should not be read as 5,855 distinct pit stops. They are positive driver-lap examples produced by the horizon label. Intuitively, one
 real pit can make more than one previous lap positive. For example, if a driver pits on lap $k$, then the rows for laps $k-1$ and $k-2$ can both be labelled as
@@ -389,7 +389,7 @@ rows than to negative rows, and whether a different threshold could expose a bet
 
 Precision-recall curves are computed at row level for score based systems, Batch XGBoost produces probability scores, while MOA produces vote-based scores through the
 custom logger described in Chapter~\ref{ch:problem_solving}. By sweeping a threshold over these scores, each system produces a curve showing how precision and recall
-change as the positive-call policy becomes more or less aggressive.
+change as the positive-call policy becomes more or less aggressive \cite{davis2006relationship,saito2015prroc,he2009imbalanced}.
 
 Average Precision summarizes this row-level ranking behaviour into a single value. A higher AP means that positive rows tend to receive higher scores than negative rows.
 However, AP is not the same as strict operational precision. In particular, for \texttt{pit\_success\_h2}, the headline comparison must still count no-match calls and
@@ -406,7 +406,7 @@ the strict accounting rules defined earlier.
 \subsection{PR Figures and AP Table}
 
 Figures~\ref{fig:pr_curve_pit_any_final} and~\ref{fig:pr_curve_pit_success_final} show the precision--recall curves for the two targets,
-these plots compare the score-based systems across thresholds, so they are useful for inspecting ranking behaviour before selecting an operating point. The 
+these plots compare the score-based systems across thresholds, so they are useful for inspecting ranking behaviour before selecting an operating point. The
 Flink Strategy Engine is shown as a fixed operating point, since it emits deterministic labels rather than a continuous learned score curve.
 
 \begin{figure}[htbp]
@@ -423,9 +423,9 @@ Flink Strategy Engine is shown as a fixed operating point, since it emits determ
     \label{fig:pr_curve_pit_success_final}
 \end{figure}
 
-Table~\ref{tab:ap_summary_final} reports Average Precision for the score-based systems. For both targets, MOA Percent obtains the highest AP. 
-On \texttt{pit\_any\_h2}, Batch Percent is close to MOA Percent, which is consistent with the strong timing behaviour already observed in the 
-selected operating points. On \texttt{pit\_success\_h2}, the AP values are lower overall, confirming that the success task is harder to rank 
+Table~\ref{tab:ap_summary_final} reports Average Precision for the score-based systems. For both targets, MOA Percent obtains the highest AP.
+On \texttt{pit\_any\_h2}, Batch Percent is close to MOA Percent, which is consistent with the strong timing behaviour already observed in the
+selected operating points. On \texttt{pit\_success\_h2}, the AP values are lower overall, confirming that the success task is harder to rank
 as well as harder to classify under a fixed threshold.
 
 \begin{table}[htbp]
@@ -434,133 +434,196 @@ as well as harder to classify under a fixed threshold.
     \label{tab:ap_summary_final}
     \begin{tabular}{lcccc}
         \toprule
-        Target                  & Batch No-Year & Batch Percent & MOA No-Year & MOA Percent \\
+        Target                    & Batch No-Year & Batch Percent & MOA No-Year & MOA Percent \\
         \midrule
-        \texttt{pit\_any\_h2}     & 0.131         & 0.190         & 0.161       & 0.195 \\
-        \texttt{pit\_success\_h2} & 0.068         & 0.087         & 0.101       & 0.134 \\
+        \texttt{pit\_any\_h2}     & 0.131         & 0.190         & 0.161       & 0.195       \\
+        \texttt{pit\_success\_h2} & 0.068         & 0.087         & 0.101       & 0.134       \\
         \bottomrule
     \end{tabular}
 \end{table}
 
-The AP table should be read together with the headline metrics. A model can have a useful ranking curve while still requiring a conservative threshold 
-to obtain acceptable operational precision. This is especially visible for \texttt{pit\_success\_h2}, where the best AP belongs to 
+The AP table should be read together with the headline metrics. A model can have a useful ranking curve while still requiring a conservative threshold
+to obtain acceptable operational precision. This is especially visible for \texttt{pit\_success\_h2}, where the best AP belongs to
 MOA Percent, but the selected operating point still has low successful event coverage.
 
-\section{Support-Aware Race-Level Diagnostics}
+\section{Support Aware Race Level Diagnostics}
+
+The headline metrics aggregate all races into a single comparison, which is useful for ranking the systems, but it can hide whether performance
+is stable across races or concentrated in a smaller set of events. The race level diagnostics inspect this variability by computing Kappa and
+G-Mean separately for each race.
+
+Kappa measures agreement with the target after accounting for agreement that could happen by chance. G-Mean combines sensitivity and specificity,
+so it is useful when the positive class is rare \cite{cohen1960kappa,he2009imbalanced}.
+
+A support filter is applied before plotting the race-level values. Races with too few positives can produce unstable diagnostic scores,
+especially for sparse targets. The plots therefore keep only races with at least three positive examples. For \texttt{pit\_any\_h2}, this keeps
+92 races for the Flink Strategy Engine, MOA No-Year, and MOA Percent, and 91 races for the Batch profiles. For \texttt{pit\_success\_h2}, the
+support-aware set is smaller: 87 races for the Flink Strategy Engine and MOA profiles, and 86 races for the Batch profiles.
 
 \subsection{\texttt{pit\_any\_h2}: Kappa and G-Mean per race}
 
-% Slide 53 (Kappa) + Slide 54 (G-Mean).
-%
-% Goal:
-% Show race-level variability under minimum positive support filtering.
-%
-% Verified support filter and kept races:
-% \begin{itemize}
-%     \item positives\_min\_filter = 3.
-%     \item pit\_any: Flink 92, Batch No-Year 91, Batch Percent 91, MOA No-Year 92, MOA Percent 92.
-% \end{itemize}
-%
-% Artifact anchors:
-% \begin{itemize}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_kappa_pit_any.png}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_gmean_pit_any.png}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_support_summary.csv}
-% \end{itemize}
+Figures~\ref{fig:race_level_kappa_pit_any} and~\ref{fig:race_level_gmean_pit_any} report race-level diagnostics for the \texttt{pit\_any\_h2} task.
+Each point corresponds to one race after the support filter. The dashed line shows the average value for the corresponding system.
+
+The Kappa plot shows that the timing task has visible race-to-race variability, the Flink Strategy Engine remains close to zero in many races,
+which is consistent with its low event recall in the headline comparison. Batch Percent reaches higher Kappa values more often, but it also shows
+larger oscillations across races. MOA No-Year and MOA Percent are more concentrated around moderate positive values, suggesting a more stable
+ranking-to-decision behaviour across the evaluated races.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{Images/ch5/race_level_kappa_pit_any.png}
+    \caption{Race-level Kappa diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
+    \label{fig:race_level_kappa_pit_any}
+\end{figure}
+
+The G-Mean plot gives a similar view from the sensitivity-specificity side, Batch Percent has the strongest race-level G-Mean values in many races,
+which matches its high event recall on \texttt{pit\_any\_h2}. The MOA profiles appear more stable but less aggressive, while the Flink Strategy
+Engine remains limited by the small number of positive calls it emits. These plots support the headline interpretation: pit timing is learnable,
+but the balance between coverage and precision changes substantially from race to race.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{Images/ch5/race_level_gmean_pit_any.png}
+    \caption{Race-level G-Mean diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
+    \label{fig:race_level_gmean_pit_any}
+\end{figure}
+
 
 \subsection{\texttt{pit\_success\_h2}: Kappa and G-Mean per race}
 
-% Slide 55 (Kappa) + Slide 56 (G-Mean).
-%
-% Goal:
-% Show that strict pit-success race-level diagnostics are much sparser and often near zero.
-%
-% Verified support filter and kept races:
-% \begin{itemize}
-%     \item positives\_min\_filter = 3.
-%     \item pit\_success: Flink 87, Batch No-Year 86, Batch Percent 86, MOA No-Year 87, MOA Percent 87.
-% \end{itemize}
-%
-% Artifact anchors:
-% \begin{itemize}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_kappa_pit_success.png}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_gmean_pit_success.png}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_metric_summary.csv}
-% \end{itemize}
-%
-% Writing caution:
-% \begin{itemize}
-%     \item treat Kappa/G-Mean as diagnostics (support-sensitive), not headline metrics.
-% \end{itemize}
+Figures~\ref{fig:race_level_kappa_pit_success} and~\ref{fig:race_level_gmean_pit_success} report the same race-level diagnostics for the
+stricter \texttt{pit\_success\_h2} task, with the support filter again set to at least three positive examples per race. After this filter, the
+diagnostic set contains 87 races for the Flink Strategy Engine and the MOA profiles, and 86 races for the Batch profiles.
+
+The plots are much sparser than the corresponding \texttt{pit\_any\_h2} diagnostics, this follows from the definition of \texttt{pit\_success\_h2}:
+a positive case requires not only a future pit, but a future pit that is also classified as successful. Many races therefore contain very
+few positive success examples, and the per-race diagnostic metrics often remain close to zero.
+
+The Kappa plot shows this sparsity clearly, where Batch No-Year and Batch Percent have many races near zero, with only isolated positive spikes.
+The MOA profiles show more non-zero episodes, but the values remain low for many races. The Flink Strategy Engine also shows scattered positive
+values, which reflects its larger number of emitted calls, but the values are still unstable across races. These patterns are consistent with
+the strict success results reported earlier: the task is difficult, and most systems cover only a small fraction of successful pit opportunities.
+
+The G-Mean plot gives the same message from the sensitivity-specificity perspective. Some races contain visible positive peaks, especially for
+the Flink Strategy Engine and the MOA profiles, but many races remain at or near zero. The diagnostic therefore suggests that successful pit-call
+prediction is both harder in aggregate and less stable at race level.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{Images/ch5/race_level_kappa_pit_success.png}
+    \caption{Race-level Kappa diagnostic for \texttt{pit\_success\_h2} under the support filter of at least three positives per race.}
+    \label{fig:race_level_kappa_pit_success}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{Images/ch5/race_level_gmean_pit_success.png}
+    \caption{Race-level G-Mean diagnostic for \texttt{pit\_success\_h2} under the support filter of at least three positives per race.}
+    \label{fig:race_level_gmean_pit_success}
+\end{figure}
+
 
 
 \section{Explainability as Methodology Debugging}
 \label{sec:explainability}
 
+Explainability is used in this evaluation as a supporting diagnostic where the objective is to inspect whether the systems rely on plausible race context signals, 
+and to detect possible shortcut features that could make the comparison less reliable.
+
 \subsection{Explainability role across systems}
 
-% Slide 57.
-%
-% Goal:
-% Explain why explainability is presented as debugging/interpretation support.
-%
-% Slide-grounded content to keep:
-% \begin{itemize}
-%     \item Batch XGBoost: direct SHAP / TreeSHAP on trained model.
-%     \item MOA Online Learner: surrogate SHAP proxy.
-%     \item Flink Strategy Engine: rule logic is interpretable by construction.
-% \end{itemize}
-%
-% Important consistency line:
-% \begin{itemize}
-%     \item this section supports methodological choices (e.g., No-Year correction), not claims of causal feature effects.
-% \end{itemize}
+The three decision systems have different explainability profiles. The Flink Strategy Engine is interpretable by construction, because its recommendations come from 
+explicit score components, gates, and promotion rules. Its behaviour can be inspected by following the rule path that led to a \texttt{MONITOR}, \texttt{GOOD\_PIT}, 
+or \texttt{PIT\_NOW} label.
 
-\subsection{\texttt{\_source\_year} shortcut-risk and No-Year correction}
+Batch XGBoost is inspected through SHAP and TreeSHAP on the trained tree models, this gives feature attribution values for the learned scores and helps identify 
+which variables contribute most to the model output \cite{chen2016xgboost,lundberg2017shap,lundberg2018treeshap}. The analysis is direct in this case, because TreeSHAP is applied to the same model family used in the Batch branch.
 
-% Slide 58 + Slide 59.
-%
-% Goal:
-% Link explainability findings to protocol corrections already described in Chapter 4.
-%
-% Slide-grounded claims to keep:
-% \begin{itemize}
-%     \item \texttt{\_source\_year} appeared as shortcut-risk in Batch explainability.
-%     \item this motivated No-Year as the clean neutral baseline.
-%     \item Percent profile is engineered, not a fully neutral comparison.
-% \end{itemize}
-%
-% Provenance note (important):
-% \begin{itemize}
-%     \item Current \texttt{final\_refresh/} package contains the corrected evaluation tables/figures but does not include a dedicated SHAP CSV set.
-%     \item If the SHAP comparison figure from Slide 59 is inserted in thesis, add explicit provenance to the exact image-generation artifact used (currently available in local archive history).
-% \end{itemize}
-%
-% TODO: add reproducible explainability artifact path (or regenerate into a tracked thesis-facing location before final submission).
+The MOA Online Learner is harder to inspect directly. The model is executed as a streaming learner, and the implementation does not expose the same type of native feature 
+attribution available for XGBoost. A surrogate SHAP analysis was explored as a possible proxy, but it was not retained in the reported explainability results because the 
+surrogate model is a different implementation and its attributions cannot be verified as faithful explanations of the internal MOA learner. For this reason, the 
+explainability discussion reports MOA behaviour through its scores, threshold diagnostics, and race-level metrics, rather than through feature attribution.
 
 
-\section{Threats to Validity}
+Explainability is therefore used mainly for the components where the explanation path is directly traceable.
+It helps check whether the feature matrix is reasonable, whether some variables behave 
+as shortcuts, and whether the engineered profiles change the information available to the learner. It is not used to claim causal feature effects.
 
-% Map to the closing cautionary points embedded across Slides 50--59.
-%
-% Threats to include:
-% \begin{itemize}
-%     \item support sparsity and race-level volatility (especially strict pit\_success).
-%     \item threshold-policy dependence for operational behavior.
-%     \item comparator-contract dependence (window semantics and unknown handling).
-%     \item surrogate explainability limits for online learners.
-% \end{itemize}
-%
-% Suggested anchors:
-% \begin{itemize}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/race_level_support_summary.csv}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/pit_success_threshold_sensitivity_slide.csv}
-%     \item \path{data_lake/reports/phase2b_presentation_figures/final_refresh/final_slide_assets_manifest.csv}
-% \end{itemize}
+\subsection{\texttt{source\_year} shortcut-risk and No-Year correction}
 
+One of the main findings from the Batch explainability analysis concerned \texttt{source\_year}, this field was useful as metadata for ordering races, reconstructing 
+out-of-fold predictions, and tracing results back to seasons. As a model input, however, it created a shortcut risk. If a learner assigns high importance to 
+\texttt{source\_year}, part of the prediction may depend on season identity rather than on race context signals such as tyre life, gaps, pace, and race progress 
+\cite{brookshire2024leakage}.
 
-% Writing rule for Chapter 5:
-% Every numeric claim must be traceable to a file under
-% \path{data_lake/reports/phase2b_presentation_figures/final_refresh/}
-% or to an explicitly cited upstream source listed in
-% \path{data_lake/reports/phase2b_presentation_figures/final_refresh/final_refresh_input_provenance.csv}.
+This observation motivated the No-Year correction described in Chapter~\ref{ch:problem_solving}. In the No-Year profile, \texttt{source\_year} is kept for metadata and 
+splitting logic, but it is removed from the learner feature matrix. This makes the comparison cleaner because the model cannot use the season identifier directly.
+
+The Percent profile goes one step further, it also removes selected shortcut-prone fields and adds race-relative variables, such as race progress and relative lap-time signals. 
+This profile is useful for testing whether a more normalized representation improves learning, but it is not a fully neutral baseline since it is an engineered profile, No-Year 
+remains the cleaner reference for comparing the effect of removing season identity.
+
+Figures~\ref{fig:batch_shap_beeswarm_comparison} and~\ref{fig:batch_shap_top_feature_comparison} show the Batch explainability evidence used during this correction phase. 
+The beeswarm plots compare the attribution patterns of the original and Percent-style Batch configurations. The feature comparison plot summarizes how the most relevant 
+variables change after the feature contract is adjusted. These figures support the methodological decision to remove \texttt{source\_year} from the final learner input 
+and to keep No-Year as the clean reference profile.
+
+% Provenance:
+% Original No-Year beeswarm:
+% _archive/phase1_20260523_161415/data_lake/reports/shap_beeswarm.png
+% Original Percent beeswarm:
+% _archive/phase1_20260523_161415/data_lake/reports/phase2b_backups/20260522_112414_pit_success_contract_refresh/data_lake/reports/phase2b_presentation_figures/phase2b_batch_p1_shap_beeswarm.png
+\begin{figure}[htbp]
+    \centering
+    \subfloat[Batch original feature view.\label{fig:batch_shap_beeswarm_no_year}]{%
+        \includegraphics[width=0.48\textwidth]{Images/ch5/shap_beeswarm.png}%
+    }
+    \hfill
+    \subfloat[Batch Percent feature view.\label{fig:batch_shap_beeswarm_percent}]{%
+        \includegraphics[width=0.48\textwidth]{Images/ch5/phase2b_batch_p1_shap_beeswarm.png}%
+    }
+    \caption{Batch XGBoost SHAP beeswarm diagnostics. The plots are used as methodology debugging support, not as causal evidence about pit decisions.}
+    \label{fig:batch_shap_beeswarm_comparison}
+\end{figure}
+
+% Provenance:
+% _archive/phase1_20260523_161415/data_lake/reports/phase2b_backups/20260522_112414_pit_success_contract_refresh/data_lake/reports/phase2b_presentation_figures/phase2b_batch_shap_top_feature_comparison_e0_p1.png
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.99\textwidth]{Images/ch5/phase2b_batch_shap_top_feature_comparison_e0_p1.png}
+    \caption{Comparison of top Batch SHAP features before and after the feature-profile correction. The figure highlights the shortcut-risk role of \texttt{source\_year} 
+    and the shift toward race context features in the corrected profiles.}
+    \label{fig:batch_shap_top_feature_comparison}
+\end{figure}
+
+The explainability figures therefore close the loop with the implementation corrections introduced earlier, they explain why 
+the final protocol distinguishes No-Year from Percent and why the season identifier is excluded from the learner feature matrix.
+
+\section{Conclusive Summary}
+
+This chapter evaluated the three decision paradigms under the same frozen protocol, the comparison used the \texttt{canonical\_sde\_truth} universe, the 
+\texttt{clean\_actionable} lens, and the two contracts defined earlier: \texttt{pit\_any\_h2} for pit timing and \texttt{pit\_success\_h2} for successful pit-call prediction.
+
+The runtime comparison showed the expected difference between the learning branches. Batch XGBoost is slower because it is evaluated through race-sequential 
+out-of-fold training, while MOA processes the stream in a single prequential pass, this clarifies the practical cost of the implemented evaluation protocols.
+
+For \texttt{pit\_any\_h2}, the results show that pit timing is the cleaner and more learnable task. The learning-based systems improve over the deterministic Flink 
+Strategy Engine, with Batch Percent reaching the largest event recall and MOA providing the strongest precision-oriented balance. The row-level imbalance explains 
+why absolute precision remains moderate, but the selected operating points are still above the naive positive-rate baseline.
+
+For \texttt{pit\_success\_h2}, the comparison becomes stricter, a correct call must match a future eligible pit and the pit must later be classified as successful. Under 
+this contract, MOA Percent gives the cleanest selected successful-pit calls, but coverage remains low. The relaxed threshold analysis confirms that more coverage is possible, 
+although it comes with lower strict precision.
+
+The Flink Strategy Engine remains useful as an interpretable deterministic baseline. Its matched-pit success rate shows that many matched calls correspond to successful outcomes, 
+but strict operational precision is much lower once no-match calls and failed matched pits are counted as false positives. This confirms why matched-pit success rate has to remain 
+a diagnostic quantity rather than the main precision metric.
+
+The diagnostic sections complete the interpretation, PR curves and Average Precision inspect row-level ranking quality, race-level Kappa and G-Mean show support-sensitive 
+variability across races, and SHAP-based explainability helped identify the \texttt{source\_year} shortcut risk that motivated the No-Year correction. These diagnostics
+ explain why the final protocol separates selected operating points, relaxed threshold sensitivity, and methodological debugging.
+
+Overall, the evaluation shows that the proposed pipeline can compare deterministic stream rules, Batch learning, and online learning under shared contracts. Pit timing benefits 
+more clearly from learning, while successful pit-call prediction remains sparse, threshold-sensitive, and harder to cover reliably. The next chapter uses these results to 
+answer the thesis objectives and to discuss the main limitations and future extensions of the work.
