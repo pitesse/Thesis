@@ -2,102 +2,175 @@
 \label{ch:introduction}
 \emergencystretch=2em
 
-% \section{Context and Motivation}
+Formula 1 is often perceived through its most visible elements: the driver, the car, the overtakes, the pit stops, and the final classification. This view is natural,
+because the race is presented as a sequence of visible actions on track. Behind those actions, however, there is a continuous engineering and decision-making process.
+A race is not decided only by the maximum performance of the car or by the ability of the driver to extract lap time, it is also shaped by how the team interprets the
+evolution of the event and by how quickly it reacts when the conditions around the car change.
 
-% Formula 1 pit-wall decisions are streaming decision-support decisions: the same driver-lap can be 
-% judged differently depending on evolving race context, track status, and rival dynamics. A reproducible 
-% research setup therefore needs event-time processing semantics, replayable logs, and explicit state handling 
-% citep{akidau2015dataflow,carbone2015flink,kreps2011kafka}.
+Race strategy belongs to this less visible layer, during a Grand Prix, the team has to decide when to stop, which tyre compound to use, whether to protect against a
+rival, whether to extend a stint, and how much risk to accept in exchange for a possible strategic gain. These decisions are connected to tyre
+degradation, traffic, track position, weather, safety car phases, and the behaviour of other cars. A decision that looks reasonable at the start of a lap can become
+weaker a few minutes later if a rival stops, if the track status changes, or if the expected rejoin position disappears.\\
+Pit stops are one of the clearest examples of this dynamic. Stopping can restore tyre performance, create an undercut opportunity, exploit a safety car phase, or avoid
+future degradation. At the same time, it imposes an immediate time loss and can place the car into traffic. The same pit stop can therefore be a good decision in one
+race state and a poor decision in another. What matters is the context in which the stop is made: the age of the tyres, the gaps
+around the car, the expected pit loss, the track status, and the position in which the driver is likely to rejoin.
 
-% This thesis implements that setup as a replay-to-evaluation pipeline:
-% \begin{center}
-% FastF1 history $\rightarrow$ Kafka replay $\rightarrow$ Flink strategy outputs $\rightarrow$ JSONL/Parquet data lake $\rightarrow$ contract-based evaluation.
-% \end{center}
+This thesis studies this type of decision from a data and stream-processing perspective. Historical Formula 1 data make it possible to reconstruct how a race evolved,
+but race strategy is naturally temporal. A decision at lap $k$ should be based only on the information available at lap $k$, even if the evaluation of that decision
+can only be performed later. The work therefore treats historical races as sequences of events that can be replayed and processed in order. In this way, different
+decision systems can be evaluated in a controlled and reproducible setting, while preserving the temporal constraint that characterizes the original race.
 
-% % TODO: expand prose
+\section{Context}
 
-% \section{Research Goal and Scope}
+The context of the thesis lies at the intersection of motorsport strategy, streaming data engineering, and machine learning evaluation. The domain is Formula 1 pit
+strategy, but the underlying structure is more general. A system observes a flow of events, builds an internal representation of the current situation, emits decisions,
+and is judged later, when the outcome becomes known.
 
-% The goal is to compare three decision paradigms under one shared protocol:
-% \begin{itemize}
-%     \item \textbf{Flink Strategy Engine}: deterministic stream-time strategy rules.
-%     \item \textbf{Batch XGBoost}: offline learning with race-sequential OOF predictions \citep{chen2016xgboost,roberts2017cvstructured}.
-%     \item \textbf{MOA Online Learner}: prequential test-then-train stream learner \citep{bifet2010moa}.
-% \end{itemize}
+\subsection{Formula 1 Strategy}
 
-% Headline scope:
-% \begin{itemize}
-%     \item seasons 2022--2025,
-%     \item shared truth universe \texttt{canonical\_sde\_truth},
-%     \item main lens \texttt{clean\_actionable},
-%     \item contracts \texttt{pit\_any\_h2} and corrected \texttt{pit\_success\_h2}.
-% \end{itemize}
+A Formula 1 race can be read as a sequence of changing constraints, even when the strategic plan is prepared before the start, the assumptions that make that plan valid are
+constantly tested by the race itself. Tyres that are competitive at the beginning of a stint gradually lose performance, and the speed of this degradation depends
+on several factors, like track temperature, traffic, driving style, compound behaviour, and the way the car is being managed. At the same time, the gaps around
+the driver determine whether a stop creates an opportunity or introduces a risk. The car ahead may define the possibility of an undercut, while the car behind may make
+stopping dangerous if the rejoin window is too narrow. Track status adds another layer to the decision, because the cost of stopping under green flag conditions is different
+from the cost of stopping under Virtual Safety Car or Safety Car.
 
-% \section{Contracts Used in the Thesis}
+For this reason, the pit wall cannot evaluate a stop from a single signal, for instance a slower lap may indicate tyre degradation, but it may also be caused by traffic, fuel saving,
+lift-and-coast, or by a race phase in which maximum pace is not required. A large enough gap on paper may still be strategically weak if the car would rejoin behind slower
+traffic, while a smaller gap can become attractive if a rival has already stopped and is starting to apply pressure. The strategic meaning of a signal emerges from the
+combination of several signals, and especially from how that combination changes over time.
+Pit strategy is therefore better understood as a stateful decision problem than as a sequence of isolated lap observations. The relevant question is 
+whether the current race state makes stopping preferable to waiting. That state includes tyre condition, gaps, rivals, traffic,
+track status, race phase, and expected pit loss. Since all these elements evolve while the decision window remains open, timing becomes part of the decision itself.
+Waiting one more lap can provide useful information, but it can also allow a rival to complete the undercut or close the rejoin window. Conversely, stopping too early
+can protect against immediate pressure but create problems later in the stint. Pit decisions live in this narrow space between acting too early and reacting too late.
 
-% \subsection{\texttt{pit\_any\_h2}}
-% At lap $k$, predict whether any eligible pit event occurs soon (horizon $H=2$).
-% % TODO: add compact formal definition and exact comparator reference
+\subsection{Race Data and Streaming Decisions}
 
-% \subsection{\texttt{pit\_success\_h2} (corrected contract)}
-% At lap $k$, predict whether a successful evaluated pit occurs in strict future horizon $[k{+}1,k{+}2]$.
-% \begin{itemize}
-%     \item Positive: matched pit outcome \texttt{SUCCESS\_*} or \texttt{OFFSET\_ADVANTAGE}.
-%     \item Negative: no pit in horizon, or matched \texttt{FAILURE\_*}/\texttt{OFFSET\_DISADVANTAGE}.
-%     \item Excluded from clean train/eval: unresolved/weather/unmapped outcomes.
-% \end{itemize}
+Modern motorsport produces detailed information about the race, like timing feeds, telemetry, lap information, tyre state, weather, pit events, and track status can be collected
+and studied after the race. These data make it possible to move from purely qualitative race review to computational race state analysis. Instead of only describing what happened,
+it becomes possible to reconstruct the context in which a decision was made and to ask whether a system could have identified the same situation at the right moment.
 
-% Operational rule used in this thesis:
-% \begin{itemize}
-%     \item positive recommendation with no pit in horizon is a false positive (not excluded).
-% \end{itemize}
+The difficulty is that post race analysis and live decision support are not the same task, since after the race, the complete sequence of events is available. It is known that a
+driver stopped two laps later, that a rival lost time in traffic, or that a safety car appeared shortly after a decision point. During the race, those facts are not yet
+available. If such information enters the model input or the decision logic, the evaluation becomes optimistic and no longer represents the actual decision setting. A
+correct experimental setup must therefore preserve chronology and separate the information available at decision time from the information used later to judge the decision.
+Replay provides a practical way to respect this constraint while still using historical data. A race can be extracted, normalized, enriched, and saved once, then replayed
+as an event stream. The replay does not make the data live, because the source is still historical, but it forces the processing logic to consume the race in temporal order.
+This is useful both methodologically and practically. Methodologically, it prevents the decision logic from seeing the future. Practically, it allows the same race to be
+replayed multiple times, which supports debugging, comparison, and reproducibility.
 
-% \section{Research Questions}
+\subsection{Learning from Race State}
 
-% \textbf{RQ1.} Can the Flink Strategy Engine be frozen as a fair deterministic baseline for 2022--2025 replay?
+Once the race has been reconstructed as an evolving state, the next question is whether that state contains useful signal for pit decision support. The state of a driver at
+a given lap may include tyre life, current pace, gaps to nearby cars, track status, race progress, estimated pit loss, and other contextual variables. These variables cannot
+be interpreted independently, for example tyre age has a different meaning depending on the circuit, the stint, the traffic situation, and the phase of the race. A pace loss can mean
+tyre degradation in one context and strategic management in another.
+Different decision paradigms can be applied to this representation, a deterministic rule system can encode strategy knowledge through explicit scores, thresholds, gates, and
+promotion rules. A Batch learning model can learn patterns from historical races and produce scores on races kept out of the training set. An online learner can process the
+same type of data in stream order, predicting each row before using it for learning. These paradigms reflect different assumptions about the problem: human-designed logic,
+offline statistical learning, and incremental stream learning.
 
-% \textbf{RQ2.} Under leakage-safe race-sequential OOF evaluation, how do Batch XGBoost profiles compare 
-% against Flink Strategy Engine on \texttt{pit\_any\_h2} and \texttt{pit\_success\_h2}?
+\section{Problem}
 
-% \textbf{RQ3.} Under prequential evaluation, does the MOA Online Learner provide competitive ranking and s
-% elected operating points under the same truth contract?
+The problem addressed by this thesis has both a temporal and a statistical component. The temporal component comes from the delay between decision and outcome. A
+recommendation is emitted at a specific driver-lap, while the event that confirms or contradicts the recommendation may happen later. The statistical component comes
+from the rarity of pit events, across a race season, most driver-lap situations are ordinary race progression rather than immediate pit opportunities.
+This makes accuracy a weak summary of system behaviour, since a system that almost always predicts no pit may appear accurate simply because the negative class dominates the data,
+but such a system would provide no useful decision support. The relevant question is what happens when the system emits a positive call. Is the call correct? How many real
+pit events are covered by at least one call? How does the behaviour change when the threshold is made more conservative or more aggressive? These questions shift the
+evaluation from general correctness to the quality and coverage of positive decisions.
 
-% \textbf{RQ4.} How much of observed behavior is model signal versus threshold-policy choice?
+The definition of a correct call also requires care, predicting that a pit stop will happen soon is not the same as predicting that the future pit stop will be strategically
+successful. The first task concerns timing: whether the system recognizes that a pit window is approaching. The second task is stricter, because the future pit must also
+be evaluated as a favourable outcome after it has happened.
 
-% \section{Contributions}
+For this reason, the thesis separates pit decision support into two prediction contracts where the first contract concerns pit timing, while the second contract concerns successful
+pit call prediction. The separation is necessary because the two tasks have different meanings, different positive support, and different levels of difficulty. It also
+makes the evaluation clearer: a system can be assessed on its ability to anticipate pit events without automatically claiming that it can identify successful strategy calls.
 
-% \begin{itemize}
-%     \item A reproducible replay-to-evaluation pipeline grounded in executable code and auditable artifacts.
-%     \item A corrected contract definition for \texttt{pit\_success\_h2} with strict operational scoring.
-%     \item A fair three-way comparison (Flink Strategy Engine, Batch XGBoost, MOA Online Learner) under shared universe and lens.
-%     \item A metric framework that separates:
-%     \begin{itemize}
-%         \item strict operational precision (apples-to-apples),
-%         \item successful event coverage (recall-like),
-%         \item matched-pit success rate (diagnostic only).
-%     \end{itemize}
-% \end{itemize}
+\subsection{Research Questions}
 
-% \section{Result Preview}
+The work is guided by two main research questions.
 
-% % TODO: verify final wording against final_refresh/*.md before defense print.
-% High-level preview from the corrected pipeline:
-% \begin{itemize}
-%     \item \texttt{pit\_any\_h2} is the cleaner learnable timing contract.
-%     \item \texttt{pit\_success\_h2} is stricter, sparser, and more operating-policy-dependent.
-%     \item Flink Strategy Engine, Batch XGBoost, and MOA Online Learner are complementary rather than strictly dominant across both contracts.
-% \end{itemize}
+\begin{itemize}
+    \item \textbf{RQ1.} Can pit timing be learned from historical race state patterns, when the evaluation respects the temporal order of the race?
 
-% \section{Thesis Organization}
 
-% \begin{itemize}
-%     \item Chapter~\ref{ch:state_of_the_art}: state of the art and methodological positioning.
-%     \item Chapter~\ref{ch:problem_framing}: formal problem framing, contracts, and metric ledgers.
-%     \item Chapter~\ref{ch:problem_solving}: problem solving, split into architecture and implementation experience.
-%     \item Chapter~\ref{ch:experimental_evaluation}: corrected experimental evaluation and diagnostic interpretation.
-%     \item Chapter~\ref{ch:conclusions}: conclusions, limitations, and future work.
-% \end{itemize}
+    \item \textbf{RQ2.} Can successful pit call prediction be evaluated under a stricter operational contract, where false successful pit recommendations are penalized and
+          ambiguous outcomes are handled explicitly?
 
-% \paragraph{Writing note.}
-% Keep chapter wording stable with this terminology. Internal artifact IDs may still contain ``sde'' in filenames, 
-% but thesis-facing text should use ``Flink Strategy Engine''.
+
+\end{itemize}
+
+The first question asks whether the current race context contains enough signal to anticipate that a pit stop will happen soon, the second question moves to a stricter
+decision: whether a system can identify situations that should lead not only to a future pit, but to a future pit with a favourable evaluated outcome.
+
+\section{Purpose and Goal}
+
+The purpose of this thesis is to study pit decision support as a reproducible stream and learning problem. The work does not attempt to replace a Formula 1 strategy
+engineer, nor does it try to solve the full race strategy problem, its objective is narrower and more methodological: to build an experimental setting in which different
+decision paradigms can be compared on the same historical race evidence, under the same temporal and statistical constraints.
+The implemented pipeline follows this objective from data extraction to evaluation. Historical races are transformed into replayable streams, processed by a stream-processing
+layer that builds race context and strategy artifacts, and then converted into datasets and outputs for deterministic rules, Batch learning, and online learning. The final
+comparison applies the same contracts to all systems, so that the observed differences can be interpreted as differences in decision behaviour rather than differences
+in evaluation setup.
+The thesis aims to clarify what can be learned from race state data, which aspects
+of the problem are harder, and which methodological choices are necessary to avoid misleading comparisons. 
+
+\section{Contributions}
+
+The thesis makes the following contributions:
+
+\begin{itemize}
+    \item implementation of a reproducible pipeline from historical Formula 1 data to replayable event streams, stream-processing outputs, learning artifacts, and evaluation reports
+
+
+    \item definition of two pit decision contracts, one for pit timing and one for successful pit call prediction
+
+    \item implementation and comparison of three decision paradigms: the Flink Strategy Engine, Batch XGBoost, and the MOA Online Learner
+
+    \item construction of an evaluation protocol that separates row-level decisions, event-level coverage, strict operational precision, and diagnostic matched-pit quantities
+
+    \item analysis of methodological issues such as leakage, shortcut features, threshold sensitivity, support sparsity, and score interpretation
+
+
+\end{itemize}
+
+These contributions are connected by the same objective: making heterogeneous pit decision systems comparable under explicit contracts. The comparison is meaningful only if
+the systems are evaluated on aligned evidence and if the reported quantities keep their intended meaning.
+
+\section{Research Methodology}
+
+The research methodology is empirical and implementation-driven, the work first defines the decision problem and the evaluation contracts, then implements the pipeline
+needed to generate reproducible artifacts, and finally compares the decision systems under the resulting protocol. This order is important because the learning results
+depend on the quality of the evaluation setup. If the temporal structure, the target definition, or the feature contract are wrong, the final metrics can be misleading
+even if the model itself is technically correct.
+
+The evaluation uses metrics suited to rare positive decisions: precision, event coverage, $F_{0.5}$, Average Precision, Kappa, and G-Mean are used with different roles.
+Some quantities describe selected operating points, while others are used as diagnostics for ranking quality, race-level variability, or threshold sensitivity. The methodology
+also includes checks for leakage and shortcut features, because a learning result is useful only if the model is learning from race context rather than from information
+that would not be available or meaningful in the intended decision setting.
+
+\section{Structure of the Thesis}
+
+The document is organized as follows.
+
+\begin{itemize}
+    \item Chapter~\ref{ch:state_of_the_art} introduces the state of the art and the technical background. It covers event-time stream processing, replayable logs, motorsport
+          strategy support, Batch learning, online learning, imbalanced evaluation, and explainability.
+
+    \item Chapter~\ref{ch:problem_framing} defines the problem. It introduces the race state representation, the prediction horizon, the two pit decision contracts, the truth lenses,
+          and the evaluation quantities used later in the thesis.
+
+    \item Chapter~\ref{ch:problem_solving} describes the implemented solution. It presents the architecture of the pipeline, the ingestion and replay logic, the Flink stream
+          processing layer, the persisted artifacts, the learning datasets, and the implementation choices needed to compare the three decision paradigms.
+
+    \item Chapter~\ref{ch:experimental_evaluation} reports the experimental evaluation. It fixes the evaluation protocol, compares the systems on pit timing and successful pit call
+          prediction, and uses ranking, race-level, threshold, and explainability diagnostics to interpret the results.
+
+    \item Chapter~\ref{ch:conclusions} summarizes the main findings, discusses the limits of the implemented work, and outlines future developments toward live ingestion,
+          richer truth models, adaptive policies, and broader online learning.
+
+\end{itemize}
