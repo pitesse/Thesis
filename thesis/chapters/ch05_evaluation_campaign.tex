@@ -82,6 +82,7 @@ but loses precision. The frozen guarded profile recovers precision while keeping
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 The selected profile is the deterministic baseline obtained from the rule engine tuning stage.
 The following sections use this frozen Flink Strategy Engine when comparing the three decision paradigms.
@@ -92,6 +93,7 @@ The following sections use this frozen Flink Strategy Engine when comparing the 
     \caption{Rule-engine tuning summary for 2025 under the clean\_actionable lens, showing pit\_any\_h2 precision, recall, and $F_{0.5}$ across the three rule-engine variants.}
     \label{fig:rule_engine_tuning_variants_clean}
 \end{figure}
+\FloatBarrier
 
 \section{Training Runtime Comparison}
 
@@ -122,6 +124,7 @@ the learner processes the stream in a single pass \cite{bifet2010moa,oza2005boos
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 The timing results should therefore be interpreted as runtime evidence for the selected evaluation implementation, not as a general benchmark of
 XGBoost against MOA. In this pipeline, MOA is faster mainly because it uses a single prequential pass, while Batch XGBoost repeatedly fits models across
@@ -179,6 +182,7 @@ Batch SHAP analysis explain later in section \ref{sec:explainability}.
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 Overall, the timing task favours the learning-based systems. Batch Percent gives the largest event coverage among the reported systems, while MOA provides the
 best precision-oriented balance. This suggests that, for predicting whether a pit will happen soon, the learned models capture useful timing patterns beyond the
@@ -201,6 +205,7 @@ event recall, and $F_{0.5}$ easier to inspect across the deterministic Flink Str
         reports precision, event recall, and $F_{0.5}$ for the selected operating points of the compared systems.}
     \label{fig:pit_any_headline_comparison}
 \end{figure}
+\FloatBarrier
 
 The visual comparison confirms the same interpretation as Table~\ref{tab:pit_any_interpretation}: learned models improve the timing task over the
 deterministic rule baseline, with Batch Percent giving the largest event recall and MOA giving the strongest precision-oriented balance.
@@ -281,6 +286,7 @@ precision, while the two Batch configurations remain more conservative in terms 
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 The selected points are intentionally strict, they show the behaviour of each system under the frozen operating policy. However, the threshold frontier also makes it
 possible to inspect how the learned systems behave when the threshold is relaxed. Table~\ref{tab:pit_success_relaxed} reports this sensitivity check for the Percent profiles.
@@ -303,6 +309,7 @@ Percent increases from 51 to 844 positive calls and from $0.009$ to $0.083$ cove
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 Figure~\ref{fig:pit_success_apples_to_apples_main} visualizes the selected strict comparison. The figure highlights the main result of this subsection: \texttt{pit\_success\_h2}
 is both rarer and stricter than pit timing, because positive calls are penalized when they do not match an eligible future pit or when the matched pit is not successful.
@@ -314,6 +321,7 @@ is both rarer and stricter than pit timing, because positive calls are penalized
         successful event coverage, and $F_{0.5}$ for the selected operating points.}
     \label{fig:pit_success_apples_to_apples_main}
 \end{figure}
+\FloatBarrier
 
 
 
@@ -344,6 +352,7 @@ successful outcomes. However, the engine also emits many calls that do not match
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 Figure~\ref{fig:sde_diagnostic_operational_vs_matched} visualizes the same distinction. The matched-pit success rate is useful for understanding the quality of calls after
 a pit match has occurred.
@@ -355,6 +364,7 @@ a pit match has occurred.
         the headline precision metric.}
     \label{fig:sde_diagnostic_operational_vs_matched}
 \end{figure}
+\FloatBarrier
 
 
 \section{Cross-Task Headline Synthesis}
@@ -415,6 +425,7 @@ Flink Strategy Engine is shown as a fixed operating point, since it emits determ
     \caption{Precision--recall curve for \texttt{pit\_any\_h2}.}
     \label{fig:pr_curve_pit_any_final}
 \end{figure}
+\FloatBarrier
 
 \begin{figure}[htbp]
     \centering
@@ -422,6 +433,7 @@ Flink Strategy Engine is shown as a fixed operating point, since it emits determ
     \caption{Precision--recall curve for \texttt{pit\_success\_h2}.}
     \label{fig:pr_curve_pit_success_final}
 \end{figure}
+\FloatBarrier
 
 Table~\ref{tab:ap_summary_final} reports Average Precision for the score-based systems. For both targets, MOA Percent obtains the highest AP.
 On \texttt{pit\_any\_h2}, Batch Percent is close to MOA Percent, which is consistent with the strong timing behaviour already observed in the
@@ -441,6 +453,7 @@ as well as harder to classify under a fixed threshold.
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 The AP table should be read together with the headline metrics. A model can have a useful ranking curve while still requiring a conservative threshold
 to obtain acceptable operational precision. This is especially visible for \texttt{pit\_success\_h2}, where the best AP belongs to
@@ -476,6 +489,7 @@ ranking-to-decision behaviour across the evaluated races.
     \caption{Race-level Kappa diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_kappa_pit_any}
 \end{figure}
+\FloatBarrier
 
 The G-Mean plot gives a similar view from the sensitivity-specificity side, Batch Percent has the strongest race-level G-Mean values in many races,
 which matches its high event recall on \texttt{pit\_any\_h2}. The MOA profiles appear more stable but less aggressive, while the Flink Strategy
@@ -488,6 +502,7 @@ but the balance between coverage and precision changes substantially from race t
     \caption{Race-level G-Mean diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_gmean_pit_any}
 \end{figure}
+\FloatBarrier
 
 
 \subsection{\texttt{pit\_success\_h2}: Kappa and G-Mean per race}
@@ -515,6 +530,7 @@ prediction is both harder in aggregate and less stable at race level.
     \caption{Race-level Kappa diagnostic for \texttt{pit\_success\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_kappa_pit_success}
 \end{figure}
+\FloatBarrier
 
 \begin{figure}[htbp]
     \centering
@@ -522,6 +538,7 @@ prediction is both harder in aggregate and less stable at race level.
     \caption{Race-level G-Mean diagnostic for \texttt{pit\_success\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_gmean_pit_success}
 \end{figure}
+\FloatBarrier
 
 
 
@@ -586,6 +603,7 @@ and to keep No-Year as the clean reference profile.
     \caption{Batch XGBoost SHAP beeswarm diagnostics. The plots are used as methodology debugging support, not as causal evidence about pit decisions.}
     \label{fig:batch_shap_beeswarm_comparison}
 \end{figure}
+\FloatBarrier
 
 % Provenance:
 % _archive/phase1_20260523_161415/data_lake/reports/phase2b_backups/20260522_112414_pit_success_contract_refresh/data_lake/reports/phase2b_presentation_figures/phase2b_batch_shap_top_feature_comparison_e0_p1.png
@@ -596,6 +614,7 @@ and to keep No-Year as the clean reference profile.
     and the shift toward race context features in the corrected profiles.}
     \label{fig:batch_shap_top_feature_comparison}
 \end{figure}
+\FloatBarrier
 
 The explainability figures therefore close the loop with the implementation corrections introduced earlier, they explain why 
 the final protocol distinguishes No-Year from Percent and why the season identifier is excluded from the learner feature matrix.

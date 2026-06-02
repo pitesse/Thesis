@@ -49,6 +49,7 @@
 \usepackage{xcolor} % Coloured captions
 \usepackage{amsthm,thmtools,xcolor} % Coloured "Theorem"
 \usepackage{float}
+\usepackage[section]{placeins} % Keep floats inside their intended sections
 
 % STANDARD MATH PACKAGES
 \usepackage{amsmath}
@@ -110,10 +111,10 @@
 \begin{document}
 
 \fancypagestyle{plain}{%
-\fancyhf{} % Clear all header and footer fields
-\fancyhead[RO,RE]{\thepage} %RO=right odd, RE=right even
-\renewcommand{\headrulewidth}{0pt}
-\renewcommand{\footrulewidth}{0pt}}
+    \fancyhf{} % Clear all header and footer fields
+    \fancyhead[RO,RE]{\thepage} %RO=right odd, RE=right even
+    \renewcommand{\headrulewidth}{0pt}
+    \renewcommand{\footrulewidth}{0pt}}
 
 %----------------------------------------------------------------------------
 %	TITLE PAGE
@@ -139,18 +140,71 @@
 \setcounter{page}{1} % Set page counter to 1
 
 % ABSTRACT IN ENGLISH
-\chapter*{Abstract} 
-% write your final abstract here
-TODO
+\chapter*{Abstract}
+
+Formula 1 race strategy is a temporal decision problem in which teams must act before the final outcome of their decisions is known. Pit stops are a central example
+of this problem: they can restore tyre performance and create strategic opportunities, but they also impose an immediate time loss.
+Historical race data provide a way to study these decisions.
+
+This thesis addresses the problem of pit decision support from historical Formula 1 data by building a reproducible replay and evaluation pipeline. Historical races
+are extracted, enriched, and transformed into replayable event streams, published through Kafka and processed by a Flink based Strategy Engine,
+which builds race context, emits rule-based pit recommendations, and persists JSONL artifacts for downstream learning. The persisted artifacts are then converted
+into training and evaluation datasets for two learning branches: a Batch XGBoost model and a MOA Online Learner.
+
+The evaluation is organized around two explicit contracts. The first contract, \texttt{pit\_any\_h2}, measures pit timing by checking whether an eligible pit stop occurs
+within a short horizon after a positive call. The second contract, \texttt{pit\_success\_h2}, is stricter: it requires the matched future pit stop to be classified as
+successful. This distinction separates the problem of anticipating a pit window from the harder problem of recommending a pit that later produces a favourable outcome.
+To compare heterogeneous systems fairly, the protocol aligns the truth universe, applies clean eligibility lenses, removes leakage-prone fields from learner inputs, and
+separates row-level decisions, event-level coverage, strict operational precision, and diagnostic matched-pit quantities.
+
+The experiments compare three decision paradigms: the deterministic Flink Strategy Engine, Batch XGBoost, and the MOA Online Learner. The results show that \texttt{pit\_any\_h2}
+is the cleaner and more learnable task. The learning systems improve over the deterministic rule baseline, with Batch providing the largest event coverage
+and MOA providing the strongest precision-oriented balance. In contrast, \texttt{pit\_success\_h2} is substantially harder: successful pit calls are sparse, threshold-sensitive,
+and more dependent on the post-pit evaluator.
+
+Overall, this work shows that historical race state contains useful signal for pit timing, while successful pit-call prediction requires stricter accounting and remains more
+difficult to cover reliably. The main contribution is both practical and methodological: an executable pipeline for replaying historical races and comparing deterministic,
+Batch, and online decision systems, together with a contract based evaluation protocol that makes their outputs comparable under aligned evidence.
+
 \vspace{1em}
-\textbf{Keywords:} % add 4 to 6 keywords
+\textbf{Keywords:} Formula 1 strategy, stream processing, pit stop prediction, online learning, XGBoost, MOA.
+
+
 
 % ABSTRACT IN ITALIAN
 \chapter*{Abstract in lingua italiana}
-TODO
-% scrivi qui l'abstract in italiano
+
+La strategia di gara in Formula 1 è un problema decisionale temporale, in cui i team devono agire prima che l'esito finale delle loro decisioni sia noto. I pit stop
+rappresentano un esempio centrale di questo problema: possono ripristinare la prestazione degli pneumatici e creare opportunità strategiche, ma comportano anche una perdita
+di tempo immediata. I dati storici di gara offrono un modo per studiare queste decisioni.
+
+Questa tesi affronta il problema del supporto decisionale per le chiamate ai box a partire da dati storici di Formula 1, costruendo una pipeline riproducibile di replay e
+valutazione. Le gare storiche vengono estratte, arricchite e trasformate in stream di eventi replayabili, pubblicati tramite Kafka e processati da uno Strategy Engine basato
+su Flink, che costruisce il contesto di gara, emette raccomandazioni rule based e persiste artefatti JSONL per le successive fasi di apprendimento. Gli artefatti
+vengono poi convertiti in dataset di training e valutazione per due rami di apprendimento: un modello Batch XGBoost e un MOA Online Learner.
+
+La valutazione è organizzata attorno a due contratti espliciti. Il primo contratto,\\ \texttt{pit\_any\_h2}, misura il timing del pit stop controllando se un pit stop
+avviene entro un breve orizzonte dopo una chiamata positiva. Il secondo contratto, \texttt{pit\_success\_h2}, è più severo: richiede che il pit stop futuro associato
+venga classificato di successo. Questa distinzione separa il problema di anticipare una finestra di pit stop dal problema più difficile di raccomandare un pit stop che
+produca poi un esito favorevole. Per confrontare sistemi eterogenei in modo equo, il protocollo allinea l'universo di verità, applica lenti di eleggibilità pulite, rimuove
+dai learner i campi a rischio leakage e mantiene separate decisioni a livello di riga, copertura degli eventi, precisione operativa e quantità diagnostiche basate
+sui pit stop associati.
+
+Gli esperimenti confrontano tre paradigmi decisionali: il Flink Strategy Engine deterministico, Batch XGBoost e il MOA Online Learner. I risultati mostrano che
+\texttt{pit\_any\_h2} è il compito più pulito e più apprendibile. I sistemi basati su apprendimento migliorano rispetto al baseline deterministico, con Batch
+che fornisce la maggiore copertura degli eventi e MOA che fornisce il miglior bilanciamento orientato alla precisione. Al contrario, \texttt{pit\_success\_h2} è sostanzialmente
+più difficile: le chiamate a pit stop di successo sono sparse, sensibili alla soglia scelta e più dipendenti dall'evaluator post-pit.
+
+Nel complesso, questo lavoro mostra che lo stato storico della gara contiene segnale utile per anticipare il timing dei pit stop, mentre la previsione di pit stop di
+successo richiede una contabilità più severa e rimane più difficile da coprire in modo affidabile. Il contributo principale è sia pratico sia metodologico: una pipeline
+eseguibile per replayare gare storiche e confrontare sistemi decisionali deterministici, Batch e online, insieme a un protocollo di valutazione basato su contratti che
+rende confrontabili i loro output.
+
 \vspace{1em}
-\textbf{Parole chiave:} % inserisci 4 a 6 parole chiave
+\textbf{Parole chiave:} strategia Formula 1, stream processing, previsione pit stop, apprendimento online, XGBoost, MOA.
+
+
+
 
 %----------------------------------------------------------------------------
 %	LIST OF CONTENTS/FIGURES/TABLES/SYMBOLS
@@ -216,14 +270,100 @@ TODO
 \listoftables
 
 % LIST OF SYMBOLS
-% Write out the List of Symbols in this page
-\chapter*{List of Symbols} % You have to include a chapter for your list of symbols (
-\begin{table}[H]
-    \centering
-    \begin{tabular}{lll}
-        \textbf{Variable} & \textbf{Description} & \textbf{Unit} \\\hline\\[-9px]
-    \end{tabular}
-\end{table}
+\chapter*{List of Symbols}
+\renewcommand{\arraystretch}{1.25}
+\begin{longtable}{p{0.20\textwidth}p{0.58\textwidth}p{0.14\textwidth}}
+    \textbf{Variable}  & \textbf{Description}                                                                                  & \textbf{Unit} \\
+    \hline
+    \endfirsthead
+
+    \textbf{Variable}  & \textbf{Description}                                                                                  & \textbf{Unit} \\
+    \hline
+    \endhead
+
+        $k$                & Current lap at which a decision or prediction is emitted                                              & laps          \\
+
+        $H$                & Prediction horizon used to match positive calls with future pit events                                & laps          \\
+
+        $P$                & Current race position of a driver in the drop-zone computation                                        & position      \\
+
+        $j, m$             & Index variables used when walking the position ladder behind a driver                                 & --            \\
+
+        $lapTime$          & Lap time of the current driver-lap observation                                                        & s             \\
+
+        $stintBestLap$     & Best lap time observed in the current stint for the driver                                            & s             \\
+
+        $thresholdPct$     & Dynamic tyre-drop threshold used to compare the current lap with the stint-best lap                   & ratio         \\
+
+        $compoundBase$     & Base tyre-degradation threshold associated with the tyre compound                                     & ratio         \\
+
+        $fuelAdjust$       & Fuel-related adjustment applied to the tyre-drop threshold                                            & ratio         \\
+
+        $hotTrackAdjust$   & Track-temperature adjustment applied to the tyre-drop threshold                                       & ratio         \\
+
+        $thresholdFloor$   & Minimum allowed value for the dynamic tyre-drop threshold                                             & ratio         \\
+
+        $gapToCarAhead_j$  & Gap from car $j$ to the car immediately ahead in the race order                                       & s             \\
+
+        $pitLoss$          & Estimated time loss caused by a pit stop under the current track-status condition                     & s             \\
+
+        $S$                & Total pit desirability score produced by the Flink Strategy Engine                                    & score         \\
+
+        $S_{pace}$         & Score contribution associated with stint-relative pace degradation                                    & score         \\
+
+        $S_{track}$        & Score contribution associated with track status, such as SC or VSC conditions                         & score         \\
+
+        $S_{traffic}$      & Score contribution associated with the expected traffic or clean-air condition after the pit stop     & score         \\
+
+        $P_{strategy}$     & Strategy penalty applied when the inferred next compound cannot cover the remaining laps              & score         \\
+
+        $S_{action}$       & Action urgency score combining tyre-life urgency and rival reaction pressure                          & score         \\
+
+        $S_{timing}$       & Timing-pressure score associated with local decision-window signals                                   & score         \\
+
+        $P_{eor}$          & End-of-race suppression term used to reduce late unnecessary calls                                    & score         \\
+
+        $B_{competitive}$  & Competitive pressure bonus derived from gaps and recent rival pit activity                            & score         \\
+
+        $P_{uncertainty}$  & Penalty associated with missing or low-confidence race-context signals                                & score         \\
+
+        $g$                & Estimated emergence gap after applying pit loss in the drop-zone computation                          & s             \\
+
+        $deficit$          & Fractional deficit between remaining laps and the estimated maximum stint length of the next compound & ratio         \\
+
+        $lapsRemaining$    & Number of laps remaining in the race at the current observation                                       & laps          \\
+
+        $maxStint_{next}$  & Estimated maximum stint length for the inferred next tyre compound                                    & laps          \\
+
+        $tyreRatio$        & Tyre-life ratio used to compute action urgency                                                        & ratio         \\
+
+        $raceProgress$     & Fraction of the scheduled race already completed                                                      & ratio         \\
+
+        $signalConfidence$ & Confidence score derived from the availability and quality of race-context signals                    & ratio         \\
+
+        $\Delta_{gap}\%$   & Normalized change in gap before and after a pit stop                                                  & \%            \\
+
+        $preGap$           & Gap to the relevant rival before the pit cycle                                                        & s             \\
+
+        $postGap$          & Gap to the relevant rival after the pit cycle                                                         & s             \\
+
+        $baselineLapTime$  & Reference lap time used to normalize the post-pit gap change                                          & s             \\
+
+        $TP$               & True positives: positive calls matched to the required target condition                               & count         \\
+
+        $FP$               & False positives: positive calls that do not satisfy the target condition                              & count         \\
+
+        $FN$               & False negatives: target events or rows not covered by a positive call                                 & count         \\
+
+        $F_{0.5}$          & Precision-weighted F-score used to summarize selected operating points                                & --            \\
+
+        $AP$               & Average Precision, used as a row-level ranking diagnostic                                             & --            \\
+
+        $\kappa$           & Cohen's Kappa, used as a race-level agreement diagnostic                                              & --            \\
+
+        $G$-Mean           & Geometric mean of sensitivity and specificity, used as an imbalance diagnostic                        & --            \\
+    \end{longtable}
+
 
 % ACKNOWLEDGEMENTS
 \chapter*{Acknowledgements}

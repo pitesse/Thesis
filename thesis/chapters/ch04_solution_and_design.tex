@@ -48,6 +48,7 @@ to make the outputs traceable and usable for the final experimental discussion p
     \caption{High-level architecture of the pipeline.}
     \label{fig:full_architecture}
 \end{figure}
+\FloatBarrier
 
 
 \subsection{Ingestion and Replay Architecture}
@@ -78,6 +79,7 @@ preserving the same input evidence for the following Flink, learning, and evalua
         lap, and track-status streams.}
     \label{fig:ingestion_replay_architecture}
 \end{figure}
+\FloatBarrier
 
 
 \subsection{Flink Stream-Processing Architecture}
@@ -100,6 +102,7 @@ and reused by the feature, learning, and evaluation stages. Flink therefore acts
     \caption{Flink stream-processing architecture.}
     \label{fig:flink_stream_processing_architecture}
 \end{figure}
+\FloatBarrier
 
 \subsection{Data Lake and Feature Architecture}
 
@@ -132,6 +135,7 @@ protocol.
     \caption{Data lake and feature architecture.}
     \label{fig:data_lake_feature_architecture}
 \end{figure}
+\FloatBarrier
 
 \subsection{Truth and Comparator Architecture}
 
@@ -153,6 +157,7 @@ the stop has occurred. The comparator uses this truth layer to evaluate the call
     \caption{Truth and comparator architecture.}
     \label{fig:truth_comparator_architecture}
 \end{figure}
+\FloatBarrier
 
 
 \subsection{Model Architecture}
@@ -452,6 +457,7 @@ important later because the clean learning and evaluation contracts do not treat
     \caption{Pit cycle evaluation flow diagram.}
     \label{fig:pit_cycle_evaluation}
 \end{figure}
+\FloatBarrier
 
 The two paths therefore produce different artifacts with different meanings.\\ \texttt{PitStrategyEvaluator} produces online recommendations from the current race state.
 \texttt{PitStopEvaluator} produces post pit outcome labels from completed pit cycles. Keeping them separate prevents the evaluation from confusing a decision emitted by the

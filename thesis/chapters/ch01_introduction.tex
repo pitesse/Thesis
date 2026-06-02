@@ -2,29 +2,35 @@
 \label{ch:introduction}
 \emergencystretch=2em
 
-Formula 1 is often perceived through its most visible elements: the driver, the car, the overtakes, the pit stops, and the final classification. This view is natural,
-because the race is presented as a sequence of visible actions on track. Behind those actions, however, there is a continuous engineering and decision-making process.
-A race is not decided only by the maximum performance of the car or by the ability of the driver to extract lap time, it is also shaped by how the team interprets the
+Formula 1 races are often perceived through their most visible elements: the driver, the car, the overtakes, the pit stops, and the final classification; this view is natural,
+because the race is presented as a sequence of visible actions on track. Behind those actions, however, there is a continuous engineering and decision making process, since
+a race is not decided only by the maximum performance of the car or by the ability of the driver to extract lap time, it is also shaped by how the team interprets the
 evolution of the event and by how quickly it reacts when the conditions around the car change.
 
-Race strategy belongs to this less visible layer, during a Grand Prix, the team has to decide when to stop, which tyre compound to use, whether to protect against a
+In recent seasons, several races have shown how decisive strategy box calls can be. The 2024 Italian Grand Prix is a clear example: Charles Leclerc and Ferrari converted a 
+one-stop strategy into victory at Monza, while the McLarens of Oscar Piastri and Lando Norris finished behind after following a different strategic path while having a more performant car.
+An opposite example can be seen in the 2022 Monaco Grand Prix, Leclerc started from pole position and led the early part of the race, but the transition 
+from wet tyres to intermediates and then slicks created a confused pit sequence for Ferrari. After being called in and then told to stay out when he had 
+already committed to the pit lane, Leclerc lost track position and dropped to fourth, behind Pérez, Sainz, and Verstappen. In this case, the race showed how a 
+poorly timed or poorly coordinated pit call can turn a strong on-track position into a lost opportunity.
+Examples of this kind show why pit strategy is one of the mechanisms through which race performance is transformed into a final result.
+
+This is because race strategy belongs to a less visible layer, during a Grand Prix, the team has to decide when to stop, which tyre compound to use, whether to protect against a
 rival, whether to extend a stint, and how much risk to accept in exchange for a possible strategic gain. These decisions are connected to tyre
-degradation, traffic, track position, weather, safety car phases, and the behaviour of other cars. A decision that looks reasonable at the start of a lap can become
+degradation, traffic, track position, weather, safety car phases, and the behaviour of other cars; a box call that looks reasonable at the start of a lap can become
 weaker a few minutes later if a rival stops, if the track status changes, or if the expected rejoin position disappears.\\
 Pit stops are one of the clearest examples of this dynamic. Stopping can restore tyre performance, create an undercut opportunity, exploit a safety car phase, or avoid
-future degradation. At the same time, it imposes an immediate time loss and can place the car into traffic. The same pit stop can therefore be a good decision in one
-race state and a poor decision in another. What matters is the context in which the stop is made: the age of the tyres, the gaps
-around the car, the expected pit loss, the track status, and the position in which the driver is likely to rejoin.
+future degradation; while at the same time, it imposes an immediate time loss and can place the car into traffic. The same pit stop can therefore be a good decision in one
+race state and a poor decision in another, what matters is the context in which the stop is made.
 
-This thesis studies this type of decision from a data and stream-processing perspective. Historical Formula 1 data make it possible to reconstruct how a race evolved,
-but race strategy is naturally temporal. A decision at lap $k$ should be based only on the information available at lap $k$, even if the evaluation of that decision
-can only be performed later. The work therefore treats historical races as sequences of events that can be replayed and processed in order. In this way, different
+This thesis studies this type of decision from a data and stream processing perspective. 
+The work therefore treats historical races as sequences of events that can be replayed and processed in order; in this way, different
 decision systems can be evaluated in a controlled and reproducible setting, while preserving the temporal constraint that characterizes the original race.
 
 \section{Context}
 
 The context of the thesis lies at the intersection of motorsport strategy, streaming data engineering, and machine learning evaluation. The domain is Formula 1 pit
-strategy, but the underlying structure is more general. A system observes a flow of events, builds an internal representation of the current situation, emits decisions,
+strategy, but the underlying structure is more general; a system observes a flow of events, builds an internal representation of the current situation, emits decisions,
 and is judged later, when the outcome becomes known.
 
 \subsection{Formula 1 Strategy}
@@ -34,16 +40,15 @@ constantly tested by the race itself. Tyres that are competitive at the beginnin
 on several factors, like track temperature, traffic, driving style, compound behaviour, and the way the car is being managed. At the same time, the gaps around
 the driver determine whether a stop creates an opportunity or introduces a risk. The car ahead may define the possibility of an undercut, while the car behind may make
 stopping dangerous if the rejoin window is too narrow. Track status adds another layer to the decision, because the cost of stopping under green flag conditions is different
-from the cost of stopping under Virtual Safety Car or Safety Car.
-
+from the cost of stopping under Virtual Safety Car or Safety Car.\\
 For this reason, the pit wall cannot evaluate a stop from a single signal, for instance a slower lap may indicate tyre degradation, but it may also be caused by traffic, fuel saving,
 lift-and-coast, or by a race phase in which maximum pace is not required. A large enough gap on paper may still be strategically weak if the car would rejoin behind slower
 traffic, while a smaller gap can become attractive if a rival has already stopped and is starting to apply pressure. The strategic meaning of a signal emerges from the
 combination of several signals, and especially from how that combination changes over time.
-Pit strategy is therefore better understood as a stateful decision problem than as a sequence of isolated lap observations. The relevant question is 
-whether the current race state makes stopping preferable to waiting. That state includes tyre condition, gaps, rivals, traffic,
+The relevant question is 
+whether the current race state makes stopping preferable to waiting; that state includes tyre condition, gaps, rivals, traffic,
 track status, race phase, and expected pit loss. Since all these elements evolve while the decision window remains open, timing becomes part of the decision itself.
-Waiting one more lap can provide useful information, but it can also allow a rival to complete the undercut or close the rejoin window. Conversely, stopping too early
+Waiting one more lap can provide useful information, but it can also allow a rival to complete the undercut or close the rejoin window, while on the other hand stopping too early
 can protect against immediate pressure but create problems later in the stint. Pit decisions live in this narrow space between acting too early and reacting too late.
 
 \subsection{Race Data and Streaming Decisions}
@@ -53,28 +58,28 @@ and studied after the race. These data make it possible to move from purely qual
 it becomes possible to reconstruct the context in which a decision was made and to ask whether a system could have identified the same situation at the right moment.
 
 The difficulty is that post race analysis and live decision support are not the same task, since after the race, the complete sequence of events is available. It is known that a
-driver stopped two laps later, that a rival lost time in traffic, or that a safety car appeared shortly after a decision point. During the race, those facts are not yet
+driver stopped two laps later, that a rival lost time in traffic, or that a safety car appeared shortly after a decision point; while during the race, those facts are not yet
 available. If such information enters the model input or the decision logic, the evaluation becomes optimistic and no longer represents the actual decision setting. A
 correct experimental setup must therefore preserve chronology and separate the information available at decision time from the information used later to judge the decision.
-Replay provides a practical way to respect this constraint while still using historical data. A race can be extracted, normalized, enriched, and saved once, then replayed
-as an event stream. The replay does not make the data live, because the source is still historical, but it forces the processing logic to consume the race in temporal order.
-This is useful both methodologically and practically. Methodologically, it prevents the decision logic from seeing the future. Practically, it allows the same race to be
+Replay provides a practical way to respect this constraint while still using historical data because a race can be extracted, normalized, enriched, and saved once, then replayed
+as an event stream.
+This is useful both methodologically and practically: methodologically it prevents the decision logic from seeing the future, practically it allows the same race to be
 replayed multiple times, which supports debugging, comparison, and reproducibility.
 
 \subsection{Learning from Race State}
 
-Once the race has been reconstructed as an evolving state, the next question is whether that state contains useful signal for pit decision support. The state of a driver at
-a given lap may include tyre life, current pace, gaps to nearby cars, track status, race progress, estimated pit loss, and other contextual variables. These variables cannot
-be interpreted independently, for example tyre age has a different meaning depending on the circuit, the stint, the traffic situation, and the phase of the race. A pace loss can mean
+Once the race has been reconstructed as an evolving state, the next question is whether that state contains useful signal for pit decision support; the state 
+may include tyre life, current pace, gaps to nearby cars, track status, race progress, estimated pit loss, and other contextual variables for each driver. These variables cannot
+be interpreted independently, for example tyre age has a different meaning depending on the circuit, the stint, the traffic situation, and the phase of the race; or a pace loss can mean
 tyre degradation in one context and strategic management in another.
-Different decision paradigms can be applied to this representation, a deterministic rule system can encode strategy knowledge through explicit scores, thresholds, gates, and
-promotion rules. A Batch learning model can learn patterns from historical races and produce scores on races kept out of the training set. An online learner can process the
+Different pit decision paradigms can be applied to this representation, a deterministic rule system can encode strategy knowledge through explicit scores, thresholds, gates, and
+promotion rules; a Batch learning model can learn patterns from historical races and produce scores on races kept out of the training set; an online learner can process the
 same type of data in stream order, predicting each row before using it for learning. These paradigms reflect different assumptions about the problem: human-designed logic,
 offline statistical learning, and incremental stream learning.
 
-\section{Problem}
+\section{Problem and Purpose}
 
-The problem addressed by this thesis has both a temporal and a statistical component. The temporal component comes from the delay between decision and outcome. A
+The problem addressed by this thesis has both a temporal and a statistical component, the temporal component comes from the delay between decision and outcome; a
 recommendation is emitted at a specific driver-lap, while the event that confirms or contradicts the recommendation may happen later. The statistical component comes
 from the rarity of pit events, across a race season, most driver-lap situations are ordinary race progression rather than immediate pit opportunities.
 This makes accuracy a weak summary of system behaviour, since a system that almost always predicts no pit may appear accurate simply because the negative class dominates the data,
@@ -82,13 +87,21 @@ but such a system would provide no useful decision support. The relevant questio
 pit events are covered by at least one call? How does the behaviour change when the threshold is made more conservative or more aggressive? These questions shift the
 evaluation from general correctness to the quality and coverage of positive decisions.
 
-The definition of a correct call also requires care, predicting that a pit stop will happen soon is not the same as predicting that the future pit stop will be strategically
-successful. The first task concerns timing: whether the system recognizes that a pit window is approaching. The second task is stricter, because the future pit must also
+The definition of a correct call also requires care since predicting that a pit stop will happen soon is not the same as predicting that the future pit stop will be strategically
+successful. The first task concerns timing: whether the system recognizes that a pit window is approaching; the second task is stricter, because the future pit must also
 be evaluated as a favourable outcome after it has happened.
-
 For this reason, the thesis separates pit decision support into two prediction contracts where the first contract concerns pit timing, while the second contract concerns successful
-pit call prediction. The separation is necessary because the two tasks have different meanings, different positive support, and different levels of difficulty. It also
-makes the evaluation clearer: a system can be assessed on its ability to anticipate pit events without automatically claiming that it can identify successful strategy calls.
+pit call prediction. The separation is necessary because the two tasks have different meanings, different positive support, and different levels of difficulty.
+
+So the purpose of this thesis is to study pit decision support as a reproducible stream and learning problem. The work does not attempt to replace a Formula 1 strategy
+engineer, nor does it try to solve the full race strategy problem, its objective is narrower and more methodological: to build an experimental setting in which different
+decision paradigms can be compared on the same historical race evidence, under the same temporal and statistical constraints.
+The implemented pipeline follows this objective from data extraction to evaluation; historical races are transformed into replayable streams, processed by a stream processing
+layer that builds race context and strategy artifacts, and then converted into datasets and outputs for deterministic rules, Batch learning, and online learning. The final
+comparison applies the same contracts to all systems, so that the observed differences can be interpreted as differences in decision behaviour rather than differences
+in evaluation setup.
+The thesis aims to clarify what can be learned from race state data, which aspects
+of the problem are harder, and which methodological choices are necessary to avoid misleading comparisons. 
 
 \subsection{Research Questions}
 
@@ -107,17 +120,6 @@ The work is guided by two main research questions.
 The first question asks whether the current race context contains enough signal to anticipate that a pit stop will happen soon, the second question moves to a stricter
 decision: whether a system can identify situations that should lead not only to a future pit, but to a future pit with a favourable evaluated outcome.
 
-\section{Purpose and Goal}
-
-The purpose of this thesis is to study pit decision support as a reproducible stream and learning problem. The work does not attempt to replace a Formula 1 strategy
-engineer, nor does it try to solve the full race strategy problem, its objective is narrower and more methodological: to build an experimental setting in which different
-decision paradigms can be compared on the same historical race evidence, under the same temporal and statistical constraints.
-The implemented pipeline follows this objective from data extraction to evaluation. Historical races are transformed into replayable streams, processed by a stream-processing
-layer that builds race context and strategy artifacts, and then converted into datasets and outputs for deterministic rules, Batch learning, and online learning. The final
-comparison applies the same contracts to all systems, so that the observed differences can be interpreted as differences in decision behaviour rather than differences
-in evaluation setup.
-The thesis aims to clarify what can be learned from race state data, which aspects
-of the problem are harder, and which methodological choices are necessary to avoid misleading comparisons. 
 
 \section{Contributions}
 
@@ -138,14 +140,13 @@ The thesis makes the following contributions:
 
 \end{itemize}
 
-These contributions are connected by the same objective: making heterogeneous pit decision systems comparable under explicit contracts. The comparison is meaningful only if
-the systems are evaluated on aligned evidence and if the reported quantities keep their intended meaning.
+These contributions are connected by the same objective: making heterogeneous pit decision systems comparable under explicit contracts.
 
 \section{Research Methodology}
 
-The research methodology is empirical and implementation-driven, the work first defines the decision problem and the evaluation contracts, then implements the pipeline
+The research methodology is empirical and implementation driven, the work first defines the decision problem and the evaluation contracts, then implements the pipeline
 needed to generate reproducible artifacts, and finally compares the decision systems under the resulting protocol. This order is important because the learning results
-depend on the quality of the evaluation setup. If the temporal structure, the target definition, or the feature contract are wrong, the final metrics can be misleading
+depend on the quality of the evaluation setup; if the temporal structure, the target definition, or the feature contract are wrong, the final metrics can be misleading
 even if the model itself is technically correct.
 
 The evaluation uses metrics suited to rare positive decisions: precision, event coverage, $F_{0.5}$, Average Precision, Kappa, and G-Mean are used with different roles.
