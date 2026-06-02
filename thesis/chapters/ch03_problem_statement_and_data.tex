@@ -42,6 +42,7 @@ A stream formulation therefore has to handle ordering, synchronization, and repl
     \caption{Conceptual flow from historical race data to stream-based decision support and reproducible storage.}
     \label{fig:historical_to_decision_flow}
 \end{figure}
+\FloatBarrier
 
 After the stream is available, the processing problem becomes stateful, but a single event rarely carries enough information to judge a pit situation.
 The current context depends on what happened before, like tyre history, pace evolution, gaps to rivals, track status, incidents, and earlier strategic choices.
@@ -111,6 +112,7 @@ The decision problem emerges from the interaction between these layers.
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 A pit stop places the driver back into the race at a different point of the field,
 the expected rejoin context determines whether the driver returns in clean air, in traffic, or close to a rival.
@@ -162,6 +164,7 @@ The number of observations associated with successful pit stops is even smaller.
     \caption{Conceptual distinction between pit occurrence prediction and successful pit prediction.}
     \label{fig:contract_definitions}
 \end{figure}
+\FloatBarrier
 
 
 \section{Imbalance and Baseline Difficulty}
@@ -194,6 +197,7 @@ The problem becomes even harder when considering good pit stops, since they repr
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 This is why accuracy alone is not enough to describe the task.
 \citep{saito2015prroc,davis2006relationship,he2009imbalanced}
@@ -287,6 +291,7 @@ Unresolved, weather-related, unmapped, or noisy outcomes are kept outside the cl
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
 
 A system can appear strong if only matched pit outcomes are considered, while still performing poorly as an operational decision policy if it emits many positive calls that are
 not followed by a pit.
@@ -337,3 +342,4 @@ The next chapter describes how these issues are addressed in the proposed soluti
         \bottomrule
     \end{tabular}
 \end{table}
+\FloatBarrier
