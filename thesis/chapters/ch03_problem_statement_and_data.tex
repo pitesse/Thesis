@@ -4,59 +4,49 @@
 \section{From Historical Races to Decision Instances}
 
 Historical Formula 1 data are rich, but they are usually available after the race has already happened,
-sources such as FastF1 can expose lap records, timing data, telemetry-derived signals, stint information, pit stops,
-gaps between drivers, track status, weather observations, and final classifications.
-\citep{fastf1docs}
-Taken together, these elements allow a race to be reconstructed with a level of detail that is useful for analysis.
-The difficulty starts when the same material is used to reason about decisions that, during the race, would have been made with only a partial view of the session.
+sources such as FastF1 can expose lap records, timing data, telemetry derived signals, stint information, pit stops,
+gaps between drivers, track status, weather observations, and final classifications \citep{fastf1docs}.
+Taken together, these elements allow a race to be reconstructed with a level of detail that is useful for analysis; 
+the difficulty starts when the same material is used to reason about decisions that, during the race, would have been made with only a partial view of the session.
 A strategy call lives inside that partial view;
 at lap $k$, the available information includes what has happened up to that point: the driver's current situation, the tyre stint, the recent pace, the gaps to rivals,
 the track status, and previous race events.
-The completed historical record also contains what happens afterwards, but those future elements cannot be part of the decision state.
-A pit call at lap $k$ cannot rely on a pit stop that occurs at lap $k+1$, on a gap measured after the call, or on the final outcome of the pit sequence.
+The completed historical record also contains what happens afterwards, but those future elements cannot be part of the decision state since
+a pit call at lap $k$ cannot rely on a pit stop that occurs at lap $k+1$, on a gap measured after the call, or on the final outcome of the pit sequence.
 The first problem is therefore temporal: the race must be reconstructed in a way that keeps decision-time information separated from future information.
 \citep{akidau2015dataflow,brookshire2024leakage}
 
 The raw data do not arrive already shaped for this purpose because different sources describe different aspects of the same race, and they often do so at different granularities;
-for instance, lap data are organized around completed laps, telemetry can be sampled more frequently, weather and track status may change at irregular points, and pit information can appear
-as direct events or as stint summaries.
-Before any decision problem can be defined, these pieces have to be aligned on a common race timeline.
+for example, lap data are organized around completed laps, telemetry can be sampled more frequently, weather and track status may change at irregular points, 
+and pit information can appear as direct events or as stint summaries,
+before any decision problem can be defined, these pieces have to be aligned on a common race timeline.
 Missing values, repeated records, delayed updates, and inconsistent timestamps can all change the state that a decision process would see.
 This is where an event-based view becomes useful,
-a race can be read as a sequence of observations that progressively change what is known about the session.
-A lap is completed, a timing value is updated, a track status changes, a stint becomes older, a pit event occurs; each one of these events may modify the state of the race.
+a race can be read as a sequence of observations that progressively change what is known about the session;
+a lap is completed, a timing value is updated, a track status changes, a stint becomes older, a pit event occurs; each one of these events may modify the state of the race.
 Event sourcing captures this idea by keeping the ordered history of these state changes.
 \citep{fowler2005eventsourcing,kreps2011kafka}
 The point is to store the final race table and to preserve the path that leads to each race state.
 
-Event streaming adds the next difficulty.
-Once the race is represented as an ordered history, that history has to be made available as a flow of observations.
-The processing order has to respect the race chronology, even when the original data come from different sources.
-Some records may be late, some may be duplicated, and some may become meaningful only after they are combined with previous state.
+Event streaming adds the next difficulty since
+once the race is represented as an ordered history, that history has to be made available as a flow of observations.
+The processing order has to respect the race chronology, even when the original data come from different sources;
+some records may be late, some may be duplicated, and some may become meaningful only after they are combined with previous state.
 A stream formulation therefore has to handle ordering, synchronization, and replayability before any pit decision logic can be evaluated.
 \citep{akidau2015dataflow,carbone2015flink,kreps2011kafka}
 
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.35\textwidth]{Images/ch3/diagram_hist_to_decis_dataflow.png}
-    \caption{Conceptual flow from historical race data to stream-based decision support and reproducible storage.}
-    \label{fig:historical_to_decision_flow}
-\end{figure}
-\FloatBarrier
-
-After the stream is available, the processing problem becomes stateful, but a single event rarely carries enough information to judge a pit situation.
-The current context depends on what happened before, like tyre history, pace evolution, gaps to rivals, track status, incidents, and earlier strategic choices.
-The processor has to maintain an evolving view of the race and update it as new observations arrive.
-\citep{carbone2015flink,akidau2015dataflow}
-Only then can a decision point be interpreted as a meaningful race state rather than as an isolated record.
+After the stream is available, the processing problem becomes stateful, but a single event rarely carries enough information to judge a pit situation because
+the current lap context depends on what happened before, like tyre history, pace evolution, gaps to rivals, track status, incidents, and earlier strategic choices.
+The processor has to maintain an evolving view of the race and update it as new observations arrive \citep{carbone2015flink,akidau2015dataflow},
+only then can a decision point be interpreted as a meaningful race state rather than as an isolated record.
 The same reasoning applies to alerts, a pit alert is emitted while the race is still unfolding, so it can be early, repeated across nearby laps,
 or made obsolete by a sudden change in context.
-An incident, a safety car, a weather change, or a rival pit stop can alter the value of a call immediately after it is produced.
-For this reason, alert emission and later assessment are two different moments of the problem.
-The alert belongs to the live decision stream; its correctness can only be checked after the relevant future race events have occurred.
+An incident, a safety car, a weather change, or a rival pit stop can alter the value of a call immediately after it is produced;
+for this reason, alert emission and later assessment are two different moments of the problem.
+The alert belongs to the live decision stream, its correctness can only be checked after the relevant future race events have occurred.
 
-The last part of the chain is storage.
-A live alert may be useful during a replay or a real-time setting, but learning and evaluation require artifacts that can be inspected after the fact.
+The last part of the chain is storage,
+a live alert may be useful during a replay or a real-time setting, but learning and evaluation require artifacts that can be inspected after the fact.
 The stored data have to preserve the state available at each decision point, the alerts produced from that state, and the later events used to assess them.
 Without this boundary, different decision approaches could be compared on different versions of the race evidence.
 \citep{roberts2017cvstructured,brookshire2024leakage}
@@ -66,30 +56,39 @@ Historical race data have to be transformed into temporally valid observations, 
 A driver-lap point is a natural candidate because it connects one driver, one race, and one lap index with the surrounding race context.
 The following sections refine this framing by describing the race context, the prediction contracts, and the evaluation boundary.
 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.35\textwidth]{Images/ch3/diagram_hist_to_decis_dataflow.png}
+    \caption{Conceptual flow from historical race data to stream-based decision support and reproducible storage.}
+    \label{fig:historical_to_decision_flow}
+\end{figure}
+\FloatBarrier
+
 
 \section{Stateful Race Context}
 
-A pit decision cannot be described by the current lap time alone;
+A pit decision cannot be described by the current lap time alone since
 at a given lap, the value of stopping depends on several parts of the race that evolve at the same time like
 the tyre stint becomes older, the pace of the driver changes, gaps to rivals open or close, track status may change, and previous strategic choices constrain
-the options that remain available.
-\citep{heilmeier2020race,carrasco2023optimization,quiroga2024optimization,piccinotti2020openloop}
-A pit call is therefore tied to a local race context.
-The current situation of a driver is the result of what happened in the previous laps: when the current stint started, whether the
+the options that remain available \citep{heilmeier2020race,carrasco2023optimization,quiroga2024optimization,piccinotti2020openloop}.
+A pit call is therefore tied to a local race context since
+the current situation of a driver is the result of what happened in the previous laps: when the current stint started, whether the
 driver lost time in traffic, whether a rival already stopped, and other possible factors.
-For this reason, the problem is stateful.
-A decision point must summarize the information accumulated up to that moment and update it as the race changes.
+For this reason, the problem is stateful;
+a decision point must summarize the information accumulated up to that moment and update it as the race changes.
 
 The same signal can also have different meanings depending on the surrounding context, for instance
 an old tyre stint may suggest that a stop is becoming attractive, but the same stop may be poor if the driver would rejoin behind slower cars or is
 at 2 laps before the end of the race.
 A safety car, a yellow flag, or changing weather can modify the effective cost of stopping and can make a previously unattractive stop suddenly reasonable or even necessary.
-So the main difficulty of race state interpretation is that the relevant variables do not act independently.
-\citep{heilmeier2020race,cappello2025statespace}
+So the main difficulty of race state interpretation is that the relevant variables do not act independently \citep{heilmeier2020race,cappello2025statespace}.
+A pit stop places the driver back into the race at a different point of the field,
+the expected rejoin context determines whether the driver returns in clean air, in traffic, or close to a rival;
+this means that the same pit loss can have different strategic consequences depending on the cars around the rejoin position \citep{carrasco2023optimization,heilmeier2020race}.
 
-A useful race context therefore has to combine information about the driver, the rivals, and the session.
-Driver-specific information describes the current stint, pace, and position.
-Rival information describes gaps, pressure, and possible undercut or overcut situations.
+A useful race context therefore has to combine information about the driver, the rivals, and the session;
+Driver-specific information describes the current stint, pace, and position;
+Rival information describes gaps, pressure, and possible undercut or overcut situations;
 Session information describes the race phase, track status, weather, and other external conditions.
 The decision problem emerges from the interaction between these layers.
 
@@ -114,49 +113,42 @@ The decision problem emerges from the interaction between these layers.
 \end{table}
 \FloatBarrier
 
-A pit stop places the driver back into the race at a different point of the field,
-the expected rejoin context determines whether the driver returns in clean air, in traffic, or close to a rival.
-This means that the same pit loss can have different strategic consequences depending on the cars around the rejoin position.
-\citep{carrasco2023optimization,heilmeier2020race}
 
 The stateful nature of the problem also affects how alerts should be interpreted, for instance
-a positive pit signal may appear because several context factors align for a few laps, it would be much more difficult to be sent because a single row contains a decisive value.
-The signal may persist across nearby laps, weaken if the context changes, or disappear after a rival reacts.
-The problem can therefore be framed as the construction of race-state observations from an evolving stream of information where
-each observation should describe the strategic context of a driver at a specific point in the race, while avoiding future information.
-\citep{akidau2015dataflow,brookshire2024leakage}
+a positive pit signal may appear because several context factors align for a few laps, it would be much more difficult to be sent because a single row contains a decisive value;
+the signal may persist across nearby laps, weaken if the context changes, or disappear after a rival reacts.
+The problem can therefore be framed as the construction of race state observations from an evolving stream of information where
+each observation should describe the strategic context of a driver at a specific point in the race, while avoiding future information \citep{akidau2015dataflow,brookshire2024leakage}.
 The next step is to define what such observations are expected to predict, which leads to the two prediction contracts introduced in the following section.u
 
 \section{Prediction Contracts}
 \label{sec:contracts}
 
-Once the race state has been defined, and once a pipeline or system is able to interpret it, the next problem is to decide what the pit prediction should be based on.
-In other words, it is necessary to define the prediction contract that the system is expected to follow.
+Once the race state has been defined, and once a pipeline or system is able to interpret it, the next problem is to decide what the pit prediction should be based on;
+in other words, it is necessary to define the prediction contract that the system is expected to follow.
 
-Predicting the exact pit lap is difficult in practice.
-Team decisions may shift the stop by one lap, for example when two drivers should ideally stop in the same phase but cannot be served at the same time.
-Yellow flags, virtual safety cars, traffic, or sudden changes in race conditions may also make the exact lap of the stop less predictable.
-For this reason, it is reasonable to extend the prediction horizon and allow a small margin around the decision point.
-A system that suggests a pit one lap before the actual stop may still be producing a meaningful recommendation.
-\citep{hettmann2024datatopodium,sasikumar2025pitstop,dinh2025gradient}
+Predicting the exact pit lap is difficult in practice because
+team decisions may shift the stop by one lap, for example when two drivers should ideally stop in the same phase but cannot be served at the same time.
+Yellow flags, virtual safety cars, traffic, or sudden changes in race conditions may also make the exact lap of the stop less predictable;
+for this reason, it is reasonable to extend the prediction horizon and allow a small margin around the decision point.
+A system that suggests a pit one lap before the actual stop may still be producing a meaningful recommendation \citep{hettmann2024datatopodium,sasikumar2025pitstop,dinh2025gradient}.
 
-A second distinction concerns the difference between predicting that a pit stop will happen and predicting that the pit stop will actually be useful.
-These are related problems, but they are not equivalent.
-Predicting a pit stop is slightly simpler, because the target only requires the occurrence of a pit event.
-Predicting whether the pit stop is useful also requires reasoning about the outcome of the stop, which is more complex.
-A pit stop may look useful at the moment of the decision, but later become less favourable because of a safety car, traffic after the stop, a poor rejoin position, or the reaction of rival cars.
-
+A second distinction concerns the difference between predicting that a pit stop will happen and predicting that the pit stop will actually be useful,
+which are related problems, but they are not equivalent.
+Predicting a pit stop is slightly simpler, because the target only requires the occurrence of a pit event;
+predicting whether the pit stop is useful also requires reasoning about the outcome of the stop, which is more complex.
+A pit stop may look useful at the moment of the decision, but later become less favourable because of a safety car, traffic after the stop, a poor 
+rejoin position, or the reaction of rival cars.
 For this reason, the two prediction contracts are based on the same race data but represent two distinct problems.
-The first contract concerns the occurrence of a pit stop in the near future.
-The second contract concerns the occurrence of a pit stop that is later evaluated as successful.
-The second contract is expected to be more difficult, because it combines pit timing with the strategic outcome of the stop.
-\citep{heilmeier2020race,carrasco2023optimization,sasikumar2025pitstop}
+The first contract concerns the occurrence of a pit stop in the near future;
+the second contract concerns the occurrence of a pit stop that is later evaluated as successful,
+this one is expected to be more difficult, because it combines pit timing with the strategic outcome of the stop \citep{heilmeier2020race,carrasco2023optimization,sasikumar2025pitstop}.
 
-The difficulty is increased by the strong imbalance of the dataset.
-In a clean race state, without accidents, rain, or other exceptional events, each driver usually performs only one or two pit stops.
-As a result, most driver-lap observations are negative examples, and only a small fraction of them correspond to an imminent pit stop.
-The number of observations associated with successful pit stops is even smaller.
-\citep{he2009imbalanced,saito2015prroc}
+The difficulty is increased by the strong imbalance of the dataset since
+in a clean race state, without accidents, rain, or other exceptional events, each driver usually performs only one or two pit stops.
+As a result, most driver-lap observations are negative examples, and only a small fraction of them correspond to an imminent pit stop,
+the number of observations associated with successful pit stops is even smaller \citep{he2009imbalanced,saito2015prroc}.
+
 
 \begin{figure}[htbp]
     \centering
@@ -172,13 +164,11 @@ The number of observations associated with successful pit stops is even smaller.
 The issue introduced in the previous section leads to one of the main difficulties of the problem, and arguably to its core challenge: the strong imbalance of the data.
 In Formula 1, a driver usually performs only one or two pit stops in a race when there is no rain, accident, or unusual race disruption.
 Considering the ground-effect era, with seasons made of roughly twenty to twenty-four races, the number of pit events remains small when compared with the number of
-driver-lap observations produced across all races.
-A driver may complete around fifty to seventy laps in a race, while only a very small subset of those laps is close to an actual pit stop.
-As a result, the pit class is much smaller than the no-pit class.
-\citep{he2009imbalanced,saito2015prroc}
+driver-lap observations produced across all races, around 3/4\% of total laps are pit laps.
+As a result, the pit class is much smaller than the no-pit class \citep{he2009imbalanced,saito2015prroc}.
 
-In a setting with this level of imbalance, even a trivial system that always predicts no pit can obtain a very high accuracy.
-This result would be misleading.
+
+In a setting with this level of imbalance, even a trivial system that always predicts no pit can obtain a very high accuracy which would be misleading.
 Such a system would give no information about the reasoning behind the race and would provide no support for pit prediction.
 The problem becomes even harder when considering good pit stops, since they represent a smaller subset of an already rare set of pit events.
 
@@ -199,80 +189,65 @@ The problem becomes even harder when considering good pit stops, since they repr
 \end{table}
 \FloatBarrier
 
-This is why accuracy alone is not enough to describe the task.
-\citep{saito2015prroc,davis2006relationship,he2009imbalanced}
-The relevant events are rare, and the objective is not simply to classify most rows correctly, but to emit pit calls that are meaningful.
+This is why accuracy alone is not enough to describe the task \citep{saito2015prroc,davis2006relationship,he2009imbalanced};
+the relevant events are rare, and the objective is not simply to classify most rows correctly, but to emit pit calls that are meaningful.
 Metrics such as precision and recall are therefore more informative, because they focus on the positive calls and on the events that the system is able to capture.
-Since a false pit suggestion can be costly in a race strategy setting, a precision-oriented measure such as $F_{0.5}$ is also useful.
-\citep{elkan2001costsensitive}
+Since a false pit suggestion can be costly in a race strategy setting, a precision-oriented measure such as $F_{0.5}$ is also useful \citep{elkan2001costsensitive}.
 
-Threshold-based analysis is important for the same reason.
-A model may assign different scores to different race states, and the selected threshold determines how many pit calls are emitted.
-Precision--recall curves and Average Precision help describe this behaviour across possible thresholds, rather than at a single fixed operating point.
-\citep{saito2015prroc,davis2006relationship}
+Threshold based analysis is important for the same reason,
+a model may assign different scores to different race states, and the selected threshold determines how many pit calls are emitted.
+Precision--recall curves and Average Precision help describe this behaviour across possible thresholds, rather than at a single fixed operating point \citep{saito2015prroc,davis2006relationship}.
 Additional diagnostics such as Kappa and G-Mean can also help inspect the behaviour of a system under strong imbalance, especially when comparing approaches that produce
-their decisions in different ways.
-\citep{cohen1960kappa,he2009imbalanced}
-
+their decisions in different ways \citep{cohen1960kappa,he2009imbalanced}.
 These metrics make the problem more analyzable and provide a common language for comparing the paradigms introduced in the next section.
 
 \section{Comparison Boundary}
 
-The pit prediction problem under strong imbalance can be approached through different decision paradigms.
-The first paradigm is heuristic and rule-based.
+The pit prediction problem under strong imbalance can be approached through different decision paradigms,
+the first paradigm is heuristic and rule based.
 In this case, pit calls are produced from human interpretation of race dynamics, using explicit rules and thresholds over variables such as tyre age, gaps to rivals, track position,
 race phase, and other context factors.
-This type of approach is close to how a strategy engineer may reason about the race, because the decision logic is directly encoded in terms of interpretable race signals.
-\citep{heilmeier2020race}
-
-A second paradigm is offline machine learning.
-Here, the problem is treated as a supervised prediction task over race-state observations.
+This type of approach is close to how a strategy engineer may reason about the race, because the decision logic is directly encoded in terms of interpretable race signals \citep{heilmeier2020race}.
+A second paradigm is offline machine learning;
+here, the problem is treated as a supervised prediction task over race-state observations.
 The main difficulty is to decide which information should be given to the learner, how the race context should be represented, and how the model should be trained and tuned
 without introducing future information.
-Compared with a rule-based system, the model does not rely only on manually written thresholds, but learns patterns from historical examples.
-\citep{chen2016xgboost,hettmann2024datatopodium,sasikumar2025pitstop,dinh2025gradient}
-
+Compared with a rule based system, the model does not rely only on manually written thresholds, but learns patterns from historical examples \citep{chen2016xgboost,hettmann2024datatopodium,sasikumar2025pitstop,dinh2025gradient}.
 The third paradigm is online learning.
 Conceptually, this is closer to the streaming setting because the learner receives observations sequentially and updates its behaviour over time.
-Like a streaming rule-based system, it processes the race in order, one observation after another.
-The difference is that the decision rule is learned incrementally from the stream, rather than being fixed entirely by manually defined conditions.
-\citep{bifet2010moa,oza2005boosting,bifet2007adwin}
+Like a streaming rule based system, it processes the race in order, one observation after another.
+The difference is that the decision rule is learned incrementally from the stream, rather than being fixed entirely by manually defined conditions \citep{bifet2010moa,oza2005boosting,bifet2007adwin}.
 
-The important point is that these paradigms can only be compared if the evaluation boundary is shared.
-All systems must be evaluated on the same prediction contracts, the same targets, and the same interpretation of positive and negative cases.
-Otherwise, the comparison would mix different problems.
+The important point is that these paradigms can only be compared if the evaluation boundary is shared. because
+all systems must be evaluated on the same prediction contracts, the same targets, and the same interpretation of positive and negative cases;
+otherwise the comparison would mix different problems.
 An apparent advantage in precision or coverage could come from a better interpretation of race dynamics, but it could also come from a different target definition, a different horizon,
-or a different denominator in the evaluation.
-\citep{roberts2017cvstructured,brookshire2024leakage}
+or a different denominator in the evaluation \citep{roberts2017cvstructured,brookshire2024leakage}.
 
 For this reason, the comparison requires a common boundary before any result can be interpreted.
-The systems may produce their decisions in different ways, but the meaning of a pit call and the set of race situations used for evaluation must remain aligned.
-The next section introduces this boundary through the notion of a shared truth universe and a clean evaluation lens.
+The systems may produce their decisions in different ways, but the meaning of a pit call and the set of race situations used for evaluation must remain aligned,
+the next section introduces this boundary through the notion of a shared truth universe and a clean evaluation lens.
 
 \section{Evaluation framing}
-A fair comparison between decision paradigms requires a shared truth universe.
-\citep{roberts2017cvstructured,brookshire2024leakage}
-The systems may produce pit calls in different ways, but those calls must be scored against the same set of eligible race situations.
-Otherwise, a difference in precision or coverage could depend on the denominator used for evaluation, rather than on the quality of the decision logic.
-This is especially important for successful pit prediction since the label of a successful or failed pit is not directly observable from the pit event alone.
-It depends on the interpretation of what happens around the stop, such as the effect on position, gaps, rival behaviour, and race context.
-For this reason, the comparison needs a canonical interpretation of pit outcomes, so that all paradigms are evaluated against the same outcome evidence.
-At the same time, not every historical situation can be treated as clean evidence.
-Some pit outcomes may be unresolved, noisy, affected by weather, or difficult to classify in a stable way.
-Including these cases as ordinary negatives would make the task less clear, because the system would be penalized or rewarded on situations where the strategic meaning is uncertain.
-A clean evaluation lens removes these ambiguous cases and keeps the comparison focused on situations where a pit recommendation can reasonably be judged.
-\citep{brookshire2024leakage,roberts2017cvstructured}
+A fair comparison between decision paradigms requires a shared truth universe \citep{roberts2017cvstructured,brookshire2024leakage}.
+The systems may produce pit calls in different ways, but those calls must be scored against the same set of eligible race situations;
+otherwise a difference in precision or coverage could depend on the denominator used for evaluation, rather than on the quality of the decision logic.
+This is especially important for successful pit prediction since the label of a successful or failed pit is not directly observable from the pit event alone;
+it depends on the interpretation of what happens around the stop, such as the effect on position, gaps, rival behaviour, and race context.
+For this reason, the comparison needs a canonical interpretation of pit outcomes, so that all paradigms are evaluated against the same outcome evidence, while
+at the same time, not every historical situation can be treated as clean evidence.
+Some pit outcomes may be unresolved, noisy, affected by weather, or difficult to classify in a stable way;
+including these cases as ordinary negatives would make the task less clear, because the system would be penalized or rewarded on situations where the strategic meaning is uncertain.
+A clean evaluation lens removes these ambiguous cases and keeps the comparison focused on situations where a pit recommendation can reasonably be judged \citep{brookshire2024leakage,roberts2017cvstructured}.
 
 The evaluation also has to distinguish between row-level and event-level accounting because row-level accounting scores the individual calls emitted by a system, while
 event-level accounting measures how many unique pit events are covered by those calls.
-The two views are related, but they are not interchangeable.
-\citep{saito2015prroc,davis2006relationship}
-A system may emit several calls around the same pit event, or it may emit many calls that are not followed by any pit.
+The two views are related, but they are not interchangeable \citep{saito2015prroc,davis2006relationship} since 
+a system may emit several calls around the same pit event, or it may emit many calls that are not followed by any pit.
 
-For the pit occurrence contract, a positive call is correct when an eligible pit occurs in the future decision window.
-For successful pit prediction, the accounting is stricter:
-a positive call with no pit in the future window or matched to a failed or disadvantageous pit outcome is a false positive.
-\citep{elkan2001costsensitive}
+For the pit occurrence contract, a positive call is correct when an eligible pit occurs in the future decision window, while
+for successful pit prediction, the accounting is stricter:
+a positive call with no pit in the future window or matched to a failed or disadvantageous pit outcome is a false positive \citep{elkan2001costsensitive}.
 Unresolved, weather-related, unmapped, or noisy outcomes are kept outside the clean operational scoring instead of being forced into clean negatives.
 
 \begin{table}[t]
@@ -293,38 +268,27 @@ Unresolved, weather-related, unmapped, or noisy outcomes are kept outside the cl
 \end{table}
 \FloatBarrier
 
-A system can appear strong if only matched pit outcomes are considered, while still performing poorly as an operational decision policy if it emits many positive calls that are
-not followed by a pit.
-From the described problems described in this section derives the need of a system which evaluates pit calls in a fair and operationally meaningful way, by scoring them against a
+From the problems described in this section derives the need of a system which evaluates pit calls in a fair and operationally meaningful way, by scoring them against a
 shared truth universe and by using a clean evaluation lens to focus on situations where the strategic meaning of a pit call can be reasonably judged.
 
 \section{Feature Engineering Opportunities}
 
-The final aspect of the problem framing concerns a conceptual but important point. 
-Since the problem can also be approached with both offline and online machine learning learners, the construction of the input features becomes part of the problem itself.
+The final aspect of the problem framing concerns a conceptual but important point, 
+since the problem can also be approached with both offline and online machine learning learners, the construction of the input features becomes part of the problem itself.
 
 The base dataset that can be obtained from event sourcing contains many raw race variables. 
-These variables are not always directly comparable across races. 
-\citep{roberts2017cvstructured,heilmeier2020race}
-A race may have forty laps or more than seventy laps, lap times can change significantly from circuit to circuit, and stint lengths may vary depending on strategy, tyre degradation,
-track conditions, and race interruptions. 
-\citep{heilmeier2020race,cappello2025statespace}
+These variables are not always directly comparable across races \citep{roberts2017cvstructured,heilmeier2020race}, because
+a race may have forty laps or more than seventy laps, lap times can change significantly from circuit to circuit, and stint lengths may vary depending on strategy, tyre degradation,
+track conditions, and race interruptions \citep{heilmeier2020race,cappello2025statespace}. 
 As a consequence, the same raw value may have a different meaning depending on the race in which it appears.
 This opens the possibility of revisiting the raw data through feature engineering, 
-the objective is to represent race states in a more homogeneous form, so that they can be processed more effectively by a machine learning model. 
-\citep{chen2016xgboost,hettmann2024datatopodium,dinh2025gradient}
-For example, lap time information can be expressed relative to recent pace instead of being used only as an absolute value. 
-Similarly, race progress can be represented as the percentage of the race already completed, rather than only through the absolute lap number. 
-These transformations can help describe comparable race situations even when the races have different lengths or different pace profiles.
-\citep{roberts2017cvstructured,cappello2025statespace}
+where the objective is to represent race states in a more homogeneous form, so that they can be processed more effectively by a machine learning model \citep{chen2016xgboost,hettmann2024datatopodium,dinh2025gradient}. 
+For example, lap time information can be expressed relative to recent pace instead of being used only as an absolute value; 
+similarly, race progress can be represented as the percentage of the race already completed, rather than only through the absolute lap number. 
+These transformations can help describe comparable race situations even when the races have different lengths or different pace profiles \citep{roberts2017cvstructured,cappello2025statespace}.
 
 This does not remove the difficulty of the prediction problem, but it defines an important part of how the problem can be approached. 
 Before comparing decision systems, the race state has to be represented in a form that is meaningful for both rule-based reasoning and learning-based methods.
-
-This concludes the problem framing chapter. 
-The main difficulties have been identified: transforming historical races into decision instances, maintaining stateful race context, defining the prediction contracts,
-handling class imbalance, setting a fair comparison boundary, and representing the race state in a way that can support learning. 
-The next chapter describes how these issues are addressed in the proposed solution.
 
 \begin{table}[t]
     \centering
@@ -343,3 +307,8 @@ The next chapter describes how these issues are addressed in the proposed soluti
     \end{tabular}
 \end{table}
 \FloatBarrier
+
+This concludes the problem framing chapter. 
+The main difficulties have been identified: transforming historical races into decision instances, maintaining stateful race context, defining the prediction contracts,
+handling class imbalance, setting a fair comparison boundary, and representing the race state in a way that can support learning. 
+The next chapter describes how these issues are addressed in the proposed solution.

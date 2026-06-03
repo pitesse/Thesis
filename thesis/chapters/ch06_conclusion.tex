@@ -3,7 +3,7 @@
 
 \section{Conclusions}
 
-This thesis addressed the problem of evaluating pit decision support systems from historical Formula 1 data under live-like temporal constraints. The implemented system
+This thesis addressed the problem of evaluating pit decision support systems from historical Formula 1 data under live-like temporal constraints, the implemented system
 starts from historical race sessions, converts them into replayable event streams, processes them through a Flink based strategy pipeline, and then compares three decision
 paradigms under shared evaluation contracts: the Flink Strategy Engine, Batch XGBoost, and the MOA Online Learner.
 
@@ -12,8 +12,8 @@ after the race has evolved and the pit event, if any, has occurred. The evaluati
 without using future information as model input. This led to the two contracts used throughout the thesis: \texttt{pit\_any\_h2}, for pit timing, and \texttt{pit\_success\_h2},
 for successful pit-call prediction.
 
-The final evaluation showed that these two contracts describe different levels of difficulty. Pit timing can be learned from replayed race context with useful precision
-and coverage trade-offs. Successful pit-call prediction can also be evaluated under a strict operational view, but it remains sparse, threshold sensitive, and harder
+The final evaluation showed that these two contracts describe different levels of difficulty, where Pit timing can be learned from replayed race context with useful precision
+and coverage trade-offs, while Successful pit-call prediction can also be evaluated under a strict operational view, but it remains sparse, threshold sensitive, and harder
 to cover reliably. The following findings summarize the main outcomes of the work.
 
 \subsection{Principal Findings}
@@ -49,21 +49,21 @@ to cover reliably. The following findings summarize the main outcomes of the wor
 
 \end{enumerate}
 
-Taken together, these findings answer the two main contract questions of the thesis. Pit timing is a learnable decision support task in the implemented replay setting.
-Successful pit-call prediction can be evaluated under a stricter contract, but the results show a more limited and fragile signal. The strongest conclusion is 
+Taken together, these findings answer the two main contract questions of the thesis; pit timing is a learnable decision support task in the implemented replay setting,
+successful pit-call prediction can be evaluated under a stricter contract, but the results show a more limited and fragile signal. The strongest conclusion is 
 that each paradigm occupies a different position in the trade-off between interpretability, coverage, precision, and temporal evaluation.
 
 \section{Scope and Limitations}
 
-The results should be read within the scope of the implemented pipeline. The first boundary is the use of historical replay. Replaying FastF1 sessions through Kafka and
-Flink makes the experiments reproducible and gives the system live-like temporal semantics. The same race can be replayed multiple times, the produced artifacts can be
+The results should be read within the scope of the implemented pipeline; the first boundary is the use of historical replay, replaying FastF1 sessions through Kafka and
+Flink makes the experiments reproducible and gives the system live-like temporal semantics, the same race can be replayed multiple times, the produced artifacts can be
 inspected, and the comparison can be regenerated. A live race feed would introduce additional issues, such as data corrections, missing fields, feed latency, and operational
 failure modes. The current system is therefore a controlled experimental environment rather than a deployed pit-wall tool usable in production for real world applications.
 
 A second boundary concerns the definition of successful pit outcomes, the \texttt{pit\_success\_h2} target depends on the \texttt{PitStopEvaluator}, which classifies completed
-pit cycles from post pit evidence. This gives the thesis a reproducible truth contract, but it does not represent the full utility function of a racing team. A real strategy
+pit cycles from post pit evidence. This gives the thesis a reproducible truth contract, but it does not represent the full utility function of a racing team because a real strategy
 decision may also depend on tyre allocation, risk tolerance, team objectives, opponent response, long-term stint plans, or championship context. The evaluator captures part of
-the strategic outcome, mainly through gap and rival evolution, but it remains an approximation.
+the strategic outcome, mainly through gap and rival evolution, but it remains an heuristic approximation.
 
 The strict success contract also creates a support problem, successful pit events are rarer than pit timing events, and some races contain only a small number of clean
 positive cases. Race-level Kappa and G-Mean diagnostics therefore become noisy for \texttt{pit\_success\_h2}, even after support filtering. This sparsity limits how strongly
@@ -73,12 +73,12 @@ Threshold choice is another limitation since Batch XGBoost and MOA produce score
 thresholds define the headline policies, while the relaxed rows show how quickly the balance between precision and coverage can change. A fixed threshold is useful for
 reproducibility, but it cannot represent every possible operational preference.
 
-The MOA branch adds two further boundaries. Its positive scores are derived from class votes and are treated as ranking scores. They support
-threshold sweeps and precision--recall diagnostics, but they should not be read as direct probabilities of a pit event. The same caution applies to explainability. Batch
+The MOA branch adds two further boundaries; its positive scores are derived from class votes and are treated as ranking scores, they support
+threshold sweeps and precision--recall diagnostics, but they should not be read as direct probabilities of a pit event. The same caution applies to explainability, Batch
 XGBoost can be inspected directly through SHAP and TreeSHAP, while the MOA Online Learner does not expose an equally direct attribution path. A surrogate SHAP analysis was
 explored, but it was not retained because the surrogate model could not be verified as a faithful explanation of the internal online learner.
 
-Finally, the model comparison is deliberately scoped. The Batch branch uses XGBoost and the online branch uses the selected MOA configuration. This is enough to evaluate the
+Finally, the model comparison is deliberately scoped; the Batch branch uses XGBoost and the online branch uses the selected MOA configuration. This is enough to evaluate the
 proposed framework across deterministic, Batch, and online paradigms, but it does not exhaust the space of possible learners. Other Batch models, online learners, calibration
 methods, and drift-aware algorithms may produce different trade-offs under the same contracts.
 
@@ -95,8 +95,8 @@ The first extension is the transition from replay to live ingestion, the current
 persisted artifacts, and downstream evaluation. A live version would replace the historical replay source with a real timing or telemetry feed, while keeping the same
 stateful processing logic where possible.
 
-This step would test a different part of the system. In replay, the input sequence is frozen and can be regenerated while in a live setting, events may arrive late, be
-corrected, or be partially unavailable. The system would need stronger monitoring, latency checks, and failure handling. The evaluation would also have to distinguish
+This step would test a different part of the system, in replay the input sequence is frozen and can be regenerated while in a live setting, events may arrive late, be
+corrected, or be partially unavailable. The system would need stronger monitoring, latency checks, and failure handling, also the evaluation would also have to distinguish
 between decisions made with incomplete live data and decisions made after corrected data become available.
 
 \subsection{Richer Truth Models for Successful Pit Outcomes}
@@ -106,7 +106,7 @@ which was necessary for this thesis, a richer evaluator could use longer post pi
 It could also include sampled human validation, especially for ambiguous pit cycles where the rule based classification is less clear.
 
 Another possible development is a probabilistic success label, instead of assigning only success, failure, or unknown categories, the evaluator could estimate the
-confidence of the outcome. This would help in cases where the gap change is small, the rival context changes after the stop, or safety car and weather conditions
+confidence of the outcome; this would help in cases where the gap change is small, the rival context changes after the stop, or safety car and weather conditions
 distort the comparison.
 
 \subsection{Event Level and Sequence Aware Learning}
@@ -128,13 +128,13 @@ precision before producing an actionable call. This would make the output more f
 
 \subsection{Broader Online Learning and Calibration Aware Evaluation}
 
-The MOA Online Learner was evaluated through one selected configuration. Future work could compare additional online learners, including Hoeffding Trees, Adaptive
+The MOA Online Learner was evaluated through one selected configuration, future work could compare additional online learners, including Hoeffding Trees, Adaptive
 Random Forests, and other drift aware ensembles. This would clarify whether the observed MOA behaviour depends on the selected learner or whether the same pattern
 appears across different online methods.
 
 \subsection{Faithful Explainability for Online Learners}
 
-The final direction concerns explainability for online models, since the Batch branch has a direct explanation path through tree based attribution, while the MOA branch does not. A
+The final direction concerns explainability for online models, since the Batch branch has a direct explanation path through tree based attribution, while the MOA branch does not; a
 future version could investigate explanation methods designed for streaming learners, or log additional interpretable signals during prequential prediction.
 The goal would be to explain online decisions without replacing the learner with a separate surrogate model, possible approaches include local perturbation diagnostics,
 model specific explanations when available, or rule summaries extracted from online behaviour. This would make the online branch easier to inspect and more comparable with
@@ -150,5 +150,5 @@ The work also showed that evaluation design matters as much as model choice in t
 operational precision remains low. A score can rank rows well while still requiring a conservative threshold. A feature can improve apparent performance while acting as a
 shortcut. These effects are part of the pit decision problem and have to be exposed.
 
-The final contribution is therefore both practical and methodological. Practically, the system provides an executable path from historical races to comparable decision artifacts.
-Methodologically, it defines contracts and accounting rules that make deterministic stream rules, Batch learning, and online learning comparable under the same evidence.
+The final contribution is therefore both practical and methodological; practically, the system provides an executable path from historical races to comparable decision artifacts,
+methodologically, it defines contracts and accounting rules that make deterministic stream rules, Batch learning, and online learning comparable under the same evidence.
