@@ -68,7 +68,6 @@ ml_pipeline/*.pkl
 ml_pipeline/*.png
 
 # LaTeX build artifacts (keep source and bib; do not track compiled PDF during drafting)
-thesis/Thesis.pdf
 *.aux
 *.out
 *.toc
