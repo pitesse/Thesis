@@ -43,7 +43,7 @@ to make the outputs traceable and usable for the final experimental discussion p
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.75\textwidth]{Images/ch4/full_architecture.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch4/full_architecture.png}
     \caption{High-level architecture of the pipeline.}
     \label{fig:full_architecture}
 \end{figure}
@@ -72,7 +72,7 @@ preserving the same input evidence for the following Flink, learning, and evalua
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.75\textwidth]{Images/ch4/ingestion&replay.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch4/ingestion&replay.png}
     \caption{Ingestion and replay architecture. Historical race data are extracted and stored once as replay ready Parquet artifacts, then replayed through Kafka as telemetry,
         lap, and track status streams.}
     \label{fig:ingestion_replay_architecture}
@@ -96,7 +96,7 @@ and reused by the feature, learning, and evaluation stages. Flink therefore acts
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.75\textwidth]{Images/ch4/flink.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch4/flink.png}
     \caption{Flink stream processing architecture.}
     \label{fig:flink_stream_processing_architecture}
 \end{figure}
@@ -127,7 +127,7 @@ protocol.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.75\textwidth]{Images/ch4/dataset_prep.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch4/dataset_prep.png}
     \caption{Data lake and feature architecture.}
     \label{fig:data_lake_feature_architecture}
 \end{figure}
@@ -149,7 +149,7 @@ the stop has occurred, the comparator uses this truth layer to evaluate the call
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.75\textwidth]{Images/ch4/truth_com_arch.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch4/truth_com_arch.png}
     \caption{Truth and comparator architecture.}
     \label{fig:truth_comparator_architecture}
 \end{figure}
@@ -177,6 +177,8 @@ In this way, the three systems keep their different decision mechanisms, while t
 This section moves from the architectural view to the implementation choices that made the pipeline executable; the previous section described the system as a set of connected
 layers, this section explains how those layers were implemented, how the main components exchange data, and which corrections were needed to obtain comparable outputs from the
 three decision paradigms.
+
+All the work discussed can be found in the code repository: \url{https://github.com/pitesse/Thesis}.
 
 The discussion follows the main stages of the implemented pipeline:
 \begin{itemize}
@@ -446,17 +448,17 @@ an offset strategy and classified as \texttt{OFFSET\_ADVANTAGE} or \texttt{OFFSE
 distortion is small, wet weather stops and incomplete evidence are kept in separate families, such as \texttt{WEATHER\_SURVIVAL\_STOP} or \texttt{UNRESOLVED\_*}, these labels are
 important later because the clean learning and evaluation contracts do not treat every historical pit cycle as equally reliable evidence.
 
+The two paths therefore produce different artifacts with different meanings.\\ \texttt{PitStrategyEvaluator} produces online recommendations from the current race state, while
+\texttt{PitStopEvaluator} produces post pit outcome labels from completed pit cycles; keeping them separate prevents the evaluation from confusing a decision emitted by the
+system with the truth used to judge that decision.
+
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.75\textwidth]{Images/ch4/pit_cycle.png}
+    \includegraphics[width=0.80\textwidth]{Images/ch4/pit_cycle.png}
     \caption{Pit cycle evaluation flow diagram.}
     \label{fig:pit_cycle_evaluation}
 \end{figure}
 \FloatBarrier
-
-The two paths therefore produce different artifacts with different meanings.\\ \texttt{PitStrategyEvaluator} produces online recommendations from the current race state, while
-\texttt{PitStopEvaluator} produces post pit outcome labels from completed pit cycles; keeping them separate prevents the evaluation from confusing a decision emitted by the
-system with the truth used to judge that decision.
 
 \subsection{Addressing Invalid Data and Leakage Risks}
 \label{sec:corrections}

@@ -315,7 +315,7 @@ is both rarer and stricter than pit timing, because positive calls are penalized
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{Images/ch5/pit_success_apples_to_apples_main.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch5/pit_success_apples_to_apples_main.png}
     \caption{Strict \texttt{pit\_success\_h2} comparison under the \texttt{canonical\_sde\_truth} universe and \texttt{clean\_actionable} lens. The figure reports strict precision,
         successful event coverage, and $F_{0.5}$ for the selected operating points.}
     \label{fig:pit_success_apples_to_apples_main}
@@ -354,7 +354,7 @@ a pit match has occurred.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.85\textwidth]{Images/ch5/pit_success_sde_diagnostic_operational_vs_matched.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch5/pit_success_sde_diagnostic_operational_vs_matched.png}
     \caption{Flink Strategy Engine diagnostic matched-pit success rate compared with strict operational precision.}
     \label{fig:sde_diagnostic_operational_vs_matched}
 \end{figure}
@@ -415,7 +415,7 @@ Flink Strategy Engine is shown as a fixed operating point, since it emits determ
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.85\textwidth]{Images/ch5/pr_curve_pit_any_final.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch5/pr_curve_pit_any_final.png}
     \caption{Precision--recall curve for \texttt{pit\_any\_h2}.}
     \label{fig:pr_curve_pit_any_final}
 \end{figure}
@@ -423,7 +423,7 @@ Flink Strategy Engine is shown as a fixed operating point, since it emits determ
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.85\textwidth]{Images/ch5/pr_curve_pit_success_final.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch5/pr_curve_pit_success_final.png}
     \caption{Precision--recall curve for \texttt{pit\_success\_h2}.}
     \label{fig:pr_curve_pit_success_final}
 \end{figure}
@@ -581,17 +581,18 @@ and to keep No-Year as the clean reference profile.
 
 \begin{figure}[htbp]
     \centering
-    \subfloat[Batch original feature view.\label{fig:batch_shap_beeswarm_no_year}]{%
-        \includegraphics[width=0.48\textwidth]{Images/ch5/shap_beeswarm.png}%
-    }
-    \hfill
-    \subfloat[Batch Percent feature view.\label{fig:batch_shap_beeswarm_percent}]{%
-        \includegraphics[width=0.48\textwidth]{Images/ch5/phase2b_batch_p1_shap_beeswarm.png}%
-    }
-    \caption{Batch XGBoost SHAP beeswarm diagnostics.}
-    \label{fig:batch_shap_beeswarm_comparison}
+    \includegraphics[width=0.88\textwidth]{Images/ch5/shap_beeswarm.png}
+    \caption{Batch original feature view.\label{fig:batch_shap_beeswarm_no_year}}
 \end{figure}
 \FloatBarrier
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{Images/ch5/phase2b_batch_p1_shap_beeswarm.png}
+    \caption{Batch Percent feature view.\label{fig:batch_shap_beeswarm_percent}}
+\end{figure}
+\FloatBarrier
+
 
 \begin{figure}[htbp]
     \centering
