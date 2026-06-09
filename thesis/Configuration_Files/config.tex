@@ -1,6 +1,8 @@
-% Define blue color typical of polimi
+% Define colors used by both the thesis and executive summary templates.
 \definecolor{bluepoli}{cmyk}{0.4,0.1,0,0.4}
+\definecolor{bluePoli}{cmyk}{0.4,0.1,0,0.4}
 
+\ifdefined\chapter
 % Custom theorem environments
 \declaretheoremstyle[
   headfont=\color{bluepoli}\normalfont\bfseries,
@@ -69,3 +71,87 @@
 
 %For correctly numbering algorithms
 \numberwithin{algorithm}{chapter}
+
+\else
+% Executive summary specific setup for article class.
+\declaretheoremstyle[
+  headfont=\color{bluePoli}\normalfont\bfseries,
+  bodyfont=\color{black}\normalfont\itshape,
+]{colored}
+
+\captionsetup[figure]{labelfont={color=bluePoli}} % Set colour of the captions
+\captionsetup[table]{labelfont={color=bluePoli}} % Set colour of the captions
+\captionsetup[algorithm]{labelfont={color=bluePoli}} % Set colour of the captions
+
+\theoremstyle{colored}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}{Proposition}[section]
+
+\newcommand\T{\rule{0pt}{2.6ex}}
+\newcommand\B{\rule[-1.2ex]{0pt}{0pt}}
+
+\newcounter{algsubstate}
+\renewcommand{\thealgsubstate}{\alph{algsubstate}}
+\newenvironment{algsubstates}{
+    \setcounter{algsubstate}{0}%
+    \renewcommand{\STATE}{%
+    \stepcounter{algsubstate}%
+    \Statex {\small\thealgsubstate:}\space}
+    }{}
+
+\newcolumntype{L}[1]{>{\raggedright\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+\newcolumntype{C}[1]{>{\centering\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+
+\setlist[itemize,1]{label=$\bullet$}
+\setlist[itemize,2]{label=$\circ$}
+\setlist[itemize,3]{label=$-$}
+\setlist{nosep}
+
+\setlength{\columnsep}{30pt}
+
+\newcommand\BackgroundPic{% Adding background picture
+	\put(230,358){
+		\parbox[b][\paperheight]{\paperwidth}{%
+			\vfill
+			\centering
+			\transparent{0.4}
+			\includegraphics[width=0.5\paperwidth]{raggiera_polimi.eps}%
+			\vfill
+}}}
+
+\setlength\parindent{0pt}
+
+\titleformat{\section}
+{\color{bluePoli}\normalfont\Large\bfseries}
+{\color{bluePoli}\thesection.}{1em}{}
+\titlespacing*{\section}
+{0pt}{2ex}{1ex}
+
+\titleformat{\subsection}
+{\color{bluePoli}\normalfont\large\bfseries}
+{\color{bluePoli}\thesubsection.}{1em}{}
+\titlespacing*{\subsection}
+{0pt}{2ex}{1ex}
+
+\pagestyle{fancy}
+\fancyhf{}
+       
+\fancyfoot{}
+\fancyfoot[C]{\thepage} % page
+\renewcommand{\headrulewidth}{0mm} % headrule width
+\renewcommand{\footrulewidth}{0mm} % footrule width
+
+\makeatletter
+\patchcmd{\headrule}{\hrule}{\color{black}\hrule}{}{} % headrule
+\patchcmd{\footrule}{\hrule}{\color{black}\hrule}{}{} % footrule
+\makeatother
+
+\chead[C]{
+\centering
+\begin{tcolorbox}[arc=0pt, boxrule=0pt, colback=bluePoli!60, width=\textwidth, colupper=white]
+    \textbf{Executive summary} \hfill \textbf{\author}  
+\end{tcolorbox}
+}
+
+\fi

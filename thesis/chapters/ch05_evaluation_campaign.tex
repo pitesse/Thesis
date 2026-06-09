@@ -477,14 +477,6 @@ which is consistent with its low event recall in the headline comparison. Batch 
 larger oscillations across races. MOA No-Year and MOA Percent are more concentrated around moderate positive values, suggesting a more stable
 ranking-to-decision behaviour across the evaluated races.
 
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.95\textwidth]{Images/ch5/race_level_kappa_pit_any.png}
-    \caption{Race-level Kappa diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
-    \label{fig:race_level_kappa_pit_any}
-\end{figure}
-\FloatBarrier
-
 The G-Mean plot gives a similar view from the sensitivity-specificity side, Batch Percent has the strongest race-level G-Mean values in many races,
 which matches its high event recall on \texttt{pit\_any\_h2}. The MOA profiles appear more stable but less aggressive, while the Flink Strategy
 Engine remains limited by the small number of positive calls it emits; these plots support the headline interpretation: pit timing is learnable,
@@ -492,7 +484,16 @@ but the balance between coverage and precision changes substantially from race t
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{Images/ch5/race_level_gmean_pit_any.png}
+    \includegraphics[height=0.99\textheight,keepaspectratio]{Images/ch5/race_level_kappa_pit_any.png}
+    \caption{Race-level Kappa diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
+    \label{fig:race_level_kappa_pit_any}
+\end{figure}
+\FloatBarrier
+
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[height=0.99\textheight,keepaspectratio]{Images/ch5/race_level_gmean_pit_any.png}
     \caption{Race-level G-Mean diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_gmean_pit_any}
 \end{figure}
@@ -520,7 +521,7 @@ prediction is both harder in aggregate and less stable at race level.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{Images/ch5/race_level_kappa_pit_success.png}
+    \includegraphics[height=0.99\textheight,keepaspectratio]{Images/ch5/race_level_kappa_pit_success.png}
     \caption{Race-level Kappa diagnostic for \texttt{pit\_success\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_kappa_pit_success}
 \end{figure}
@@ -528,7 +529,7 @@ prediction is both harder in aggregate and less stable at race level.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{Images/ch5/race_level_gmean_pit_success.png}
+    \includegraphics[height=0.99\textheight,keepaspectratio]{Images/ch5/race_level_gmean_pit_success.png}
     \caption{Race-level G-Mean diagnostic for \texttt{pit\_success\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_gmean_pit_success}
 \end{figure}
@@ -574,21 +575,25 @@ The Percent profile goes one step further, it also removes selected shortcut-pro
 This profile is useful for testing whether a more normalized representation improves learning, but it is not a fully neutral baseline since it is an engineered profile, No-Year 
 remains the cleaner reference for comparing the effect of removing season identity.
 
-Figures~\ref{fig:batch_shap_beeswarm_comparison} and~\ref{fig:batch_shap_top_feature_comparison} show the Batch explainability evidence used during this correction phase. 
-The beeswarm plots compare the attribution patterns of the original and Percent-style Batch configurations. The feature comparison plot summarizes how the most relevant 
+Figure ~\ref{fig:batch_shap_top_feature_comparison} show the Batch explainability evidence used during this correction phase. 
+The beeswarm plots in figure ~\ref{fig:batch_shap_beeswarm_no_year} and ~\ref{fig:batch_shap_beeswarm_percent} compare the attribution patterns of the original and 
+Percent style Batch configurations. The feature comparison plot summarizes how the most relevant 
 variables change after the feature contract is adjusted, these figures support the methodological decision to remove \texttt{source\_year} from the final learner input 
 and to keep No-Year as the clean reference profile.
 
+The explainability figures therefore close the loop with the implementation corrections introduced earlier, they explain why 
+the final protocol distinguishes No-Year from Percent and why the season identifier is excluded from the learner feature matrix.
+
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.88\textwidth]{Images/ch5/shap_beeswarm.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch5/shap_beeswarm.png}
     \caption{Batch original feature view.\label{fig:batch_shap_beeswarm_no_year}}
 \end{figure}
 \FloatBarrier
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{Images/ch5/phase2b_batch_p1_shap_beeswarm.png}
+    \includegraphics[width=0.99\textwidth]{Images/ch5/phase2b_batch_p1_shap_beeswarm.png}
     \caption{Batch Percent feature view.\label{fig:batch_shap_beeswarm_percent}}
 \end{figure}
 \FloatBarrier
@@ -597,14 +602,11 @@ and to keep No-Year as the clean reference profile.
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.99\textwidth]{Images/ch5/phase2b_batch_shap_top_feature_comparison_e0_p1.png}
-    \caption{Comparison of top Batch SHAP features before and after the feature-profile correction. The figure highlights the shortcut-risk role of \texttt{source\_year} 
+    \caption{Comparison of top Batch SHAP features before and after the feature profile correction. The figure highlights the shortcut risk role of \texttt{source\_year} 
     and the shift toward race context features in the corrected profiles.}
     \label{fig:batch_shap_top_feature_comparison}
 \end{figure}
 \FloatBarrier
-
-The explainability figures therefore close the loop with the implementation corrections introduced earlier, they explain why 
-the final protocol distinguishes No-Year from Percent and why the season identifier is excluded from the learner feature matrix.
 
 \section{Conclusive Summary}
 

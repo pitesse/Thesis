@@ -1,0 +1,123 @@
+% A LaTeX template for EXECUTIVE SUMMARY of the MSc Thesis submissions to
+% Politecnico di Milano (PoliMi) - School of Industrial and Information Engineering
+%
+% S. Bonetti, A. Gruttadauria, G. Mescolini, A. Zingaro
+% e-mail: template-tesi-ingind@polimi.it
+%
+% Last Revision: October 2021
+%
+% Copyright 2021 Politecnico di Milano, Italy. NC-BY
+
+\documentclass[11pt,a4paper,twocolumn]{article}
+
+%------------------------------------------------------------------------------
+% REQUIRED PACKAGES AND CONFIGURATIONS
+%------------------------------------------------------------------------------
+\usepackage{titlesec}
+\usepackage{color}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[T1]{fontenc}
+
+\usepackage{graphicx}
+\graphicspath{{Images/}}
+\usepackage{eso-pic}
+\usepackage{subfig}
+\usepackage{caption}
+\usepackage{transparent}
+
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{bm}
+\usepackage[overload]{empheq}
+
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{colortbl}
+\usepackage{booktabs}
+
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\usepackage[colorlinks=true,linkcolor=black,anchorcolor=black,citecolor=black,filecolor=black,menucolor=black,runcolor=black,urlcolor=black]{hyperref}
+\usepackage{cleveref}
+\usepackage[square, numbers, sort&compress]{natbib}
+\bibliographystyle{plain}
+
+\usepackage{appendix}
+\usepackage{enumitem}
+
+\usepackage{amsthm,thmtools,xcolor}
+\usepackage{comment}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{stfloats}
+
+%-------------------------------------------------------------------------
+% NEW COMMANDS DEFINED
+%-------------------------------------------------------------------------
+\newcommand{\bea}{\begin{eqnarray}}
+\newcommand{\eea}{\end{eqnarray}}
+\newcommand{\e}[1]{\times 10^{#1}}
+\newcommand{\mathbbm}[1]{\text{\usefont{U}{bbm}{m}{n}#1}}
+\newcommand{\pdev}[2]{\frac{\partial#1}{\partial#2}}
+
+\input{Configuration_files/config}
+
+% Insert here the info that will be displayed into your Title page
+\renewcommand{\title}{From Real Time F1 Strategy Streams to Pit Stop Decision Models}
+\renewcommand{\author}{Pietro Pizzoccheri}
+\newcommand{\course}{Computer Science and Engineering - Ingegneria Informatica}
+\newcommand{\advisor}{Prof. Emanuele Della Valle}
+\newcommand{\YEAR}{2025-26}
+
+\begin{document}
+
+\input{Configuration_files/title_page}
+
+% Match the executive-summary sample: keep the running header high on the page
+% and leave a visible gap before the body text, without triggering fancyhdr's
+% oversized default tcolorbox header warning.
+\fancyhead[C]{%
+\begin{tcolorbox}[arc=0pt, boxrule=0pt, colback=bluePoli!60, width=\textwidth, colupper=white,
+    boxsep=0pt, left=8pt, right=8pt, top=3pt, bottom=3pt, height=24pt, valign=center,
+    nobeforeafter]
+    \textbf{Executive summary} \hfill \textbf{\author}
+\end{tcolorbox}}
+\setlength{\headheight}{29pt}
+\setlength{\headsep}{18pt}
+\addtolength{\topmargin}{-55pt}
+
+\section{Introduction}
+\label{sec:introduction}
+\input{executive_summary_chapters/intro}
+
+\section{Background and State of the Art}
+\label{sec:background}
+\input{executive_summary_chapters/state_art}
+
+\section{Problem Statement and Data}
+\label{sec:problem}
+\input{executive_summary_chapters/prob_statement}
+
+\section{Solution and Design}
+\label{sec:solution}
+\input{executive_summary_chapters/prob_solving}
+
+\section{Experimental Evaluation}
+\label{sec:evaluation}
+\input{executive_summary_chapters/results}
+
+\section{Conclusions}
+\label{sec:conclusions}
+\input{executive_summary_chapters/conclusions}
+
+\begingroup
+\scriptsize
+\setlength{\bibsep}{0pt}
+\renewcommand{\refname}{Bibliography}
+\bibliography{Thesis_bibliography}
+\endgroup
+
+\end{document}

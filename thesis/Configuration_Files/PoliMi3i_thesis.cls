@@ -129,8 +129,8 @@
 			Student ID: {\ID}
 			\\
 			Advisor: {\advisor}
-			\\
-			Co-advisors: {\coadvisor}
+			% \\
+			% Co-advisors: {\coadvisor}
 			\\
 			Academic Year: {\academicyear}
 			}

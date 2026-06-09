@@ -1,0 +1,21 @@
+Formula 1 race strategy is a decision process in which information changes faster than the decision can be comfortably analysed. A pit stop can recover tyre performance, answer an undercut, or protect track position; it can also return the driver into traffic, waste a tyre advantage, or make the car vulnerable later in the race. The same action can therefore be correct or wrong depending on stint age, rival gaps, pit-loss estimate, track status, weather, race phase, and the expected behaviour of nearby opponents.
+
+This thesis studies whether historical Formula 1 races can be transformed into a \textbf{reproducible, temporally valid decision-support problem} for pit stop calls. Historical races are extracted with FastF1, enriched into replayable event records, streamed through Kafka, processed by Apache Flink, and converted into learning datasets for Batch and online models.
+
+The work is organised around \textbf{two prediction contracts}:
+\begin{itemize}
+    \item \textbf{\texttt{pit\_any\_h2}}: a timing contract, positive when a driver pits within the next two laps.
+    \item \textbf{\texttt{pit\_success\_h2}}: a stricter recommendation contract, positive only when the future pit stop is also classified as successful.
+\end{itemize}
+
+The research questions follow from this distinction. First, can near-term pit timing be learned from race-state patterns while respecting temporal order? Second, can successful pit calls be evaluated under a stricter operational contract, where positive recommendations without supporting future evidence are penalised?
+
+The contribution is mainly methodological and practical:
+\begin{itemize}
+    \item a \textbf{complete pipeline} from race extraction to streaming replay, stateful processing, model training, online evaluation, and contract-aware comparison;
+    \item two explicit pit decision contracts with horizon $H=2$;
+    \item a comparison between a deterministic Flink Strategy Engine, Batch XGBoost models, and MOA online learners;
+    \item an evaluation protocol that separates row-level precision, event coverage, strict operational precision, and diagnostic matched-pit quality.
+\end{itemize}
+
+\textbf{Keywords:} Formula 1 strategy; event stream processing; Apache Flink; Kafka; pit stop prediction; online learning; imbalanced classification.
