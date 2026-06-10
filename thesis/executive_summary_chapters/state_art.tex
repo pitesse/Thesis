@@ -1,9 +1,25 @@
-The thesis is positioned at the intersection of stream processing, motorsport strategy, machine learning on tabular race data, online learning, and imbalanced evaluation. Stream processing provides the technical basis for replaying a historical race as a sequence of events rather than as a static table. In this setting, event time, watermarks, keyed state, and windowed computations are essential concepts: a decision system must react to \textbf{what is known at that instant}, not to information that becomes available only after the lap or the race has finished. Apache Flink is therefore a relevant foundation for the work \citep{carbone2015flink}, while Kafka provides the replay log used by the implementation.
+The thesis is positioned at the intersection of stream processing, motorsport strategy, machine learning on tabular race data, 
+online learning, and imbalanced evaluation. Stream processing provides the technical basis for replaying a historical race as a sequence 
+of events rather than as a static table. In this setting, event time, watermarks, keyed state, and windowed computations are essential concepts: 
+a decision system must react to \textbf{what is known at that instant}. Apache Flink is therefore a relevant foundation 
+for the work \citep{carbone2015flink}, while Kafka provides the replay log used by the implementation.
 
-Formula 1 strategy adds a domain constraint to this streaming view. Pit stop decisions are affected by tyre degradation, pit-loss estimates, safety car and virtual safety car periods, traffic, gaps to rivals, track position, compound choice, and weather. A pit call is also strategic rather than purely predictive: the same lap may be attractive for one driver because of an undercut opportunity and unattractive for another because of a poor rejoin position. This makes the problem different from a simple future-event forecast.
+Formula 1 strategy adds a domain constraint to this streaming view. Pit stop decisions are affected by tyre degradation, pit loss estimates, 
+safety car and virtual safety car periods, traffic, gaps to rivals, track position, compound choice, and weather. A pit call is also strategic 
+rather than purely predictive: the same lap may be attractive for one driver because of an undercut opportunity and unattractive for another 
+because of a poor rejoin position. This makes the problem different from a simple future event forecast.
 
-The data source used by the thesis is FastF1, which exposes historical timing, lap, telemetry, weather, stint, and session information \citep{Oehrly2025}. These sources are valuable but not already aligned for live-like decision support. They must be cleaned, joined, enriched, and transformed into records that preserve the order in which information would have been observed during a race.
+The data source used by the thesis is FastF1, which exposes historical timing, lap, telemetry, weather, stint, and session information 
+\citep{Oehrly2025}. These sources are valuable but not already aligned for live like decision support. They must be cleaned, joined, enriched, 
+and transformed into records that preserve the order in which information would have been observed during a race.
 
-On the modelling side, the thesis compares three families of systems. The first is a \textbf{deterministic Flink Strategy Engine}, designed as an interpretable rule-based baseline. The second is a \textbf{Batch learner based on XGBoost}, suitable for nonlinear interactions in tabular features and for post-hoc feature attribution \citep{chen2016xgboost}. The third is an \textbf{online learner evaluated through MOA}, using a prequential test-then-train protocol and an OzaBoostADWIN learner \citep{bifet2010moa}. Batch learning is allowed to learn from previous races before scoring held-out races; online learning updates sequentially after each evaluated instance.
+On the modelling side, the thesis compares three families of systems. The first is a \textbf{deterministic Flink Strategy Engine}, designed as 
+an interpretable rule based baseline. The second is a \textbf{Batch learner based on XGBoost}, suitable for nonlinear interactions in tabular 
+features and for post hoc feature attribution \citep{chen2016xgboost}. The third is an \textbf{online learner evaluated through MOA}, using a 
+prequential test-then-train protocol and an OzaBoostADWIN learner \citep{bifet2010moa}. Batch learning is allowed to learn from previous races 
+before scoring held-out races; online learning updates sequentially after each evaluated instance.
 
-A central difficulty is \textbf{class imbalance}. Pit opportunities are rare compared with ordinary driver-lap records, and successful pit opportunities are rarer still. Accuracy is therefore not a meaningful primary measure: a system can be highly accurate by almost never recommending a pit stop. The evaluation instead relies on precision, recall or event coverage, $F_{0.5}$, average precision, Cohen's Kappa, and G-Mean, with particular attention to the cost of false positive pit calls.
+A central difficulty is \textbf{class imbalance}. Pit opportunities are rare compared with ordinary driver-lap records, and successful pit 
+opportunities are rarer still. Accuracy is therefore not a meaningful primary measure: a system can be highly accurate by almost never 
+recommending a pit stop. The evaluation instead relies on precision, recall or event coverage, $F_{0.5}$, average precision, Cohen's Kappa, 
+and G-Mean, with particular attention to the cost of false positive pit calls.

@@ -1,4 +1,8 @@
-The core problem is to transform historical race data into decision instances that are \textbf{comparable across systems} and \textbf{do not use future information}. The raw data contain lap times, sector times, positions, stint data, pit stop evidence, track status, weather, and timing gaps. These observations are not sufficient on their own: a strategy system needs race context, including driver state, rival state, session state, tyre age, recent pace loss, possible drop zone, race progress, and weather conditions.
+The core problem is to transform historical race data into decision instances that are \textbf{comparable across systems} and 
+\textbf{do not use future information}. The raw data contain lap times, sector times, positions, stint data, pit stop evidence, 
+track status, weather, and timing gaps. These observations are not sufficient on their own: a strategy system needs race context, 
+including driver state, rival state, session state, tyre age, recent pace loss, possible drop zone, race progress, and weather 
+conditions.
 
 \begin{figure}[t]
     \centering
@@ -7,7 +11,9 @@ The core problem is to transform historical race data into decision instances th
     \label{fig:exec_contract_definitions}
 \end{figure}
 
-The decision unit is a \textbf{driver-lap state}. At that state, the system may emit a positive pit recommendation. Exact pit-lap prediction is avoided because exact timing is too brittle: a call one lap early may still be operationally meaningful. Both contracts therefore use a \textbf{horizon $H=2$}, as illustrated in Figure~\ref{fig:exec_contract_definitions}.
+The decision unit is a \textbf{driver-lap state}. At that state, the system may emit a positive pit recommendation. Exact pit lap 
+prediction is avoided because exact timing is too brittle: a call one lap early may still be operationally meaningful. Both contracts 
+therefore use a \textbf{horizon $H=2$}.
 
 The two contracts create different evaluation problems:
 \begin{itemize}
@@ -16,6 +22,11 @@ The two contracts create different evaluation problems:
     \item calls with no matched future pit, or calls matched to failed pit stops, are false positives under the success contract.
 \end{itemize}
 
-The evaluation protocol is built around a \textbf{shared truth universe}. Systems are compared only over race-driver contexts for which the necessary truth information and model outputs can be aligned. A clean actionable lens removes cases that make the operational contract ambiguous, such as unresolved or noisy pit outcomes.
+The evaluation protocol is built around a \textbf{shared truth universe}. Systems are compared only over race-driver contexts for which the 
+necessary truth information and model outputs can be aligned. A clean actionable lens removes cases that make the operational contract ambiguous, 
+such as unresolved or noisy pit outcomes.
 
-This separation is important in a rare-positive setting. A model may achieve good ranking scores while recommending very few pit stops, or it may cover many events by producing too many false alarms. The protocol therefore distinguishes row-level precision, event coverage, \textbf{strict operational precision}, and matched-pit success rate. The last quantity is kept only as a diagnostic, because it ignores recommendations that never match a real pit stop.
+This separation is important in a rare positive setting since a model may achieve good ranking scores while recommending very few pit stops, or it may 
+cover many events by producing too many false alarms. The protocol therefore distinguishes row-level precision, event coverage, 
+\textbf{strict operational precision}, and matched-pit success rate. The last quantity is kept only as a diagnostic, because it ignores 
+recommendations that never match a real pit stop.
