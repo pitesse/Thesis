@@ -99,6 +99,8 @@
 %	ADD YOUR PACKAGES (be careful of package interaction)
 %----------------------------------------------------------------------------
 \usepackage{graphicx}
+\usepackage{qrcode}
+\usepackage{hyperref}
 
 %----------------------------------------------------------------------------
 %	ADD YOUR DEFINITIONS AND COMMANDS (be careful of existing commands)
@@ -130,7 +132,7 @@
     course=Computer Science and Engineering - Ingegneria Informatica, % Study Programme (in Italian)
     ID  = 10797420,  % Student ID number (numero di matricola)
     advisor= Prof. Emanuele Della Valle, % Supervisor name
-%    coadvisor={}, % Co-Supervisor name, keep empty if none
+    %    coadvisor={}, % Co-Supervisor name, keep empty if none
     academicyear={2025-26},  % Academic Year
 } % These info will be put into your Title page 
 
@@ -282,93 +284,179 @@ rende confrontabili i loro output.
     \hline
     \endhead
 
-        $k$                & Current lap at which a decision or prediction is emitted                                              & laps          \\
+    $k$                & Current lap at which a decision or prediction is emitted                                              & laps          \\
 
-        $H$                & Prediction horizon used to match positive calls with future pit events                                & laps          \\
+    $H$                & Prediction horizon used to match positive calls with future pit events                                & laps          \\
 
-        $P$                & Current race position of a driver in the drop-zone computation                                        & position      \\
+    $P$                & Current race position of a driver in the drop-zone computation                                        & position      \\
 
-        $j, m$             & Index variables used when walking the position ladder behind a driver                                 & --            \\
+    $j, m$             & Index variables used when walking the position ladder behind a driver                                 & --            \\
 
-        $lapTime$          & Lap time of the current driver-lap observation                                                        & s             \\
+    $lapTime$          & Lap time of the current driver-lap observation                                                        & s             \\
 
-        $stintBestLap$     & Best lap time observed in the current stint for the driver                                            & s             \\
+    $stintBestLap$     & Best lap time observed in the current stint for the driver                                            & s             \\
 
-        $thresholdPct$     & Dynamic tyre-drop threshold used to compare the current lap with the stint-best lap                   & ratio         \\
+    $thresholdPct$     & Dynamic tyre-drop threshold used to compare the current lap with the stint-best lap                   & ratio         \\
 
-        $compoundBase$     & Base tyre-degradation threshold associated with the tyre compound                                     & ratio         \\
+    $compoundBase$     & Base tyre-degradation threshold associated with the tyre compound                                     & ratio         \\
 
-        $fuelAdjust$       & Fuel-related adjustment applied to the tyre-drop threshold                                            & ratio         \\
+    $fuelAdjust$       & Fuel-related adjustment applied to the tyre-drop threshold                                            & ratio         \\
 
-        $hotTrackAdjust$   & Track-temperature adjustment applied to the tyre-drop threshold                                       & ratio         \\
+    $hotTrackAdjust$   & Track-temperature adjustment applied to the tyre-drop threshold                                       & ratio         \\
 
-        $thresholdFloor$   & Minimum allowed value for the dynamic tyre-drop threshold                                             & ratio         \\
+    $thresholdFloor$   & Minimum allowed value for the dynamic tyre-drop threshold                                             & ratio         \\
 
-        $gapToCarAhead_j$  & Gap from car $j$ to the car immediately ahead in the race order                                       & s             \\
+    $gapToCarAhead_j$  & Gap from car $j$ to the car immediately ahead in the race order                                       & s             \\
 
-        $pitLoss$          & Estimated time loss caused by a pit stop under the current track-status condition                     & s             \\
+    $pitLoss$          & Estimated time loss caused by a pit stop under the current track-status condition                     & s             \\
 
-        $S$                & Total pit desirability score produced by the Flink Strategy Engine                                    & score         \\
+    $S$                & Total pit desirability score produced by the Flink Strategy Engine                                    & score         \\
 
-        $S_{pace}$         & Score contribution associated with stint-relative pace degradation                                    & score         \\
+    $S_{pace}$         & Score contribution associated with stint-relative pace degradation                                    & score         \\
 
-        $S_{track}$        & Score contribution associated with track status, such as SC or VSC conditions                         & score         \\
+    $S_{track}$        & Score contribution associated with track status, such as SC or VSC conditions                         & score         \\
 
-        $S_{traffic}$      & Score contribution associated with the expected traffic or clean-air condition after the pit stop     & score         \\
+    $S_{traffic}$      & Score contribution associated with the expected traffic or clean-air condition after the pit stop     & score         \\
 
-        $P_{strategy}$     & Strategy penalty applied when the inferred next compound cannot cover the remaining laps              & score         \\
+    $P_{strategy}$     & Strategy penalty applied when the inferred next compound cannot cover the remaining laps              & score         \\
 
-        $S_{action}$       & Action urgency score combining tyre-life urgency and rival reaction pressure                          & score         \\
+    $S_{action}$       & Action urgency score combining tyre-life urgency and rival reaction pressure                          & score         \\
 
-        $S_{timing}$       & Timing-pressure score associated with local decision-window signals                                   & score         \\
+    $S_{timing}$       & Timing-pressure score associated with local decision-window signals                                   & score         \\
 
-        $P_{eor}$          & End-of-race suppression term used to reduce late unnecessary calls                                    & score         \\
+    $P_{eor}$          & End-of-race suppression term used to reduce late unnecessary calls                                    & score         \\
 
-        $B_{competitive}$  & Competitive pressure bonus derived from gaps and recent rival pit activity                            & score         \\
+    $B_{competitive}$  & Competitive pressure bonus derived from gaps and recent rival pit activity                            & score         \\
 
-        $P_{uncertainty}$  & Penalty associated with missing or low-confidence race-context signals                                & score         \\
+    $P_{uncertainty}$  & Penalty associated with missing or low-confidence race-context signals                                & score         \\
 
-        $g$                & Estimated emergence gap after applying pit loss in the drop-zone computation                          & s             \\
+    $g$                & Estimated emergence gap after applying pit loss in the drop-zone computation                          & s             \\
 
-        $deficit$          & Fractional deficit between remaining laps and the estimated maximum stint length of the next compound & ratio         \\
+    $deficit$          & Fractional deficit between remaining laps and the estimated maximum stint length of the next compound & ratio         \\
 
-        $lapsRemaining$    & Number of laps remaining in the race at the current observation                                       & laps          \\
+    $lapsRemaining$    & Number of laps remaining in the race at the current observation                                       & laps          \\
 
-        $maxStint_{next}$  & Estimated maximum stint length for the inferred next tyre compound                                    & laps          \\
+    $maxStint_{next}$  & Estimated maximum stint length for the inferred next tyre compound                                    & laps          \\
 
-        $tyreRatio$        & Tyre-life ratio used to compute action urgency                                                        & ratio         \\
+    $tyreRatio$        & Tyre-life ratio used to compute action urgency                                                        & ratio         \\
 
-        $raceProgress$     & Fraction of the scheduled race already completed                                                      & ratio         \\
+    $raceProgress$     & Fraction of the scheduled race already completed                                                      & ratio         \\
 
-        $signalConfidence$ & Confidence score derived from the availability and quality of race-context signals                    & ratio         \\
+    $signalConfidence$ & Confidence score derived from the availability and quality of race-context signals                    & ratio         \\
 
-        $\Delta_{gap}\%$   & Normalized change in gap before and after a pit stop                                                  & \%            \\
+    $\Delta_{gap}\%$   & Normalized change in gap before and after a pit stop                                                  & \%            \\
 
-        $preGap$           & Gap to the relevant rival before the pit cycle                                                        & s             \\
+    $preGap$           & Gap to the relevant rival before the pit cycle                                                        & s             \\
 
-        $postGap$          & Gap to the relevant rival after the pit cycle                                                         & s             \\
+    $postGap$          & Gap to the relevant rival after the pit cycle                                                         & s             \\
 
-        $baselineLapTime$  & Reference lap time used to normalize the post-pit gap change                                          & s             \\
+    $baselineLapTime$  & Reference lap time used to normalize the post-pit gap change                                          & s             \\
 
-        $TP$               & True positives: positive calls matched to the required target condition                               & count         \\
+    $TP$               & True positives: positive calls matched to the required target condition                               & count         \\
 
-        $FP$               & False positives: positive calls that do not satisfy the target condition                              & count         \\
+    $FP$               & False positives: positive calls that do not satisfy the target condition                              & count         \\
 
-        $FN$               & False negatives: target events or rows not covered by a positive call                                 & count         \\
+    $FN$               & False negatives: target events or rows not covered by a positive call                                 & count         \\
 
-        $F_{0.5}$          & Precision-weighted F-score used to summarize selected operating points                                & --            \\
+    $F_{0.5}$          & Precision-weighted F-score used to summarize selected operating points                                & --            \\
 
-        $AP$               & Average Precision, used as a row-level ranking diagnostic                                             & --            \\
+    $AP$               & Average Precision, used as a row-level ranking diagnostic                                             & --            \\
 
-        $\kappa$           & Cohen's Kappa, used as a race-level agreement diagnostic                                              & --            \\
+    $\kappa$           & Cohen's Kappa, used as a race-level agreement diagnostic                                              & --            \\
 
-        $G$-Mean           & Geometric mean of sensitivity and specificity, used as an imbalance diagnostic                        & --            \\
-    \end{longtable}
+    $G$-Mean           & Geometric mean of sensitivity and specificity, used as an imbalance diagnostic                        & --            \\
+\end{longtable}
 
 
 % ACKNOWLEDGEMENTS
 \chapter*{Acknowledgements}
 % add acknowledgements here
+
+\begingroup
+\renewcommand{\thesection}{\arabic{section}}
+\setcounter{section}{0}
+
+\section{English}
+
+My academic journey would've been impossible without the support of many people, first I would like to thank my supervisor, Prof. Emanuele Della Valle,
+for his invaluable guidance and support throughout this thesis, for giving me freedom and trusting me to work on a thesis topic that I am passionate about.
+
+Thanks to my girlfriend Giulia, for her love and encouragement, for being my rock during the challenging moments of this journey, and for always believing in me; believe in
+yourself as much as you believe in me and you will achieve anything you set your mind to, because you are truly amazing. I am grateful for your presence in my life and for the
+joy you bring to every day, I love you.
+
+Thanks to my mum for her unconditional love and support, for always being there for me, and for teaching me the value of life and perseverance; words cannot express
+my gratitude enough.
+
+Thanks to my dad, even if I wasn't lucky enough to get to know you, I can feel your passion and stubbornness in my veins which has been fuel for my ambitions and dreams,
+I hope I made you proud, a lot more has to come.
+
+Thanks to my uncle Pepe for his support through my journey, as a fellow Politecnico student you knew how hard it can be sometimes, and your help and advice especially
+through my first years were immense.
+
+Thanks to my grandma Carolina and to my grandpa Gigi, for their love and continuous support, I wish I could show grandpa Gigi how much I have achieved and how much I am still
+going to achieve, I know you are looking at me from above and cheering for me, thank you.
+
+Thanks to the Tedesi family, for being a second family to me, for their love and support, and for always making me feel welcome and at home, I am grateful to have you in my life.
+
+Thanks to all my family, we are too many to mention but I love you all and I am grateful for having you in my life, I couldn't have been more lucky.
+
+Thanks to all my friends, for the ones at home and the ones I made along my academic journey, for the fun times and the support and strength you all gave me directly
+or indirectly, I am glad to have you in my life and I hope we will keep sharing great moments together for many years to come.
+
+Here at Section~\ref{sec:link} of the acknowledgements I want to share a link, it is a video of Ayrton Senna's speech on life and achievements, it is a great source of motivation and inspiration
+for me, I hope it can be for someone else as well.
+
+Thanks to everyone from the bottom of my heart, this thesis is also yours.
+
+
+\section{Italian}
+
+Il mio percorso accademico sarebbe stato impossibile senza il supporto di tante persone, per prima cosa vorrei ringraziare il mio relatore, il Prof. Emanuele Della Valle,
+per la sua preziosa guida e il suo supporto durante questa tesi, per avermi lasciato libertà e per essersi fidato di me nel lavorare su un argomento che mi appassiona.
+
+Grazie alla mia ragazza Giulia, per il suo amore e il suo incoraggiamento, per essere stata la mia roccia nei momenti più difficili di questo percorso, e per aver sempre creduto in me; 
+credi in te stessa tanto quanto credi in me e riuscirai a raggiungere qualsiasi cosa tu voglia, perché sei davvero una persona incredibile. Sono grato di averti nella mia vita e per la
+gioia che porti in ogni giorno, ti amo.
+
+Grazie a mia mamma per il suo amore e il suo supporto incondizionati, per esserci sempre stata per me, e per avermi insegnato il valore della vita e della perseveranza; le parole 
+non bastano per esprimere tutta la mia gratitudine.
+
+Grazie a mio papà, anche se non ho avuto la fortuna di conoscerti, sento la tua passione e la tua testardaggine scorrere nelle mie vene e alimentare le mie ambizioni e i miei sogni,
+spero di averti reso orgoglioso, ma questo è solo l'inizio.
+
+Grazie a mio zio Pepe per il suo supporto durante il mio percorso, da ex studente del Politecnico sapevi quanto potesse essere difficile a volte, e il tuo aiuto e i tuoi consigli 
+soprattutto durante i miei primi anni sono stati immensi.
+
+Grazie a mia nonna Carolina e a mio nonno Gigi, per il loro amore e il loro supporto costante, vorrei poter mostrare a nonno Gigi quanta strada ho fatto e quanta ancora
+ne voglio fare, so che mi stai guardando da lassù e che fai il tifo per me, grazie.
+
+Grazie alla famiglia Tedesi, per essere stata una seconda famiglia per me, per il loro amore e supporto, e per avermi sempre fatto sentire accolto e a casa, sono grato di avervi nella 
+mia vita.
+
+Grazie a tutta la mia famiglia, siamo troppi per nominarvi tutti ma vi voglio bene e sono grato di avervi nella mia vita, non avrei potuto essere più fortunato.
+
+Grazie a tutti i miei amici, sia quelli di casa sia quelli che ho incontrato durante il mio percorso accademico, per i momenti belli e divertenti e per il supporto e la forza che mi 
+avete dato direttamente o indirettamente, sono felice di avervi nella mia vita e spero che continueremo a condividere bei momenti insieme per molti anni ancora.
+
+Qui nella Sezione~\ref{sec:link} dei ringraziamenti voglio condividere un link, è un video del discorso di Ayrton Senna sulla vita e sui traguardi, per me è una grande fonte di motivazione e ispirazione
+e spero possa esserlo anche per qualcun altro.
+
+Grazie a tutti dal profondo del cuore, questa tesi è anche vostra.
+
+\section{Link}
+\label{sec:link}
+\begin{center}
+    \qrcode[height=2.5cm]{https://youtu.be/nyNwoVRikoc}
+
+    \vspace{1cm}
+    \small
+    \href{https://youtu.be/nyNwoVRikoc}{Ayrton Senna's speech on life and achievements}
+
+\end{center}
+
+\endgroup
+
 
 \cleardoublepage
 
