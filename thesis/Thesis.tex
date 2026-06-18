@@ -106,6 +106,13 @@
 %	ADD YOUR DEFINITIONS AND COMMANDS (be careful of existing commands)
 %----------------------------------------------------------------------------
 
+\hypersetup{
+    pdftitle={From Historical F1 Strategy Streams to Pit Stop Decision Models},
+    pdfauthor={Pietro Pizzoccheri},
+    pdfsubject={Master's thesis on reproducible Formula 1 pit-stop decision support using Apache Flink, Batch XGBoost, and MOA online learning},
+    pdfkeywords={Formula 1 strategy; stream processing; pit stop prediction; online learning; XGBoost; MOA}
+}
+
 %----------------------------------------------------------------------------
 %	BEGIN OF YOUR DOCUMENT
 %----------------------------------------------------------------------------
@@ -143,68 +150,61 @@
 \setcounter{page}{1} % Set page counter to 1
 
 % ABSTRACT IN ENGLISH
-\chapter*{Abstract}
+\chapter{Abstract}
 
-Formula 1 race strategy is a temporal decision problem in which teams must act before the final outcome of their decisions is known. Pit stops are a central example
-of this problem: they can restore tyre performance and create strategic opportunities, but they also impose an immediate time loss.
-Historical race data provide a way to study these decisions.
+Formula 1 race strategy is a temporal decision problem in which teams must act before the final outcome is known, pit stops are a central example:
+they can restore tyre performance and create strategic opportunities, but they also impose an immediate time loss.
 
-This thesis addresses the problem of pit decision support from historical Formula 1 data by building a reproducible replay and evaluation pipeline. Historical races
+This thesis addresses pit decision support from historical Formula 1 data through a reproducible replay and evaluation pipeline, historical races
 are extracted, enriched, and transformed into replayable event streams, published through Kafka and processed by a Flink based Strategy Engine,
-which builds race context, emits rule-based pit recommendations, and persists JSONL artifacts for downstream learning. The persisted artifacts are then converted
-into training and evaluation datasets for two learning branches: a Batch XGBoost model and a MOA Online Learner.
+which builds race context, emits rule-based pit recommendations, and persists JSONL artifacts for downstream learning. These artifacts are then converted
+into datasets for a Batch XGBoost model and a MOA Online Learner.
 
-The evaluation is organized around two explicit contracts. The first contract, \texttt{pit\_any\_h2}, measures pit timing by checking whether an eligible pit stop occurs
-within a short horizon after a positive call. The second contract, \texttt{pit\_success\_h2}, is stricter: it requires the matched future pit stop to be classified as
-successful. This distinction separates the problem of anticipating a pit window from the harder problem of recommending a pit that later produces a favourable outcome.
-To compare heterogeneous systems fairly, the protocol aligns the truth universe, applies clean eligibility lenses, removes leakage-prone fields from learner inputs, and
-separates row-level decisions, event-level coverage, strict operational precision, and diagnostic matched-pit quantities.
+The evaluation is organized around two contracts; the first contract, \texttt{pit\_any\_h2}, checks whether an eligible pit stop occurs
+within a short horizon after a positive call, the second contract, \texttt{pit\_success\_h2}, is stricter: it requires the matched future pit stop to be classified as
+successful. This separates anticipating a pit window from recommending a pit that later produces a favourable outcome.
 
 The experiments compare three decision paradigms: the deterministic Flink Strategy Engine, Batch XGBoost, and the MOA Online Learner. The results show that \texttt{pit\_any\_h2}
 is the cleaner and more learnable task. The learning systems improve over the deterministic rule baseline, with Batch providing the largest event coverage
-and MOA providing the strongest precision-oriented balance. In contrast, \texttt{pit\_success\_h2} is substantially harder: successful pit calls are sparse, threshold-sensitive,
-and more dependent on the post-pit evaluator.
+and MOA the strongest precision-oriented balance. In contrast, \texttt{pit\_success\_h2} is substantially harder: successful pit calls are sparse
+and threshold-sensitive.
 
-Overall, this work shows that historical race state contains useful signal for pit timing, while successful pit-call prediction requires stricter accounting and remains more
-difficult to cover reliably. The main contribution is both practical and methodological: an executable pipeline for replaying historical races and comparing deterministic,
-Batch, and online decision systems, together with a contract based evaluation protocol that makes their outputs comparable under aligned evidence.
+Overall, this work shows that historical race state contains useful signal for pit timing, while successful pit-call prediction requires stricter accounting and remains harder
+to cover reliably. The main contribution is an executable pipeline for replaying historical races and comparing deterministic, Batch, and online decision systems.
 
 \vspace{1em}
-\textbf{Keywords:} Formula 1 strategy, stream processing, pit stop prediction, online learning, XGBoost, MOA.
+\textbf{Keywords:} Formula 1 strategy; stream processing; pit stop prediction; online learning; XGBoost; MOA.
+
 
 
 
 % ABSTRACT IN ITALIAN
-\chapter*{Abstract in lingua italiana}
+\chapter{Abstract in lingua italiana}
 
-La strategia di gara in Formula 1 è un problema decisionale temporale, in cui i team devono agire prima che l'esito finale delle loro decisioni sia noto. I pit stop
-rappresentano un esempio centrale di questo problema: possono ripristinare la prestazione degli pneumatici e creare opportunità strategiche, ma comportano anche una perdita
-di tempo immediata. I dati storici di gara offrono un modo per studiare queste decisioni.
+La strategia di gara in Formula 1 è un problema decisionale in cui i team devono agire prima che l'esito finale sia noto, i pit stop
+sono un esempio centrale: possono ripristinare la prestazione degli pneumatici, ma impongono una perdita di tempo immediata.
 
-Questa tesi affronta il problema del supporto decisionale per le chiamate ai box a partire da dati storici di Formula 1, costruendo una pipeline riproducibile di replay e
-valutazione. Le gare storiche vengono estratte, arricchite e trasformate in stream di eventi replayabili, pubblicati tramite Kafka e processati da uno Strategy Engine basato
-su Flink, che costruisce il contesto di gara, emette raccomandazioni rule based e persiste artefatti JSONL per le successive fasi di apprendimento. Gli artefatti
-vengono poi convertiti in dataset di training e valutazione per due rami di apprendimento: un modello Batch XGBoost e un MOA Online Learner.
+Questa tesi affronta il supporto decisionale per le chiamate ai box da dati storici, costruendo una pipeline riproducibile, le gare storiche
+diventano stream replayabili, pubblicati tramite Kafka e processati da uno Strategy Engine basato
+su Flink, che costruisce il contesto, emette raccomandazioni e persiste artefatti JSONL. Questi artefatti
+diventano dataset per un modello Batch XGBoost e un MOA Online Learner.
 
-La valutazione è organizzata attorno a due contratti espliciti. Il primo contratto,\\ \texttt{pit\_any\_h2}, misura il timing del pit stop controllando se un pit stop
-avviene entro un breve orizzonte dopo una chiamata positiva. Il secondo contratto, \texttt{pit\_success\_h2}, è più severo: richiede che il pit stop futuro associato
-venga classificato di successo. Questa distinzione separa il problema di anticipare una finestra di pit stop dal problema più difficile di raccomandare un pit stop che
-produca poi un esito favorevole. Per confrontare sistemi eterogenei in modo equo, il protocollo allinea l'universo di verità, applica lenti di eleggibilità pulite, rimuove
-dai learner i campi a rischio leakage e mantiene separate decisioni a livello di riga, copertura degli eventi, precisione operativa e quantità diagnostiche basate
-sui pit stop associati.
+La valutazione è organizzata attorno a due contratti; il primo contratto,\ \texttt{pit\_any\_h2}, controlla se un pit stop eleggibile
+avviene entro un breve orizzonte dopo una chiamata positiva, il secondo contratto, \texttt{pit\_success\_h2}, è più severo: richiede che il pit stop futuro associato
+venga classificato di successo. Questa distinzione separa l'anticipazione di una finestra di pit stop dalla raccomandazione di un pit stop con esito favorevole.
 
-Gli esperimenti confrontano tre paradigmi decisionali: il Flink Strategy Engine deterministico, Batch XGBoost e il MOA Online Learner. I risultati mostrano che
-\texttt{pit\_any\_h2} è il compito più pulito e più apprendibile. I sistemi basati su apprendimento migliorano rispetto al baseline deterministico, con Batch
-che fornisce la maggiore copertura degli eventi e MOA che fornisce il miglior bilanciamento orientato alla precisione. Al contrario, \texttt{pit\_success\_h2} è sostanzialmente
-più difficile: le chiamate a pit stop di successo sono sparse, sensibili alla soglia scelta e più dipendenti dall'evaluator post-pit.
+Gli esperimenti confrontano tre paradigmi: il Flink Strategy Engine deterministico, Batch XGBoost e il MOA Online Learner. I risultati mostrano che
+\texttt{pit\_any\_h2} è il compito più pulito e apprendibile. I sistemi basati su apprendimento migliorano rispetto al baseline deterministico, con Batch
+che fornisce la maggiore copertura degli eventi e MOA il miglior bilanciamento orientato alla precisione. Al contrario, \texttt{pit\_success\_h2} è più difficile:
+le chiamate a pit stop di successo sono sparse e sensibili alla soglia scelta.
 
-Nel complesso, questo lavoro mostra che lo stato storico della gara contiene segnale utile per anticipare il timing dei pit stop, mentre la previsione di pit stop di
-successo richiede una contabilità più severa e rimane più difficile da coprire in modo affidabile. Il contributo principale è sia pratico sia metodologico: una pipeline
-eseguibile per replayare gare storiche e confrontare sistemi decisionali deterministici, Batch e online, insieme a un protocollo di valutazione basato su contratti che
-rende confrontabili i loro output.
+Nel complesso, lo stato storico della gara contiene segnale utile per anticipare il timing dei pit stop, mentre la previsione dei pit stop di successo
+richiede una contabilità più severa e rimane difficile da coprire. Il contributo principale è una pipeline per replayare gare storiche
+e confrontare sistemi deterministici, Batch e online.
 
 \vspace{1em}
-\textbf{Parole chiave:} strategia Formula 1, stream processing, previsione pit stop, apprendimento online, XGBoost, MOA.
+\textbf{Parole chiave:} strategia Formula 1; stream processing; previsione pit stop; online learning; XGBoost; MOA.
+
 
 
 

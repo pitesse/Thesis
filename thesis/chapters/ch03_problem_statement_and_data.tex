@@ -58,7 +58,7 @@ The following sections refine this framing by describing the race context, the p
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.43\textwidth]{Images/ch3/diagram_hist_to_decis_dataflow.png}
+    \includegraphics[width=0.27\textwidth]{Images/ch3/diagram_hist_to_decis_dataflow.png}
     \caption{Conceptual flow from historical race data to stream-based decision support and reproducible storage.}
     \label{fig:historical_to_decision_flow}
 \end{figure}
@@ -119,7 +119,7 @@ a positive pit signal may appear because several context factors align for a few
 the signal may persist across nearby laps, weaken if the context changes, or disappear after a rival reacts.
 The problem can therefore be framed as the construction of race state observations from an evolving stream of information where
 each observation should describe the strategic context of a driver at a specific point in the race, while avoiding future information \citep{akidau2015dataflow,brookshire2024leakage}.
-The next step is to define what such observations are expected to predict, which leads to the two prediction contracts introduced in the following section.u
+The next step is to define what such observations are expected to predict, which leads to the two prediction contracts introduced in the following section.
 
 \section{Prediction Contracts}
 \label{sec:contracts}
@@ -152,7 +152,7 @@ the number of observations associated with successful pit stops is even smaller 
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.99\textwidth]{Images/ch3/contract_definitions.png}
+    \includegraphics[width=0.88\textwidth]{Images/ch3/contract_definitions.png}
     \caption{Conceptual distinction between pit occurrence prediction and successful pit prediction.}
     \label{fig:contract_definitions}
 \end{figure}

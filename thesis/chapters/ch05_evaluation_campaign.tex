@@ -484,7 +484,7 @@ but the balance between coverage and precision changes substantially from race t
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[height=0.99\textheight,keepaspectratio]{Images/ch5/race_level_kappa_pit_any.png}
+    \includegraphics[height=0.90\textheight,keepaspectratio]{Images/ch5/race_level_kappa_pit_any.png}
     \caption{Race-level Kappa diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_kappa_pit_any}
 \end{figure}
@@ -493,7 +493,7 @@ but the balance between coverage and precision changes substantially from race t
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[height=0.99\textheight,keepaspectratio]{Images/ch5/race_level_gmean_pit_any.png}
+    \includegraphics[height=0.90\textheight,keepaspectratio]{Images/ch5/race_level_gmean_pit_any.png}
     \caption{Race-level G-Mean diagnostic for \texttt{pit\_any\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_gmean_pit_any}
 \end{figure}
@@ -521,7 +521,7 @@ prediction is both harder in aggregate and less stable at race level.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[height=0.99\textheight,keepaspectratio]{Images/ch5/race_level_kappa_pit_success.png}
+    \includegraphics[height=0.90\textheight,keepaspectratio]{Images/ch5/race_level_kappa_pit_success.png}
     \caption{Race-level Kappa diagnostic for \texttt{pit\_success\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_kappa_pit_success}
 \end{figure}
@@ -529,7 +529,7 @@ prediction is both harder in aggregate and less stable at race level.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[height=0.99\textheight,keepaspectratio]{Images/ch5/race_level_gmean_pit_success.png}
+    \includegraphics[height=0.90\textheight,keepaspectratio]{Images/ch5/race_level_gmean_pit_success.png}
     \caption{Race-level G-Mean diagnostic for \texttt{pit\_success\_h2} under the support filter of at least three positives per race.}
     \label{fig:race_level_gmean_pit_success}
 \end{figure}
@@ -586,27 +586,32 @@ the final protocol distinguishes No-Year from Percent and why the season identif
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.99\textwidth]{Images/ch5/shap_beeswarm.png}
+    \includegraphics[width=0.94\textwidth]{Images/ch5/shap_beeswarm.png}
     \caption{Batch original feature view.\label{fig:batch_shap_beeswarm_no_year}}
 \end{figure}
 \FloatBarrier
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.99\textwidth]{Images/ch5/phase2b_batch_p1_shap_beeswarm.png}
+    \includegraphics[width=0.94\textwidth]{Images/ch5/phase2b_batch_p1_shap_beeswarm.png}
     \caption{Batch Percent feature view.\label{fig:batch_shap_beeswarm_percent}}
 \end{figure}
 \FloatBarrier
 
 
-\begin{figure}[htbp]
+\begin{figure}[H]
     \centering
-    \includegraphics[width=0.99\textwidth]{Images/ch5/phase2b_batch_shap_top_feature_comparison_e0_p1.png}
-    \caption{Comparison of top Batch SHAP features before and after the feature profile correction. The figure highlights the shortcut risk role of \texttt{source\_year} 
-    and the shift toward race context features in the corrected profiles.}
+    \includegraphics[width=0.95\textwidth]{Images/ch5/phase2b_batch_shap_top_feature_comparison_e0_p1_top.png}
+    \caption{Top Batch SHAP features before and after the Percent profile correction.}
     \label{fig:batch_shap_top_feature_comparison}
 \end{figure}
-\FloatBarrier
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{Images/ch5/phase2b_batch_shap_top_feature_comparison_e0_p1_delta.png}
+    \caption{Change in top Batch SHAP feature importance after the Percent profile correction.}
+    \label{fig:batch_shap_delta_feature_comparison}
+\end{figure}
 
 \section{Conclusive Summary}
 

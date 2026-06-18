@@ -63,7 +63,7 @@
 \newcommand{\mathbbm}[1]{\text{\usefont{U}{bbm}{m}{n}#1}}
 \newcommand{\pdev}[2]{\frac{\partial#1}{\partial#2}}
 
-\input{Configuration_files/config}
+\input{Configuration_Files/config}
 
 % Insert here the info that will be displayed into your Title page
 \renewcommand{\title}{From Historical F1 Strategy Streams to Pit Stop Decision Models}
@@ -72,9 +72,16 @@
 \newcommand{\advisor}{Prof. Emanuele Della Valle}
 \newcommand{\YEAR}{2025-26}
 
+\hypersetup{
+    pdftitle={Executive Summary - From Historical F1 Strategy Streams to Pit Stop Decision Models},
+    pdfauthor={Pietro Pizzoccheri},
+    pdfsubject={Executive Summary of the master's thesis on reproducible Formula 1 pit-stop decision support},
+    pdfkeywords={Formula 1 strategy; event stream processing; Apache Flink; Kafka; pit stop prediction; online learning; imbalanced classification}
+}
+
 \begin{document}
 
-\input{Configuration_files/title_page}
+\input{Configuration_Files/title_page}
 
 % Match the executive-summary sample: keep the running header high on the page
 % and leave a visible gap before the body text, without triggering fancyhdr's
